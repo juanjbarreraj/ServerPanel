@@ -3,7 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Serve Actual — Panel</title>
+<title>califree</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/favicon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+<link rel="shortcut icon" href="/static/favicon.ico">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 <style>
@@ -429,6 +434,8 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .skinstrip canvas{width:36px; height:36px; image-rendering:pixelated; background:var(--slotbg);
   border-radius:4px; box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.09)}
 .skinstrip .d{font-size:.55rem; color:var(--ink3); margin-top:2px}
+.skinstrip .sk.cur canvas{box-shadow:0 0 0 2px var(--slime)}
+.skinstrip .sk.cur .d{color:var(--slime); font-weight:700; text-transform:uppercase}
 #skin-canvas{width:100%; max-width:320px; height:380px; margin:0 auto; display:block;
   background:radial-gradient(300px 200px at 50% 20%, rgba(111,212,78,.08), transparent 70%);
   border-radius:6px}
@@ -1093,12 +1100,12 @@ function enterApp(){
 }
 
 const TABS = [
-  ['dash',()=>t('tab_dash'),'grass_block_side','🏠', () => hasPerm('view_dashboard')],
+  ['dash',()=>t('tab_dash'),'grass_block','🏠', () => hasPerm('view_dashboard')],
   ['players',()=>t('tab_players'),'diamond_sword','⚔️', () => hasPerm('view_players')],
   ['mod',()=>'Moderación','iron_axe','🔨', () => hasPerm('whitelist')||hasPerm('ban')||hasPerm('say')],
   ['memories',()=>t('tab_mem'),'painting','🖼️', () => hasPerm('memories')],
-  ['console',()=>'Consola','command_block_front','🖥️', () => hasPerm('view_console')||(ME&&ME.role==='admin')],
-  ['backups',()=>'Copias','barrel_side','📦', () => hasPerm('backups')],
+  ['console',()=>'Consola','command_block','🖥️', () => hasPerm('view_console')||(ME&&ME.role==='admin')],
+  ['backups',()=>'Copias','barrel','📦', () => hasPerm('backups')],
   ['plugins',()=>'Plugins','redstone','🔌', () => ME&&ME.role==='admin'],
   ['users',()=>'Moderadores','name_tag','👑', () => ME&&ME.role==='admin'],
   ['sistema',()=>'Sistema','anvil','⚙️', () => ME&&ME.role==='admin'],
@@ -1313,15 +1320,24 @@ function pvWalk(){
 function pvStrip(info){
   const strip=$('pv-strip'); strip.innerHTML='';
   const hist=(info&&info.history)||[];
+  const cur=(info&&info.current)||null;
+  const dupDates={}; hist.forEach(h=>{ dupDates[h.date]=(dupDates[h.date]||0)+1; });
+  const hhmm=ts=>{ const d=new Date(ts*1000); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
   hist.forEach(h=>{
-    const d=document.createElement('div'); d.className='sk'; d.title=h.date;
+    const isCur = cur && h.hash===cur;
+    const d=document.createElement('div'); d.className='sk'+(isCur?' cur':'');
+    const [y,m,dd]=h.date.split('-');
+    let lab1=`${dd}/${m}/${y.slice(2)}`;
+    if (dupDates[h.date]>1 && h.ts) lab1+=` · ${hhmm(h.ts)}`;   // dos skins el mismo día → hora
+    d.title=(isCur?(LANG==='en'?'Current skin — ':'Skin actual — '):'')+h.date+(h.ts?` ${hhmm(h.ts)}`:'');
     d.onclick=()=>{ pvSkin(`/skinhist/${PV_UUID}/${encodeURIComponent(h.file)}`, h.slim); toast('Skin del '+h.date); };
     const c=document.createElement('canvas'); c.width=32; c.height=32;
     const img=new Image();
     img.onload=()=>{ const g=c.getContext('2d'); g.imageSmoothingEnabled=false;
       g.drawImage(img,8,8,8,8,0,0,32,32); try{g.drawImage(img,40,8,8,8,0,0,32,32);}catch(_){} };
     img.src=`/skinhist/${PV_UUID}/${encodeURIComponent(h.file)}`;
-    const lab=document.createElement('div'); lab.className='d'; lab.textContent=h.date;
+    const lab=document.createElement('div'); lab.className='d';
+    lab.textContent = isCur ? (LANG==='en'?'current':'actual') : lab1;
     d.appendChild(c); d.appendChild(lab); strip.appendChild(d);
   });
 }
@@ -2115,7 +2131,7 @@ async function editName(){
   if (!v) return;
   const r=await api('/api/settings/name',{name:v});
   if (r.error){ toast(r.error); return; }
-  BRAND=v; $('brand').textContent=v; $('brand-login').textContent=v; document.title=v+' — Panel';
+  BRAND=v; $('brand').textContent=v; $('brand-login').textContent=v; document.title='califree';
   toast('Nombre actualizado');
 }
 
@@ -2162,7 +2178,7 @@ async function changePw(){
 /* ---------- arranque ---------- */
 (async ()=>{
   try{ const b=await api('/api/branding'); BRAND=b.name||BRAND;
-    $('brand').textContent=BRAND; $('brand-login').textContent=BRAND; document.title=BRAND+' — Panel'; }catch(e){}
+    $('brand').textContent=BRAND; $('brand-login').textContent=BRAND; document.title='califree'; }catch(e){}
   wireDrop(); wireMemUpload(); applyLang();
   try{
     // fetch directo: sin sesión responde 401 y api() abriría el modal de login sobre la portada

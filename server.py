@@ -1927,8 +1927,19 @@ def api_skininfo(uuid):
         idx = json.loads((SKINS_HIS / uuid / "index.json").read_text())
     except Exception:
         pass
-    idx.sort(key=lambda e: e.get("date", ""), reverse=True)
-    return jsonify(slim=slim, history=idx, name=_uuid_name(uuid))
+    # hora real de captura (mtime del archivo) para desempatar entradas del mismo día
+    for e in idx:
+        try:
+            e["ts"] = int((SKINS_HIS / uuid / e.get("file", "")).stat().st_mtime)
+        except Exception:
+            e["ts"] = 0
+    idx.sort(key=lambda e: (e.get("date", ""), e.get("ts", 0)), reverse=True)
+    cur_hash = None
+    try:
+        cur_hash = json.loads((SKINS_CUR / f"{uuid}.json").read_text()).get("hash")
+    except Exception:
+        pass
+    return jsonify(slim=slim, history=idx, name=_uuid_name(uuid), current=cur_hash)
 
 @app.get("/skinhist/<uuid>/<fn>")
 def api_skin_hist(uuid, fn):
