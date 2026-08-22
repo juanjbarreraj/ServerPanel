@@ -23,36 +23,12 @@ if [ ! -d config ]; then
 fi
 # aceptar la descarga de texturas oficiales de Mojang
 sed -i 's/accept-download: false/accept-download: true/' config/core.conf
-# los tres mapas apuntando al mundo real (las 3 dimensiones)
-mkdir -p config/maps
-rm -f config/maps/*.conf
-cat > config/maps/overworld.conf <<EOF
-world: "$WORLD"
-dimension: "minecraft:overworld"
-name: "Overworld"
-sorting: 0
-EOF
-cat > config/maps/nether.conf <<EOF
-world: "$WORLD"
-dimension: "minecraft:the_nether"
-name: "Nether"
-sorting: 1
-sky-color: "#290000"
-ambient-light: 0.6
-world-sky-light: 0
-remove-caves-below-y: -10000
-max-y: 90
-EOF
-cat > config/maps/end.conf <<EOF
-world: "$WORLD"
-dimension: "minecraft:the_end"
-name: "End"
-sorting: 2
-sky-color: "#080010"
-ambient-light: 0.6
-world-sky-light: 0
-remove-caves-below-y: -10000
-EOF
+# usar las plantillas de mapas que genera el propio BlueMap (sintaxis correcta
+# para SU versión) y solo apuntarles la ruta del mundo real
+if ! ls config/maps/*.conf >/dev/null 2>&1; then
+  java -jar bluemap-cli.jar >/dev/null 2>&1 || true
+fi
+sed -i -E "s|^#?\s*world:.*|world: \"$WORLD\"|" config/maps/*.conf
 
 echo "== 3/6 · Caddy: servir /map/ con el login del panel =="
 sudo tee /etc/caddy/Caddyfile >/dev/null <<'EOF'
