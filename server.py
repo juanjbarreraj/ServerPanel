@@ -486,7 +486,7 @@ def api_players():
 
 # --- estadísticas detalladas estilo Aternos (distancias, minados, usados, matados)
 _DIST_KEYS = [  # (clave stat, id de fila para el frontend)
-    ("minecraft:aviation_one_cm", "elytra"),
+    ("minecraft:aviate_one_cm", "elytra"),   # el id real del juego es "aviate" (élytros)
     ("minecraft:walk_one_cm", "walk"),
     ("minecraft:sprint_one_cm", "sprint"),
     ("minecraft:walk_on_water_one_cm", "walk_water"),
@@ -500,7 +500,8 @@ _DIST_KEYS = [  # (clave stat, id de fila para el frontend)
     ("minecraft:minecart_one_cm", "minecart"),
     ("minecraft:pig_one_cm", "pig"),
     ("minecraft:strider_one_cm", "strider"),
-    ("minecraft:fly_one_cm", "fly"),
+    # fly_one_cm queda FUERA a propósito: cuenta cada salto corriendo (número
+    # inflado sin sentido) y duplica lo ya contado — Aternos tampoco lo muestra.
 ]
 
 @app.get("/api/playerstats/<uuid>")
