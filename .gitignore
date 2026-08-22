@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+data/
+memories/
+icons/
+static/mcfont.ttf
+*.tar.gz
+.DS_Store
