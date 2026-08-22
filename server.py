@@ -479,6 +479,12 @@ def api_status():
         "time": time.time(),
     })
 
+@app.get("/api/mapauth")
+def api_mapauth():
+    """Caddy (forward_auth) pregunta aquí si quien pide /map/ tiene sesión del panel."""
+    require("view_dashboard")
+    return "", 204
+
 @app.get("/api/players")
 def api_players():
     require("view_players")

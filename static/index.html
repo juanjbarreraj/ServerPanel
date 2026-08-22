@@ -671,6 +671,14 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
   </section>
 
+  <!-- MAPA -->
+  <section id="tab-map" class="hidden">
+    <div class="card" style="padding:10px">
+      <iframe id="map-frame" title="Mapa del mundo" style="width:100%; height:calc(100vh - 250px); min-height:480px; border:0; border-radius:8px; background:#04060a"></iframe>
+      <div class="note" style="margin:8px 4px 2px" data-i18n="map_note">El mundo real en 3D — arrastra para girar, rueda para acercar. Se actualiza cada noche con lo que construyeron en el día.</div>
+    </div>
+  </section>
+
   <!-- MODERATION -->
   <section id="tab-mod" class="hidden">
     <div class="card" id="joinreq-card" style="margin-bottom:14px">
@@ -875,7 +883,8 @@ const I18N = {
   pin_note:'Este panel es privado — pídele el PIN a alguien del server.', pin_btn:'Entrar',
   pin_wrong:'PIN incorrecto', pin_unset:'El PIN aún no está configurado — avísale al admin.',
   pin_rate:'Demasiados intentos — espera 5 minutos',
-  tab_dash:'Inicio', tab_players:'Jugadores', tab_mem:'Memorias',
+  tab_dash:'Inicio', tab_players:'Jugadores', tab_mem:'Memorias', tab_map:'Mapa',
+  map_note:'El mundo real en 3D — arrastra para girar, rueda para acercar. Se actualiza cada noche con lo que construyeron en el día.',
   t_state:'Servidor', t_online:'Jugadores en línea', t_tick:'Tiempo de tick', t_mem:'Memoria del server',
   st_on:'En línea', st_boot:'Arrancando', st_off:'Apagado',
   ch_tick:'Tick — últimos 10 minutos (ms)', ch_mem:'Memoria usada — últimos 10 minutos (GB)',
@@ -908,7 +917,8 @@ const I18N = {
   pin_note:'This panel is private — ask someone from the server for the PIN.', pin_btn:'Enter',
   pin_wrong:'Wrong PIN', pin_unset:'The PIN is not configured yet — tell the admin.',
   pin_rate:'Too many attempts — wait 5 minutes',
-  tab_dash:'Home', tab_players:'Players', tab_mem:'Memories',
+  tab_dash:'Home', tab_players:'Players', tab_mem:'Memories', tab_map:'Map',
+  map_note:'The real world in 3D — drag to rotate, scroll to zoom. Updates every night with what was built during the day.',
   t_state:'Server', t_online:'Players online', t_tick:'Tick time', t_mem:'Server memory',
   st_on:'Online', st_boot:'Starting', st_off:'Offline',
   ch_tick:'Tick — last 10 minutes (ms)', ch_mem:'Memory used — last 10 minutes (GB)',
@@ -1103,6 +1113,7 @@ function enterApp(){
 const TABS = [
   ['dash',()=>t('tab_dash'),'grass_block','🏠', () => hasPerm('view_dashboard')],
   ['players',()=>t('tab_players'),'diamond_sword','⚔️', () => hasPerm('view_players')],
+  ['map',()=>t('tab_map'),'filled_map','🗺️', () => hasPerm('view_dashboard')],
   ['mod',()=>'Moderación','iron_axe','🔨', () => hasPerm('whitelist')||hasPerm('ban')||hasPerm('say')],
   ['memories',()=>t('tab_mem'),'painting','🖼️', () => hasPerm('memories')],
   ['console',()=>'Consola','command_block','🖥️', () => hasPerm('view_console')||(ME&&ME.role==='admin')],
@@ -1133,6 +1144,7 @@ function show(id){
     if (btn) btn.classList.toggle('on', t===id);
   }
   if (id==='players'){ closePView(); loadPlayers(); }
+  if (id==='map'){ const f=$('map-frame'); if(f && !f.src) f.src='/map/'; }
   if (id==='mod'){ loadWhitelist(); loadJoinReq(); }
   if (id==='memories') memMode(MEM_MODE||'g');
   if (id==='console'){ loadConsole(); if(!window._conT) window._conT=setInterval(()=>{ if(!$('tab-console').classList.contains('hidden')) loadConsole(); },4000); }
