@@ -451,10 +451,18 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .pvt{display:block; padding:12px 14px}
 .pvt .lab{margin-bottom:7px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .pvt-val{background:var(--slotbg); border-radius:6px; padding:9px 10px; text-align:center;
-  font-family:"Press Start 2P",monospace; font-size:clamp(.72rem,1.4vw,.95rem); line-height:1.35;
+  font-family:"Press Start 2P",monospace; font-size:clamp(.72rem,1.4vw,.95rem); line-height:1.55;
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -1px -1px 0 rgba(255,255,255,.05);
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.pv-cols{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:16px; align-items:start}
+  overflow-wrap:break-word}
+.pv-cols{column-width:290px; column-gap:16px}
+.pv-cols .statcol{break-inside:avoid; -webkit-column-break-inside:avoid; margin:0 0 16px; width:100%}
+#psort{appearance:none; -webkit-appearance:none; color-scheme:dark;
+  background:var(--slotbg) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23a8e063'/></svg>") no-repeat right 12px center;
+  color:var(--ink); font-weight:700; font-size:.88rem; cursor:pointer;
+  border:2px solid rgba(255,255,255,.22); border-radius:6px; padding:8px 32px 8px 12px;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.4)}
+#psort:hover{border-color:var(--slime)}
+#psort option{background:#12161d; color:#eceff3; font-weight:600}
 .statcol h3{margin-bottom:2px}
 .statcol .sctotal{display:flex; justify-content:space-between; padding:7px 4px; border-bottom:2px solid rgba(255,255,255,.14);
   font-weight:bold; margin-bottom:4px}
