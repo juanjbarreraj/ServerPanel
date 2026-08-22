@@ -471,6 +471,64 @@ def api_players():
     require("view_players")
     return jsonify(players=player_stats(), whitelist=whitelist())
 
+# --- estadísticas detalladas estilo Aternos (distancias, minados, usados, matados)
+_DIST_KEYS = [  # (clave stat, id de fila para el frontend)
+    ("minecraft:aviation_one_cm", "elytra"),
+    ("minecraft:walk_one_cm", "walk"),
+    ("minecraft:sprint_one_cm", "sprint"),
+    ("minecraft:walk_on_water_one_cm", "walk_water"),
+    ("minecraft:walk_under_water_one_cm", "under_water"),
+    ("minecraft:crouch_one_cm", "crouch"),
+    ("minecraft:swim_one_cm", "swim"),
+    ("minecraft:fall_one_cm", "fall"),
+    ("minecraft:climb_one_cm", "climb"),
+    ("minecraft:horse_one_cm", "horse"),
+    ("minecraft:boat_one_cm", "boat"),
+    ("minecraft:minecart_one_cm", "minecart"),
+    ("minecraft:pig_one_cm", "pig"),
+    ("minecraft:strider_one_cm", "strider"),
+    ("minecraft:fly_one_cm", "fly"),
+]
+
+@app.get("/api/playerstats/<uuid>")
+def api_playerstats(uuid):
+    require("view_players")
+    uuid = uuid.lower()
+    if not UUID_RE.match(uuid):
+        abort(400)
+    f = stats_dir() / f"{uuid}.json"
+    try:
+        allst = json.loads(f.read_text()).get("stats", {})
+    except Exception:
+        allst = {}
+    cust = allst.get("minecraft:custom", {})
+
+    def blocks(cm):  # cm -> bloques (como Aternos)
+        return int(round(cm / 100))
+
+    dist, dtotal = [], 0
+    for key, rid in _DIST_KEYS:
+        v = cust.get(key, 0)
+        if v > 0:
+            dist.append({"id": rid, "n": blocks(v)})
+            dtotal += v
+    dist.sort(key=lambda d: -d["n"])
+
+    def cat(section):
+        items = [{"id": k.split(":", 1)[-1], "n": v}
+                 for k, v in allst.get(section, {}).items() if v > 0]
+        items.sort(key=lambda d: -d["n"])
+        return {"total": sum(d["n"] for d in items), "items": items}
+
+    base = next((p for p in player_stats() if p["uuid"] == uuid), None)
+    return jsonify(
+        base=base,
+        distance={"total": blocks(dtotal), "rows": dist},
+        mined=cat("minecraft:mined"),
+        used=cat("minecraft:used"),
+        killed=cat("minecraft:killed"),
+    )
+
 @app.get("/api/audit")
 def api_audit():
     u = require()
@@ -1867,6 +1925,55 @@ def api_skin_hist(uuid, fn):
     if not UUID_RE.match(uuid) or not f.exists():
         abort(404)
     return send_file(f, max_age=604800)
+
+@app.post("/api/skinhist/upload")
+def api_skinhist_upload():
+    """Mods/admin: mete una skin antigua al archivo con fecha manual (para el historial pre-panel)."""
+    u = require()
+    if u["role"] not in ("admin", "mod"):
+        abort(403)
+    uuid = (request.form.get("uuid") or "").strip().lower()
+    date = (request.form.get("date") or "").strip()
+    fs = request.files.get("file")
+    if not UUID_RE.match(uuid):
+        return jsonify(error="uuid inválido"), 400
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return jsonify(error="fecha inválida (AAAA-MM-DD)"), 400
+    if not fs:
+        return jsonify(error="falta el archivo"), 400
+    data = fs.read()
+    if len(data) > 256 * 1024:
+        return jsonify(error="muy grande — una skin pesa unos KB"), 400
+    try:
+        from PIL import Image
+        import io
+        im = Image.open(io.BytesIO(data))
+        im.load()
+        if im.format != "PNG" or im.width != 64 or im.height not in (32, 64):
+            return jsonify(error="debe ser una skin PNG de 64x64 (o 64x32 antigua)"), 400
+        # detección slim: brazo de 3px deja transparente la columna x=54 del brazo derecho
+        slim = False
+        if im.height == 64:
+            rgba = im.convert("RGBA")
+            slim = all(rgba.getpixel((54, y))[3] == 0 for y in range(20, 32))
+    except Exception:
+        return jsonify(error="no pude leer el PNG"), 400
+    h = hashlib.sha1(data).hexdigest()[:10]
+    hdir = SKINS_HIS / uuid
+    hdir.mkdir(parents=True, exist_ok=True)
+    idx_f = hdir / "index.json"
+    try:
+        idx = json.loads(idx_f.read_text())
+    except Exception:
+        idx = []
+    if any(e.get("hash") == h for e in idx):
+        return jsonify(error="esa skin ya está en el archivo"), 400
+    fn = f"{date}-{h}.png"
+    (hdir / fn).write_bytes(data)
+    idx.append({"date": date, "file": fn, "hash": h, "slim": slim, "manual": True})
+    idx_f.write_text(json.dumps(idx))
+    audit(u["name"], f"skin histórica subida para {uuid} ({date})")
+    return jsonify(ok=True, file=fn, slim=slim)
 
 def _skin_snapshot_loop():
     """Hilo diario: fotografía la skin de cada whitelisted (el archivo crece solo)."""

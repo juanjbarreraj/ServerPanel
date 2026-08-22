@@ -19,7 +19,7 @@
   --slotbg:rgba(15,18,22,.55);
 }
 *{box-sizing:border-box; margin:0}
-html{scroll-behavior:smooth}
+html{scroll-behavior:smooth; background:var(--bg1, #0c1118)}
 body{
   min-height:100vh; color:var(--ink);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
@@ -435,6 +435,30 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .memtabs{display:flex; gap:6px; margin-bottom:14px}
 .memtabs button{flex:none}
 .pgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; margin-top:12px}
+.pcardm .arrow{margin-left:auto}
+.pcardm.player{flex-direction:row; align-items:center; gap:10px; padding:12px 14px}
+.pcardm.player .c{white-space:nowrap}
+#pgrid{grid-template-columns:repeat(auto-fill,minmax(185px,1fr))}
+.pv-tiles{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.pcardm.player img{width:40px; height:40px}
+.pcardm.player .arrow{width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,.10);
+  display:flex; align-items:center; justify-content:center; font-weight:bold; color:var(--ink2); flex:none}
+.pv-layout{display:grid; grid-template-columns:340px 1fr; gap:14px; align-items:start}
+@media(max-width:900px){.pv-layout{grid-template-columns:1fr}}
+.pv-left{text-align:center}
+#pv-canvas{width:100%; max-width:300px; height:360px; margin:0 auto; display:block; cursor:grab}
+.pv-tiles{margin-bottom:14px}
+.pv-cols{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; align-items:start}
+.statcol h3{margin-bottom:2px}
+.statcol .sctotal{display:flex; justify-content:space-between; padding:7px 4px; border-bottom:2px solid rgba(255,255,255,.14);
+  font-weight:bold; margin-bottom:4px}
+.strow{display:flex; align-items:center; gap:8px; padding:4.5px 4px; border-bottom:1px solid rgba(255,255,255,.05); font-size:.86rem}
+.strow img{width:22px; height:22px; image-rendering:pixelated; flex:none}
+.strow .se{width:22px; text-align:center; flex:none}
+.strow .sn{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.strow .sv{color:var(--ink2); font-variant-numeric:tabular-nums}
+.scmore{width:100%; margin-top:8px}
+#pv-dot .dot{width:11px; height:11px}
 .pcardm{display:flex; flex-direction:column; align-items:center; gap:8px; padding:14px 10px; cursor:pointer;
   background:var(--slotbg); border-radius:6px;
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.09);
@@ -589,13 +613,35 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 
   <!-- PLAYERS -->
   <section id="tab-players" class="hidden">
-    <div class="card">
+    <div class="card" id="pgrid-card">
       <h3 data-i18n="players_book">Libro de jugadores</h3>
-      <div style="overflow-x:auto"><table id="ptable">
-        <thead><tr><th data-i18n="th_player">Jugador</th><th class="right" data-i18n="th_hours">Horas</th><th class="right" data-i18n="th_deaths">Muertes</th><th class="right" data-i18n="th_mobs">Mobs</th>
-        <th class="right" data-i18n="th_pvp">PvP</th><th class="right" data-i18n="th_km">Km caminados</th><th data-i18n="th_seen">Última vez</th></tr></thead>
-        <tbody></tbody></table></div>
+      <div class="pgrid" id="pgrid"></div>
       <div class="note" data-i18n="pl_note">Las estadísticas vienen directo de los archivos del servidor. Toca un jugador para ver su ficha.</div>
+    </div>
+    <div id="pview" class="hidden">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap">
+        <button class="btn small ghost" onclick="closePView()" data-i18n="back_players">← Todos los jugadores</button>
+        <h3 style="margin:0" id="pv-name">—</h3><span id="pv-dot"></span>
+      </div>
+      <div class="pv-layout">
+        <div class="card pv-left">
+          <canvas id="pv-canvas"></canvas>
+          <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin-top:8px">
+            <button class="btn small" id="pv-walkbtn" onclick="pvWalk()">⏸</button>
+            <a class="btn small ghost" id="pv-namemc" target="_blank" rel="noopener">NameMC ↗</a>
+            <button class="btn small ghost hidden" id="pv-invbtn" data-i18n="inv_btn">🎒 Inventario</button>
+          </div>
+          <h3 style="margin-top:16px" data-i18n="skin_hist">Skins guardadas por el panel</h3>
+          <div class="note" id="pv-hist-note" data-i18n="skin_none">El archivo arranca hoy — cada día el panel guarda la skin de todos.</div>
+          <div class="skinstrip" id="pv-strip"></div>
+          <button class="btn small ghost hidden" id="pv-addskin" onclick="pvAddSkin()" data-i18n="hist_add">➕ Subir skin antigua</button>
+          <input type="file" id="pv-skinfile" accept=".png" class="hidden">
+        </div>
+        <div class="pv-right">
+          <div class="grid tiles pv-tiles" id="pv-tiles"></div>
+          <div class="pv-cols" id="pv-cols"></div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -813,6 +859,13 @@ const I18N = {
   copy:'Copiar', copied:'Dirección copiada', players_book:'Libro de jugadores',
   pl_note:'Las estadísticas vienen directo de los archivos del servidor. Toca un jugador para ver su ficha.',
   pl_empty:'Aún no hay estadísticas — aparecen cuando la gente juega.', collecting:'recolectando datos…',
+  back_players:'← Todos los jugadores', inv_btn:'🎒 Inventario', hist_add:'➕ Subir skin antigua',
+  st_dist:'📏 Distancias (bloques)', st_mined:'⛏️ Bloques rotos', st_used:'🧰 Items usados', st_killed:'⚔️ Mobs matados',
+  st_total:'Total', see_all:'Ver todo ({0}) ▾', see_less:'Ver menos ▴',
+  dist_elytra:'Con élytros', dist_walk:'Caminando', dist_sprint:'Corriendo', dist_walk_water:'Sobre el agua',
+  dist_under_water:'Bajo el agua', dist_crouch:'Agachado', dist_swim:'Nadando', dist_fall:'Cayendo',
+  dist_climb:'Escalando', dist_horse:'A caballo', dist_boat:'En bote', dist_minecart:'En vagoneta',
+  dist_pig:'En cerdo', dist_strider:'En lavagante', dist_fly:'Volando',
   th_player:'Jugador', th_hours:'Horas', th_deaths:'Muertes', th_mobs:'Mobs', th_pvp:'PvP',
   th_km:'Km caminados', th_seen:'Última vez', online_tag:'(en línea)',
   now:'ahora mismo', min_ago:'hace {0} min', h_ago:'hace {0} h', d_ago:'hace {0} días',
@@ -837,6 +890,13 @@ const I18N = {
   copy:'Copy', copied:'Address copied', players_book:'Player book',
   pl_note:'Stats come straight from the server files. Tap a player to open their card.',
   pl_empty:'No stats yet — they show up once people play.', collecting:'collecting data…',
+  back_players:'← All players', inv_btn:'🎒 Inventory', hist_add:'➕ Upload old skin',
+  st_dist:'📏 Distance (blocks)', st_mined:'⛏️ Blocks broken', st_used:'🧰 Items used', st_killed:'⚔️ Entities killed',
+  st_total:'Total', see_all:'See all ({0}) ▾', see_less:'See less ▴',
+  dist_elytra:'By Elytra', dist_walk:'Walked', dist_sprint:'Sprinted', dist_walk_water:'Walked on water',
+  dist_under_water:'Walked under water', dist_crouch:'Crouched', dist_swim:'Swum', dist_fall:'Fallen',
+  dist_climb:'Climbed', dist_horse:'By horse', dist_boat:'By boat', dist_minecart:'By minecart',
+  dist_pig:'By pig', dist_strider:'By strider', dist_fly:'Flown',
   th_player:'Player', th_hours:'Hours', th_deaths:'Deaths', th_mobs:'Mobs', th_pvp:'PvP',
   th_km:'Km walked', th_seen:'Last seen', online_tag:'(online)',
   now:'just now', min_ago:'{0} min ago', h_ago:'{0} h ago', d_ago:'{0} days ago',
@@ -1042,7 +1102,7 @@ function show(id){
     if (sec) sec.classList.toggle('hidden', t!==id);
     if (btn) btn.classList.toggle('on', t===id);
   }
-  if (id==='players') loadPlayers();
+  if (id==='players'){ closePView(); loadPlayers(); }
   if (id==='mod'){ loadWhitelist(); loadJoinReq(); }
   if (id==='memories') memMode(MEM_MODE||'g');
   if (id==='console'){ loadConsole(); if(!window._conT) window._conT=setInterval(()=>{ if(!$('tab-console').classList.contains('hidden')) loadConsole(); },4000); }
@@ -1117,19 +1177,145 @@ let PLAYERS_CACHE = [];
 async function loadPlayers(){
   const r = await api('/api/players');
   PLAYERS_CACHE = r.players;
-  const tb=$('ptable').querySelector('tbody'); tb.innerHTML='';
-  const openable = ME.role==='admin' || hasPerm('player_actions');
+  const grid=$('pgrid'); grid.innerHTML='';
   for (const p of r.players){
-    const tr=document.createElement('tr');
-    if (openable){ tr.className='rowbtn'; tr.onclick=()=>openPlayer(p.uuid, p.name, p.online); }
-    else { tr.className='rowbtn'; tr.onclick=()=>openSkin(p.uuid, p.name); }
-    tr.innerHTML=`<td class="name"><img class="avatar" src="https://mc-heads.net/avatar/${esc(p.name)}/26" onerror="this.style.display='none'">
-      <span class="dot ${p.online?'good':'off'}"></span>${esc(p.name)}${p.online?` <span style="color:var(--accent2);font-size:.75rem">${t('online_tag')}</span>`:''}</td>
-      <td class="right">${p.play_hours}</td><td class="right">${p.deaths}</td><td class="right">${p.mob_kills}</td>
-      <td class="right">${p.player_kills}</td><td class="right">${p.walked_km}</td><td>${ago(p.last_seen)}</td>`;
-    tb.appendChild(tr);
+    const c=document.createElement('div'); c.className='pcardm player';
+    c.onclick=()=>openPView(p.uuid, p.name, p.online);
+    c.innerHTML=`<img src="https://mc-heads.net/avatar/${esc(p.name)}/40" onerror="mcFace(this,'${p.uuid}')">
+      <div style="min-width:0"><b style="display:block; overflow:hidden; text-overflow:ellipsis">${esc(p.name)}</b>
+      <span class="c"><span class="dot ${p.online?'good':'off'}"></span>${p.online?t('online_tag').replace(/[()]/g,''):ago(p.last_seen)}</span></div>
+      <span class="arrow">→</span>`;
+    grid.appendChild(c);
   }
-  if (!r.players.length) tb.innerHTML=`<tr><td colspan="7">${t('pl_empty')}</td></tr>`;
+  if (!r.players.length) grid.innerHTML=`<div class="note">${t('pl_empty')}</div>`;
+}
+
+/* ---------- vista de jugador (skin 3D + estadísticas Aternos) ---------- */
+const DIST_ORDER_EMO={elytra:'🕊️', walk:'🚶', sprint:'🏃', walk_water:'🌊', under_water:'🤿',
+  crouch:'🐢', swim:'🏊', fall:'🪂', climb:'🪜', horse:'🐴', boat:'🛶', minecart:'🛒', pig:'🐷', strider:'🔥', fly:'✈️'};
+const MOB_EMO={zombie:'🧟', skeleton:'💀', creeper:'💚', spider:'🕷️', enderman:'🔮', slime:'🟢',
+  witch:'🧙', villager:'🧑‍🌾', wandering_trader:'🎒', iron_golem:'🤖', horse:'🐴', cow:'🐮', pig:'🐷',
+  sheep:'🐑', chicken:'🐔', wolf:'🐺', bat:'🦇', rabbit:'🐰', axolotl:'🦎', tropical_fish:'🐠',
+  vindicator:'🪓', evoker:'📖', vex:'🗡️', zoglin:'🐗', mannequin:'🧍', zombie_villager:'🧟'};
+let PV_UUID=null, PV_NAME='', _pv=null, _pvWalking=true;
+function prettify(id){ return id.split('_').map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' '); }
+function fmtN(n){ return n.toLocaleString(LANG==='es'?'es-CO':'en-US'); }
+function closePView(){
+  $('pview').classList.add('hidden'); $('pgrid-card').classList.remove('hidden');
+  if (_pv){ try{_pv.dispose();}catch(_){} _pv=null; }
+}
+async function openPView(uuid, name, online){
+  PV_UUID=uuid; PV_NAME=name;
+  $('pgrid-card').classList.add('hidden'); $('pview').classList.remove('hidden');
+  $('pv-name').textContent=name;
+  $('pv-dot').innerHTML=`<span class="dot ${online?'good':'off'}"></span>`;
+  $('pv-namemc').href='https://namemc.com/profile/'+encodeURIComponent(name);
+  const invbtn=$('pv-invbtn');
+  const canInv = ME.role==='admin' || hasPerm('player_actions');
+  invbtn.classList.toggle('hidden', !canInv);
+  if (canInv) invbtn.onclick=()=>openPlayer(uuid, name, online);
+  $('pv-addskin').classList.toggle('hidden', !(ME.role==='admin'||ME.role==='mod'));
+  $('pv-tiles').innerHTML=''; $('pv-cols').innerHTML=`<div class="note">…</div>`;
+  $('pv-strip').innerHTML='';
+  const [stats, info] = await Promise.all([
+    api(`/api/playerstats/${uuid}`).catch(()=>null),
+    api(`/api/skininfo/${uuid}`).catch(()=>({history:[]}))
+  ]);
+  pvSkin(`/api/skin/${uuid}`, info && info.slim);
+  pvStrip(info);
+  if (stats) pvStats(stats);
+  else $('pv-cols').innerHTML=`<div class="note">${t('pl_empty')}</div>`;
+}
+async function pvSkin(url, slim){
+  const ok = await loadSkinLib();
+  const cv=$('pv-canvas');
+  if (_pv){ try{_pv.dispose();}catch(_){} _pv=null; }
+  if (ok){
+    try{
+      _pv = new skinview3d.SkinViewer({canvas:cv, width:cv.clientWidth||300, height:360,
+        skin:url, model: slim?'slim':'default'});
+      _pv.autoRotate = true; _pv.autoRotateSpeed = 0.45;
+      const anim = new skinview3d.WalkingAnimation(); anim.speed = 0.55;   // paseo tranquilo
+      _pv.animation = anim; _pv.zoom = 0.85; _pvWalking = true;
+      $('pv-walkbtn').textContent = t('skin_stop');
+      return;
+    }catch(e){}
+  }
+  svFallback(cv, PV_NAME, PV_UUID, slim);
+}
+function pvWalk(){
+  if (!_pv) return;
+  _pvWalking=!_pvWalking;
+  if (_pvWalking){ const a=new skinview3d.WalkingAnimation(); a.speed=0.55; _pv.animation=a; }
+  else _pv.animation=null;
+  $('pv-walkbtn').textContent = _pvWalking ? t('skin_stop') : t('skin_walk');
+}
+function pvStrip(info){
+  const strip=$('pv-strip'); strip.innerHTML='';
+  const hist=(info&&info.history)||[];
+  $('pv-hist-note').style.display = hist.length>1 ? 'none' : '';
+  hist.forEach(h=>{
+    const d=document.createElement('div'); d.className='sk'; d.title=h.date;
+    d.onclick=()=>{ pvSkin(`/skinhist/${PV_UUID}/${encodeURIComponent(h.file)}`, h.slim); toast('Skin del '+h.date); };
+    const c=document.createElement('canvas'); c.width=32; c.height=32;
+    const img=new Image();
+    img.onload=()=>{ const g=c.getContext('2d'); g.imageSmoothingEnabled=false;
+      g.drawImage(img,8,8,8,8,0,0,32,32); try{g.drawImage(img,40,8,8,8,0,0,32,32);}catch(_){} };
+    img.src=`/skinhist/${PV_UUID}/${encodeURIComponent(h.file)}`;
+    const lab=document.createElement('div'); lab.className='d'; lab.textContent=h.date;
+    d.appendChild(c); d.appendChild(lab); strip.appendChild(d);
+  });
+}
+function pvStats(s){
+  const b=s.base||{};
+  $('pv-tiles').innerHTML = [
+    ['⏱️', t('th_hours'), b.play_hours!=null?fmtN(b.play_hours):'—'],
+    ['💀', t('th_deaths'), fmtN(b.deaths||0)],
+    ['⚔️', t('th_mobs'), fmtN(b.mob_kills||0)],
+    ['🏹', t('th_pvp'), fmtN(b.player_kills||0)],
+    ['🕐', t('th_seen'), b.last_seen?ago(b.last_seen):'—'],
+  ].map(([e,l,v])=>`<div class="card tile"><span class="ti-e">${e}</span><div><div class="lab">${l}</div><div class="val px" style="font-size:1.05rem">${v}</div></div></div>`).join('');
+  const cols=$('pv-cols'); cols.innerHTML='';
+  cols.appendChild(statCol(t('st_dist'), s.distance.total, s.distance.rows.map(r=>({
+    icon:null, emo:DIST_ORDER_EMO[r.id]||'📏', name:t('dist_'+r.id), n:r.n})), 'dist'));
+  cols.appendChild(statCol(t('st_mined'), s.mined.total, s.mined.items.map(r=>({
+    icon:`/icons/${r.id}.png`, emo:'⬜', name:prettify(r.id), n:r.n})), 'mined'));
+  cols.appendChild(statCol(t('st_used'), s.used.total, s.used.items.map(r=>({
+    icon:`/icons/${r.id}.png`, emo:'🧰', name:prettify(r.id), n:r.n})), 'used'));
+  cols.appendChild(statCol(t('st_killed'), s.killed.total, s.killed.items.map(r=>({
+    icon:`/icons/${r.id}_spawn_egg.png`, emo:MOB_EMO[r.id]||'🐾', name:prettify(r.id), n:r.n})), 'killed'));
+}
+function statCol(title, total, rows, key){
+  const col=document.createElement('div'); col.className='card statcol';
+  const TOP=15;
+  const render=(all)=>{
+    const shown = all ? rows : rows.slice(0,TOP);
+    col.innerHTML=`<h3>${title}</h3>
+      <div class="sctotal"><span>${t('st_total')}</span><span class="sv">${fmtN(total)}</span></div>
+      ${shown.map(r=>`<div class="strow">
+        ${r.icon?`<img src="${r.icon}" loading="lazy" onerror="this.outerHTML='<span class=&quot;se&quot;>${r.emo}</span>'">`:`<span class="se">${r.emo}</span>`}
+        <span class="sn" title="${esc(r.name)}">${esc(r.name)}</span><span class="sv">${fmtN(r.n)}</span></div>`).join('')
+      || `<div class="note">${t('mem_none')}</div>`}
+      ${rows.length>TOP?`<button class="btn small ghost scmore">${all?t('see_less'):t('see_all',rows.length)}</button>`:''}`;
+    const btn=col.querySelector('.scmore'); if(btn) btn.onclick=()=>render(!all);
+  };
+  render(false);
+  return col;
+}
+async function pvAddSkin(){
+  const date=prompt('Fecha de esa skin (AAAA-MM-DD) — puede ser aproximada:','2021-01-01');
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())){ if(date!==null) toast('Formato: AAAA-MM-DD'); return; }
+  const inp=$('pv-skinfile'); inp.value='';
+  inp.onchange=async()=>{
+    if (!inp.files.length) return;
+    const fd=new FormData(); fd.append('uuid',PV_UUID); fd.append('date',date.trim()); fd.append('file',inp.files[0]);
+    const r=await api('/api/skinhist/upload', fd, true);
+    if (r.error){ toast(r.error); return; }
+    toast('Skin histórica guardada 🗄️');
+    const info=await api(`/api/skininfo/${PV_UUID}`).catch(()=>null);
+    if (info) pvStrip(info);
+  };
+  inp.click();
 }
 
 /* ---------- player card ---------- */
@@ -1588,8 +1774,9 @@ async function openSkin(uuid, name){
       if (_sv){ _sv.dispose(); _sv=null; }
       _sv = new skinview3d.SkinViewer({canvas:cv, width:cv.clientWidth||320, height:380,
         skin:`/api/skin/${uuid}`, model: info.slim?'slim':'default'});
-      _sv.autoRotate = true; _sv.autoRotateSpeed = 0.6;
-      _sv.animation = new skinview3d.WalkingAnimation();
+      _sv.autoRotate = true; _sv.autoRotateSpeed = 0.45;
+      const anim = new skinview3d.WalkingAnimation(); anim.speed = 0.55;   // paseo tranquilo
+      _sv.animation = anim;
       _sv.zoom = 0.85; _svWalking = true;
       $('skin-walkbtn').textContent = t('skin_stop');
     }catch(e){ svFallback(cv, name, uuid, info.slim); }
@@ -1651,7 +1838,8 @@ function svFallback(cv, name, uuid, slim){
 function skinWalk(){
   if (!_sv) return;
   _svWalking=!_svWalking;
-  _sv.animation = _svWalking ? new skinview3d.WalkingAnimation() : null;
+  if (_svWalking){ const a=new skinview3d.WalkingAnimation(); a.speed=0.55; _sv.animation=a; }
+  else _sv.animation=null;
   $('skin-walkbtn').textContent = _svWalking ? t('skin_stop') : t('skin_walk');
 }
 function closeSkin(){
