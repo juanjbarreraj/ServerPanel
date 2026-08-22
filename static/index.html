@@ -135,9 +135,10 @@ header.top{position:sticky; top:12px; z-index:30; display:flex; align-items:cent
   border:2px solid rgba(0,0,0,.66);
   box-shadow:inset 2px 2px 0 var(--bev-l), inset -2px -2px 0 var(--bev-d), 0 14px 34px rgba(0,0,0,.45);
   backdrop-filter:blur(18px) saturate(1.3); -webkit-backdrop-filter:blur(18px) saturate(1.3)}
-header.top img.icon{width:50px; height:50px; image-rendering:pixelated; border-radius:5px;
-  border:2px solid rgba(0,0,0,.7); box-shadow:inset 1px 1px 0 rgba(255,255,255,.3), 0 3px 8px rgba(0,0,0,.4);
+header.top img.icon{width:62px; height:62px; object-fit:contain; cursor:pointer;
+  filter:drop-shadow(0 3px 6px rgba(0,0,0,.55));
   transition:transform .4s var(--spring)}
+header.top img.icon:hover{transform:scale(1.12) rotate(-4deg)}
 header.top img.icon:hover{transform:scale(1.15) rotate(-4deg)}
 .t h1{font-size:.78rem; letter-spacing:.05em; line-height:1.7; text-shadow:2px 2px 0 rgba(0,0,0,.85)}
 .t .sub{font-size:.8rem}
@@ -588,7 +589,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 <!-- APP -->
 <div id="app">
   <header class="top">
-    <img class="icon" src="/static/icon.png" onerror="this.style.display='none'">
+    <img class="icon" id="hdr-logo" src="/static/favicon-192.png" alt="Califree" onerror="this.style.display='none'">
     <div class="t">
       <h1 class="pxfont"><span id="brand">Serve Actual</span>
         <button id="name-edit" class="iconbtn hidden" title="Cambiar nombre del panel" onclick="editName()">✏️</button></h1>
@@ -2182,6 +2183,22 @@ async function changePw(){
   document.addEventListener('mouseout', e=>{
     if (e.target.closest && e.target.closest('.slot.has')) tip.style.display='none';
   });
+})();
+
+/* ---------- logo: ciclo de colores al hover ---------- */
+const LOGO_MAIN='/static/favicon-192.png';
+const LOGO_VARIANTS=['green','cyan','gold','red','blue','stone'].map(c=>`/static/logo-c-${c}.png`);
+(function(){
+  LOGO_VARIANTS.forEach(u=>{ const i=new Image(); i.src=u; });   // precarga sin parpadeo
+  let t=null, i=0;
+  const wire=()=>{
+    const el=$('hdr-logo'); if(!el) return;
+    el.addEventListener('mouseenter',()=>{ if(t) return;
+      el.src=LOGO_VARIANTS[i++%LOGO_VARIANTS.length];
+      t=setInterval(()=>{ el.src=LOGO_VARIANTS[i++%LOGO_VARIANTS.length]; },380); });
+    el.addEventListener('mouseleave',()=>{ clearInterval(t); t=null; el.src=LOGO_MAIN; });
+  };
+  wire();
 })();
 
 /* ---------- arranque ---------- */
