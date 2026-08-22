@@ -13,29 +13,29 @@ jobs:
 
       - name: Preparar llave SSH del robot
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy
-          chmod 600 ~/.ssh/deploy
-          printf "Host mc\n  HostName 132.145.136.215\n  User ubuntu\n  IdentityFile ~/.ssh/deploy\n  StrictHostKeyChecking accept-new\n" > ~/.ssh/config
+          mkdir -p $HOME/.ssh
+          echo "${{ secrets.DEPLOY_KEY }}" > $HOME/.ssh/deploy
+          chmod 600 $HOME/.ssh/deploy
+          printf "Host mc\n  HostName 132.145.136.215\n  User ubuntu\n  IdentityFile %s/.ssh/deploy\n  StrictHostKeyChecking accept-new\n" "$HOME" > $HOME/.ssh/config
 
       - name: Copiar el código al servidor
         run: |
-          rsync -avz -e "ssh -F ~/.ssh/config" server.py nbt.py get-icons.py mc:panel/
-          rsync -avz -e "ssh -F ~/.ssh/config" static/ mc:panel/static/
-          rsync -avz -e "ssh -F ~/.ssh/config" scripts/ mc:panel/scripts/
+          rsync -avz -e "ssh -F $HOME/.ssh/config" server.py nbt.py get-icons.py mc:panel/
+          rsync -avz -e "ssh -F $HOME/.ssh/config" static/ mc:panel/static/
+          rsync -avz -e "ssh -F $HOME/.ssh/config" scripts/ mc:panel/scripts/
 
       - name: Regenerar iconos si cambió el generador
         run: |
           if git diff --name-only HEAD^ HEAD 2>/dev/null | grep -q "get-icons.py"; then
             echo "get-icons.py cambió — regenerando renders (1-2 min)…"
-            ssh -F ~/.ssh/config mc "python3 ~/panel/get-icons.py"
+            ssh -F $HOME/.ssh/config mc "python3 ~/panel/get-icons.py"
           else
             echo "sin cambios en el generador de iconos"
           fi
 
       - name: Reiniciar el panel y verificar pulso
         run: |
-          ssh -F ~/.ssh/config mc "sudo systemctl restart panel"
+          ssh -F $HOME/.ssh/config mc "sudo systemctl restart panel"
           sleep 4
-          ssh -F ~/.ssh/config mc "curl -s -m 8 http://127.0.0.1:8444/api/branding"
+          ssh -F $HOME/.ssh/config mc "curl -s -m 8 http://127.0.0.1:8444/api/branding"
           echo " — panel vivo ✓"
