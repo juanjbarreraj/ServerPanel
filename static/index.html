@@ -1144,6 +1144,11 @@ function show(id){
 }
 
 /* ---------- dashboard ---------- */
+let NAME2UUID={};
+async function ensureUuids(){
+  if (Object.keys(NAME2UUID).length) return;
+  try{ const r=await api('/api/players'); r.players.forEach(p=>{ NAME2UUID[p.name]=p.uuid; }); }catch(_){}
+}
 async function refreshStatus(){
   let s; try{ s=await api('/api/status'); }catch(e){ return; }
   const up = s.state==='active' && s.reachable;
@@ -1160,9 +1165,15 @@ async function refreshStatus(){
   $('k-wl').textContent = s.whitelist_count+' '+(LANG==='en'?'players':'jugadores');
   $('k-engine').textContent = s.engine==='paper' ? 'Paper (plugins ✓)' : 'Vanilla';
   const chips=$('online-chips');
-  chips.innerHTML = s.online.length
-    ? s.online.map(n=>`<span class="chip"><img class="avatar" src="https://mc-heads.net/avatar/${esc(n)}/26"><span class="dot good"></span>${esc(n)}</span>`).join('')
-    : `<span class="chip">${t('nobody')}</span>`;
+  if (s.online.length){
+    await ensureUuids();
+    chips.innerHTML = s.online.map(n=>`<span class="chip"><img class="avatar" alt=""><span class="dot good"></span>${esc(n)}</span>`).join('');
+    chips.querySelectorAll('img.avatar').forEach((im,ix)=>{
+      const n=s.online[ix], u=NAME2UUID[n];
+      if (u) mcFace(im, u, n);                                   // cara fresca del propio panel
+      else im.src=`https://mc-heads.net/avatar/${encodeURIComponent(n)}/26`;
+    });
+  } else chips.innerHTML = `<span class="chip">${t('nobody')}</span>`;
   const now=Date.now();
   if (s.tick_ms!=null) tickHist.push([now,s.tick_ms]);
   if (gb!=null) memHist.push([now,gb]);
@@ -1254,6 +1265,7 @@ function renderPGrid(){
 async function loadPlayers(){
   const r = await api('/api/players');
   PLAYERS_CACHE = r.players;
+  r.players.forEach(p=>{ NAME2UUID[p.name]=p.uuid; });
   psortFill();
   renderPGrid();
 }
