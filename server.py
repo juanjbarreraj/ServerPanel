@@ -287,12 +287,24 @@ def player_stats():
     out = []
     sdir = stats_dir()
     ddir = sdir.parent / "data"
-    for f in sorted(sdir.glob("*.json")):
-        uuid = f.stem
+    files = sorted(sdir.glob("*.json"))
+    allstats = {}
+    for f in files:
         try:
-            st = json.loads(f.read_text()).get("stats", {}).get("minecraft:custom", {})
+            allstats[f.stem] = json.loads(f.read_text()).get("stats", {})
         except Exception:
-            st = {}
+            allstats[f.stem] = {}
+    # "bloques puestos": solo se puede minar lo que es bloque → la unión de ids
+    # minados por todos sirve de censo de bloques para filtrar los "usados"
+    block_ids = set()
+    for st in allstats.values():
+        block_ids.update(st.get("minecraft:mined", {}).keys())
+    for f in files:
+        uuid = f.stem
+        full = allstats.get(uuid, {})
+        st = full.get("minecraft:custom", {})
+        used = full.get("minecraft:used", {})
+        placed = sum(v for k, v in used.items() if k in block_ids)
         name = names.get(uuid, uuid[:8])
         dat = ddir / f"{uuid}.dat"
         last_seen = dat.stat().st_mtime if dat.exists() else f.stat().st_mtime
@@ -303,6 +315,7 @@ def player_stats():
             "mob_kills": st.get("minecraft:mob_kills", 0),
             "player_kills": st.get("minecraft:player_kills", 0),
             "walked_km": round(st.get("minecraft:walk_one_cm", 0) / 100000, 1),
+            "blocks_placed": placed,
             "jumps": st.get("minecraft:jump", 0),
             "damage_taken": round(st.get("minecraft:damage_taken", 0) / 10, 0),
             "damage_dealt": round(st.get("minecraft:damage_dealt", 0) / 10, 0),

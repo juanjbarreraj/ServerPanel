@@ -443,12 +443,18 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .pcardm.player img{width:40px; height:40px}
 .pcardm.player .arrow{width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,.10);
   display:flex; align-items:center; justify-content:center; font-weight:bold; color:var(--ink2); flex:none}
-.pv-layout{display:grid; grid-template-columns:340px 1fr; gap:14px; align-items:start}
+.pv-layout{display:grid; grid-template-columns:320px 1fr; gap:16px; align-items:start}
 @media(max-width:900px){.pv-layout{grid-template-columns:1fr}}
 .pv-left{text-align:center}
 #pv-canvas{width:100%; max-width:300px; height:360px; margin:0 auto; display:block; cursor:grab}
-.pv-tiles{margin-bottom:14px}
-.pv-cols{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; align-items:start}
+.pv-tiles{margin-bottom:16px; gap:12px}
+.pvt{display:block; padding:12px 14px}
+.pvt .lab{margin-bottom:7px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.pvt-val{background:var(--slotbg); border-radius:6px; padding:9px 10px; text-align:center;
+  font-family:"Press Start 2P",monospace; font-size:clamp(.72rem,1.4vw,.95rem); line-height:1.35;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -1px -1px 0 rgba(255,255,255,.05);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.pv-cols{display:grid; grid-template-columns:repeat(auto-fit,minmax(270px,1fr)); gap:16px; align-items:start}
 .statcol h3{margin-bottom:2px}
 .statcol .sctotal{display:flex; justify-content:space-between; padding:7px 4px; border-bottom:2px solid rgba(255,255,255,.14);
   font-weight:bold; margin-bottom:4px}
@@ -614,7 +620,13 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- PLAYERS -->
   <section id="tab-players" class="hidden">
     <div class="card" id="pgrid-card">
-      <h3 data-i18n="players_book">Libro de jugadores</h3>
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:space-between">
+        <h3 style="margin:0" data-i18n="players_book">Libro de jugadores</h3>
+        <div style="display:flex; align-items:center; gap:8px">
+          <span class="lab" data-i18n="sort_by">Ordenar por</span>
+          <select id="psort" class="sunk" onchange="psortChange()"></select>
+        </div>
+      </div>
       <div class="pgrid" id="pgrid"></div>
       <div class="note" data-i18n="pl_note">Las estadísticas vienen directo de los archivos del servidor. Toca un jugador para ver su ficha.</div>
     </div>
@@ -860,6 +872,8 @@ const I18N = {
   pl_note:'Las estadísticas vienen directo de los archivos del servidor. Toca un jugador para ver su ficha.',
   pl_empty:'Aún no hay estadísticas — aparecen cuando la gente juega.', collecting:'recolectando datos…',
   back_players:'← Todos los jugadores', inv_btn:'🎒 Inventario', hist_add:'➕ Subir skin antigua',
+  sort_by:'Ordenar por', sort_alpha:'Alfabético (A-Z)', sort_hours:'Más horas jugadas', sort_mobs:'Más mobs matados',
+  sort_placed:'Más bloques puestos', sort_deaths:'Más muertes', sort_pvp:'Más jugadores matados',
   st_dist:'📏 Distancias (bloques)', st_mined:'⛏️ Bloques rotos', st_used:'🧰 Items usados', st_killed:'⚔️ Mobs matados',
   st_total:'Total', see_all:'Ver todo ({0}) ▾', see_less:'Ver menos ▴',
   dist_elytra:'Con élytros', dist_walk:'Caminando', dist_sprint:'Corriendo', dist_walk_water:'Sobre el agua',
@@ -891,6 +905,8 @@ const I18N = {
   pl_note:'Stats come straight from the server files. Tap a player to open their card.',
   pl_empty:'No stats yet — they show up once people play.', collecting:'collecting data…',
   back_players:'← All players', inv_btn:'🎒 Inventory', hist_add:'➕ Upload old skin',
+  sort_by:'Sort by', sort_alpha:'Alphabetical (A-Z)', sort_hours:'Most hours played', sort_mobs:'Most mobs killed',
+  sort_placed:'Most blocks placed', sort_deaths:'Most deaths', sort_pvp:'Most players killed',
   st_dist:'📏 Distance (blocks)', st_mined:'⛏️ Blocks broken', st_used:'🧰 Items used', st_killed:'⚔️ Entities killed',
   st_total:'Total', see_all:'See all ({0}) ▾', see_less:'See less ▴',
   dist_elytra:'By Elytra', dist_walk:'Walked', dist_sprint:'Sprinted', dist_walk_water:'Walked on water',
@@ -1174,20 +1190,57 @@ function drawChart(svgId,tipId,pts,color,unit,guide){
 
 /* ---------- players ---------- */
 let PLAYERS_CACHE = [];
-async function loadPlayers(){
-  const r = await api('/api/players');
-  PLAYERS_CACHE = r.players;
+const PSORTS = [
+  ['alpha',  p=>0,                l=>l('sort_alpha')],
+  ['hours',  p=>-p.play_hours,    l=>l('sort_hours')],
+  ['mobs',   p=>-p.mob_kills,     l=>l('sort_mobs')],
+  ['placed', p=>-(p.blocks_placed||0), l=>l('sort_placed')],
+  ['deaths', p=>-p.deaths,        l=>l('sort_deaths')],
+  ['pvp',    p=>-p.player_kills,  l=>l('sort_pvp')],
+];
+let PSORT = 'hours';
+try{ PSORT = localStorage.getItem('panel_psort') || 'hours'; }catch(_){}
+function psortFill(){
+  const sel=$('psort'); if(!sel) return;
+  sel.innerHTML = PSORTS.map(([k,,lab])=>`<option value="${k}"${k===PSORT?' selected':''}>${lab(t)}</option>`).join('');
+}
+function psortChange(){
+  PSORT=$('psort').value;
+  try{ localStorage.setItem('panel_psort', PSORT); }catch(_){}
+  renderPGrid();
+}
+function psortStat(p){
+  switch(PSORT){
+    case 'mobs': return `⚔️ ${fmtN(p.mob_kills)}`;
+    case 'placed': return `🧱 ${fmtN(p.blocks_placed||0)}`;
+    case 'deaths': return `💀 ${fmtN(p.deaths)}`;
+    case 'pvp': return `🏹 ${fmtN(p.player_kills)}`;
+    case 'hours': return `⏱️ ${fmtN(p.play_hours)} h`;
+    default: return p.online ? t('online_tag').replace(/[()]/g,'') : ago(p.last_seen);
+  }
+}
+function renderPGrid(){
   const grid=$('pgrid'); grid.innerHTML='';
-  for (const p of r.players){
+  const entry=PSORTS.find(s=>s[0]===PSORT)||PSORTS[1];
+  const list=[...PLAYERS_CACHE];
+  if (PSORT==='alpha') list.sort((a,b)=>a.name.localeCompare(b.name,'es',{sensitivity:'base'}));
+  else list.sort((a,b)=>entry[1](a)-entry[1](b) || a.name.localeCompare(b.name,'es',{sensitivity:'base'}));
+  for (const p of list){
     const c=document.createElement('div'); c.className='pcardm player';
     c.onclick=()=>openPView(p.uuid, p.name, p.online);
     c.innerHTML=`<img src="https://mc-heads.net/avatar/${esc(p.name)}/40" onerror="mcFace(this,'${p.uuid}')">
       <div style="min-width:0"><b style="display:block; overflow:hidden; text-overflow:ellipsis">${esc(p.name)}</b>
-      <span class="c"><span class="dot ${p.online?'good':'off'}"></span>${p.online?t('online_tag').replace(/[()]/g,''):ago(p.last_seen)}</span></div>
+      <span class="c"><span class="dot ${p.online?'good':'off'}"></span>${psortStat(p)}</span></div>
       <span class="arrow">→</span>`;
     grid.appendChild(c);
   }
-  if (!r.players.length) grid.innerHTML=`<div class="note">${t('pl_empty')}</div>`;
+  if (!list.length) grid.innerHTML=`<div class="note">${t('pl_empty')}</div>`;
+}
+async function loadPlayers(){
+  const r = await api('/api/players');
+  PLAYERS_CACHE = r.players;
+  psortFill();
+  renderPGrid();
 }
 
 /* ---------- vista de jugador (skin 3D + estadísticas Aternos) ---------- */
@@ -1211,7 +1264,7 @@ async function openPView(uuid, name, online){
   $('pv-dot').innerHTML=`<span class="dot ${online?'good':'off'}"></span>`;
   $('pv-namemc').href='https://namemc.com/profile/'+encodeURIComponent(name);
   const invbtn=$('pv-invbtn');
-  const canInv = ME.role==='admin' || hasPerm('player_actions');
+  const canInv = ME.role==='admin';   // el X-ray de inventario es SOLO del admin
   invbtn.classList.toggle('hidden', !canInv);
   if (canInv) invbtn.onclick=()=>openPlayer(uuid, name, online);
   $('pv-addskin').classList.toggle('hidden', !(ME.role==='admin'||ME.role==='mod'));
@@ -1266,22 +1319,26 @@ function pvStrip(info){
     d.appendChild(c); d.appendChild(lab); strip.appendChild(d);
   });
 }
+const ICON_ALIAS={potatoes:'potato', carrots:'carrot', beetroots:'beetroot', cocoa:'cocoa_beans',
+  sweet_berry_bush:'sweet_berries', cave_vines:'glow_berries', redstone_wire:'redstone', tripwire:'string',
+  melon_stem:'melon_seeds', pumpkin_stem:'pumpkin_seeds', bamboo_sapling:'bamboo', lava:'lava_bucket', water:'water_bucket'};
+function statIcon(id){ return `/icons/${ICON_ALIAS[id]||id}.png`; }
 function pvStats(s){
   const b=s.base||{};
   $('pv-tiles').innerHTML = [
-    ['⏱️', t('th_hours'), b.play_hours!=null?fmtN(b.play_hours):'—'],
-    ['💀', t('th_deaths'), fmtN(b.deaths||0)],
-    ['⚔️', t('th_mobs'), fmtN(b.mob_kills||0)],
-    ['🏹', t('th_pvp'), fmtN(b.player_kills||0)],
-    ['🕐', t('th_seen'), b.last_seen?ago(b.last_seen):'—'],
-  ].map(([e,l,v])=>`<div class="card tile"><span class="ti-e">${e}</span><div><div class="lab">${l}</div><div class="val px" style="font-size:1.05rem">${v}</div></div></div>`).join('');
+    [t('th_hours'), b.play_hours!=null?fmtN(b.play_hours):'—'],
+    [t('th_deaths'), fmtN(b.deaths||0)],
+    [t('th_mobs'), fmtN(b.mob_kills||0)],
+    [t('th_pvp'), fmtN(b.player_kills||0)],
+    [t('th_seen'), b.last_seen?ago(b.last_seen):'—'],
+  ].map(([l,v])=>`<div class="card tile pvt"><div class="lab">${l}</div><div class="pvt-val">${v}</div></div>`).join('');
   const cols=$('pv-cols'); cols.innerHTML='';
   cols.appendChild(statCol(t('st_dist'), s.distance.total, s.distance.rows.map(r=>({
     icon:null, emo:DIST_ORDER_EMO[r.id]||'📏', name:t('dist_'+r.id), n:r.n})), 'dist'));
   cols.appendChild(statCol(t('st_mined'), s.mined.total, s.mined.items.map(r=>({
-    icon:`/icons/${r.id}.png`, emo:'⬜', name:prettify(r.id), n:r.n})), 'mined'));
+    icon:statIcon(r.id), emo:'⬜', name:prettify(r.id), n:r.n})), 'mined'));
   cols.appendChild(statCol(t('st_used'), s.used.total, s.used.items.map(r=>({
-    icon:`/icons/${r.id}.png`, emo:'🧰', name:prettify(r.id), n:r.n})), 'used'));
+    icon:statIcon(r.id), emo:'🧰', name:prettify(r.id), n:r.n})), 'used'));
   cols.appendChild(statCol(t('st_killed'), s.killed.total, s.killed.items.map(r=>({
     icon:`/icons/${r.id}_spawn_egg.png`, emo:MOB_EMO[r.id]||'🐾', name:prettify(r.id), n:r.n})), 'killed'));
 }
