@@ -37,11 +37,17 @@ DEFAULT_PERMS = {
                "backups": False, "say": False},
 }
 ALL_PERMS = ["view_dashboard", "view_players", "view_console", "whitelist",
-             "ban", "kick", "restart", "backups", "say", "player_actions", "memories"]
+             "ban", "kick", "restart", "backups", "say", "player_actions",
+             "memories", "memories_upload"]
 DEFAULT_PERMS["mod"]["player_actions"] = True
 DEFAULT_PERMS["viewer"]["player_actions"] = False
-DEFAULT_PERMS["mod"]["memories"] = True        # los moderadores ven y suben fotos
-DEFAULT_PERMS["viewer"]["memories"] = False
+DEFAULT_PERMS["mod"]["memories"] = True         # ver memorias
+DEFAULT_PERMS["mod"]["memories_upload"] = True  # subir fotos
+DEFAULT_PERMS["viewer"]["memories"] = True
+DEFAULT_PERMS["viewer"]["memories_upload"] = False
+# vista pública (entra con el PIN compartido): solo mirar + subir a memorias
+DEFAULT_PERMS["public"] = {"view_dashboard": True, "view_players": True,
+                           "memories": True, "memories_upload": True}
 
 # ------------------------------------------------------------------ helpers
 def hash_pw(pw: str) -> str:
@@ -103,6 +109,8 @@ def current_user():
             return None
     except Exception:
         return None
+    if name == "__public__":
+        return {"name": "invitado", "role": "public", "perms": {}, "must_change": False}
     users = load_users()
     u = users.get(name)
     if not u:
@@ -318,6 +326,10 @@ def api_login():
         _attempts.setdefault(ip, []).append(time.time())
         audit(name or "?", f"FAILED login from {ip}")
         return jsonify(error="Usuario o contraseña incorrectos"), 401
+    if u.get("totp"):
+        tmp = sign(f"2fa|{name}|{time.time() + 180}")
+        audit(name, f"password OK, esperando codigo 2FA ({ip})")
+        return jsonify(need_2fa=True, token=tmp)
     expires = time.time() + SESSION_HOURS * 3600
     tok = sign(f"{name}|{expires}")
     resp = jsonify(ok=True, user={"name": name, "role": u["role"],
@@ -326,6 +338,78 @@ def api_login():
     resp.set_cookie("panel_session", tok, httponly=True, secure=True,
                     samesite="Strict", max_age=SESSION_HOURS * 3600)
     audit(name, f"logged in from {ip}")
+    return resp
+
+# ---------- TOTP (2FA) — implementación pura, RFC 6238 ----------
+def _totp_code(secret_b32: str, counter: int) -> str:
+    key = base64.b32decode(secret_b32)
+    msg = struct.pack(">Q", counter)
+    h = hmac.new(key, msg, hashlib.sha1).digest()
+    o = h[19] & 0x0F
+    num = (struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % 1000000
+    return f"{num:06d}"
+
+def _totp_ok(secret_b32: str, code: str) -> bool:
+    try:
+        code = re.sub(r"\D", "", code or "")[:6]
+        now = int(time.time() // 30)
+        return any(hmac.compare_digest(_totp_code(secret_b32, now + d), code)
+                   for d in (-1, 0, 1))
+    except Exception:
+        return False
+
+@app.post("/api/login2")
+def api_login2():
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "?")
+    if rate_limited(ip):
+        return jsonify(error="Demasiados intentos — espera 5 minutos"), 429
+    body = request.get_json(silent=True) or {}
+    payload = unsign(body.get("token") or "")
+    if not payload or not payload.startswith("2fa|"):
+        return jsonify(error="Sesión 2FA inválida — vuelve a ingresar"), 401
+    _tag, name, exp = payload.split("|")
+    if time.time() > float(exp):
+        return jsonify(error="El código tardó demasiado — vuelve a ingresar"), 401
+    users = load_users()
+    u = users.get(name)
+    if not u or not u.get("totp"):
+        return jsonify(error="Sesión 2FA inválida"), 401
+    if not _totp_ok(u["totp"], body.get("code")):
+        _attempts.setdefault(ip, []).append(time.time())
+        audit(name, f"FAILED 2FA code from {ip}")
+        return jsonify(error="Código incorrecto"), 401
+    expires = time.time() + SESSION_HOURS * 3600
+    tok = sign(f"{name}|{expires}")
+    resp = jsonify(ok=True, user={"name": name, "role": u["role"],
+                                  "perms": u.get("perms", {}),
+                                  "must_change": u.get("must_change", False)})
+    resp.set_cookie("panel_session", tok, httponly=True, secure=True,
+                    samesite="Strict", max_age=SESSION_HOURS * 3600)
+    audit(name, f"logged in with 2FA from {ip}")
+    return resp
+
+# ---------- PIN público ----------
+@app.post("/api/pin")
+def api_pin():
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "?")
+    if rate_limited("pin:" + ip):
+        return jsonify(error="rate", retry=300), 429
+    body = request.get_json(silent=True) or {}
+    pin = (body.get("pin") or "").strip()
+    real = get_settings().get("public_pin")
+    if not real:
+        return jsonify(error="unset"), 503
+    if not pin or not hmac.compare_digest(pin.lower(), real.lower()):
+        _attempts.setdefault("pin:" + ip, []).append(time.time())
+        audit("?", f"FAILED public PIN from {ip}")
+        return jsonify(error="wrong"), 401
+    expires = time.time() + 30 * 86400
+    tok = sign(f"__public__|{expires}")
+    resp = jsonify(ok=True, user={"name": "invitado", "role": "public",
+                                  "perms": {}, "must_change": False})
+    resp.set_cookie("panel_session", tok, httponly=True, secure=True,
+                    samesite="Strict", max_age=30 * 86400)
+    audit("public", f"PIN accepted from {ip}")
     return resp
 
 @app.post("/api/logout")
@@ -1428,6 +1512,8 @@ def api_users_create():
     role = body.get("role") or "viewer"
     if not re.match(r"^[A-Za-z0-9_.-]{2,24}$", name):
         return jsonify(error="Usuario inválido (letras/números, 2-24 caracteres)"), 400
+    if name.lower() in ("__public__", "invitado", "public"):
+        return jsonify(error="Ese nombre está reservado"), 400
     if len(pw) < 8:
         return jsonify(error="La contraseña temporal debe tener 8+ caracteres"), 400
     if role not in ("admin", "mod", "viewer"):
@@ -1483,34 +1569,85 @@ def api_users_delete():
     audit(u["name"], f"deleted user {name}")
     return jsonify(ok=True)
 
-# ------------------------------------------------------------------ memorias del server (solo mods/admin)
+# ------------------------------------------------------------------ memorias del server
+# v5: dos niveles — GLOBALES (memories/) e INDIVIDUALES (memories/players/<uuid>/).
+# Ver: cualquiera con sesión (perm "memories"). Subir: perm "memories_upload"
+# (incluye al público con PIN; sistema de honor en carpetas individuales).
+# Borrar/editar: SOLO moderadores y admin. Descripción SIEMPRE obligatoria.
 MEM_DIR = PANEL_DIR / "memories"
 MEM_THUMBS = MEM_DIR / "thumbs"
 MEM_META = MEM_DIR / "memories.json"
+MEM_PLAYERS = MEM_DIR / "players"
 _mem_lock = threading.Lock()
 MEM_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
-def _mem_load():
+def _mem_paths(target):
+    """target: None/'global' -> global; uuid -> carpeta del jugador. -> (dir, thumbs, meta)"""
+    if not target or target == "global":
+        return MEM_DIR, MEM_THUMBS, MEM_META
+    d = MEM_PLAYERS / target
+    return d, d / "thumbs", d / "meta.json"
+
+def _mem_load(meta_f):
     try:
-        return json.loads(MEM_META.read_text())
+        return json.loads(meta_f.read_text())
     except Exception:
         return []
 
-def _mem_save(items):
-    MEM_DIR.mkdir(exist_ok=True)
-    tmp = MEM_META.with_suffix(".tmp")
+def _mem_save(meta_f, items):
+    meta_f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = meta_f.with_suffix(".tmp")
     tmp.write_text(json.dumps(items, ensure_ascii=False, indent=1))
-    tmp.replace(MEM_META)
+    tmp.replace(MEM_META if meta_f == MEM_META else meta_f)
+
+def _valid_player_target(target):
+    if not UUID_RE.match(target or ""):
+        return None
+    for e in whitelist():
+        if e.get("uuid", "").lower() == target:
+            return e.get("name") or usercache().get(target) or target[:8]
+    return None
 
 @app.get("/api/memories")
 def api_memories():
     u = require("memories")
-    items = sorted(_mem_load(), key=lambda m: -m.get("ts", 0))
-    return jsonify(memories=items, can_delete_any=(u["role"] == "admin"), me=u["name"])
+    items = sorted(_mem_load(MEM_META), key=lambda m: -m.get("ts", 0))
+    can_edit = u["role"] in ("mod", "admin")
+    return jsonify(memories=items, can_delete_any=can_edit, me=u["name"],
+                   can_upload=has_perm(u, "memories_upload"))
+
+@app.get("/api/memories/players")
+def api_memories_players():
+    require("memories")
+    out = []
+    for e in sorted(whitelist(), key=lambda x: (x.get("name") or "").lower()):
+        uid = (e.get("uuid") or "").lower()
+        if not UUID_RE.match(uid):
+            continue
+        meta = _mem_load(MEM_PLAYERS / uid / "meta.json")
+        cover = None
+        if meta:
+            newest = max(meta, key=lambda m: m.get("ts", 0))
+            cover = newest.get("thumb") or newest.get("file")
+        out.append({"uuid": uid, "name": e.get("name"), "count": len(meta), "cover": cover})
+    return jsonify(players=out)
+
+@app.get("/api/memories/player/<uuid>")
+def api_memories_player(uuid):
+    u = require("memories")
+    uuid = uuid.lower()
+    name = _valid_player_target(uuid)
+    if not name:
+        return jsonify(error="Ese jugador no está en la whitelist"), 404
+    items = sorted(_mem_load(MEM_PLAYERS / uuid / "meta.json"), key=lambda m: -m.get("ts", 0))
+    return jsonify(name=name, memories=items,
+                   can_delete_any=u["role"] in ("mod", "admin"),
+                   can_upload=has_perm(u, "memories_upload"))
 
 @app.post("/api/memories/upload")
 def api_memories_upload():
-    u = require("memories")
+    u = require("memories_upload")
     if not _csrf_ok():
         abort(403)
     f = request.files.get("file")
@@ -1521,94 +1658,425 @@ def api_memories_upload():
         ext = ".jpg"
     if ext not in MEM_EXT:
         return jsonify(error="Formato no válido — usa JPG, PNG, GIF o WebP (las HEIC de iPhone hay que convertirlas)"), 400
-    title = (request.form.get("title") or Path(f.filename).stem or "Recuerdo").strip()[:60]
-    MEM_DIR.mkdir(exist_ok=True)
-    MEM_THUMBS.mkdir(exist_ok=True)
+    title = (request.form.get("title") or "").strip()[:120]
+    if len(title) < 3:
+        return jsonify(error="La descripción es obligatoria (mínimo 3 letras)"), 400
+    target = (request.form.get("target") or "global").strip().lower()
+    if target != "global" and not _valid_player_target(target):
+        return jsonify(error="Ese jugador no está en la whitelist"), 404
+    mdir, mthumbs, mmeta = _mem_paths(target)
+    mdir.mkdir(parents=True, exist_ok=True)
+    mthumbs.mkdir(exist_ok=True)
     fname = f"mem-{int(time.time())}-{secrets.token_hex(3)}{ext}"
-    dest = MEM_DIR / fname
+    dest = mdir / fname
     f.save(dest)
     if dest.stat().st_size > 15_000_000:
         dest.unlink()
         return jsonify(error="Máximo 15 MB por foto"), 400
     w = h = 0
-    thumb = fname                     # si no hay Pillow, el thumb es la foto misma
+    thumb = fname
     try:
         from PIL import Image
         im = Image.open(dest)
         im.load()
         w, h = im.size
-        t = im.convert("RGB")
-        t.thumbnail((640, 640))
+        tt = im.convert("RGB")
+        tt.thumbnail((640, 640))
         tname = Path(fname).stem + ".jpg"
-        t.save(MEM_THUMBS / tname, "JPEG", quality=80, optimize=True)
+        tt.save(mthumbs / tname, "JPEG", quality=80, optimize=True)
         thumb = tname
     except Exception:
         pass
     with _mem_lock:
-        items = _mem_load()
+        items = _mem_load(mmeta)
         items.append({"file": fname, "thumb": thumb, "title": title,
                       "uploader": u["name"], "ts": int(time.time() * 1000), "w": w, "h": h})
-        _mem_save(items)
-    audit(u["name"], f"added memory photo {fname} ({title})")
+        _mem_save(mmeta, items)
+    audit(u["name"], f"added memory photo {fname} ({title}) target={target}")
     return jsonify(ok=True, output="Foto guardada en las Memorias del server")
 
 @app.post("/api/memories/delete")
 def api_memories_delete():
     u = require("memories")
-    if not _csrf_ok():
-        abort(403)
+    if u["role"] not in ("mod", "admin") or not _csrf_ok():
+        return jsonify(error="Solo los moderadores pueden borrar fotos"), 403
     body = request.get_json(silent=True) or {}
     fname = re.sub(r"[^A-Za-z0-9._-]", "", body.get("file") or "")
+    target = (body.get("target") or "global").strip().lower()
+    if target != "global" and not UUID_RE.match(target):
+        return jsonify(error="Destino inválido"), 400
+    mdir, mthumbs, mmeta = _mem_paths(target)
     with _mem_lock:
-        items = _mem_load()
-        hit = next((m for m in items if m["file"] == fname), None)
-        if not hit:
+        items = _mem_load(mmeta)
+        if not any(m["file"] == fname for m in items):
             return jsonify(error="Esa foto ya no existe"), 404
-        if u["role"] != "admin" and hit.get("uploader") != u["name"]:
-            return jsonify(error="Solo el admin (o quien subió la foto) puede borrarla"), 403
         items = [m for m in items if m["file"] != fname]
-        _mem_save(items)
+        _mem_save(mmeta, items)
     trash = MEM_DIR / "_removed"
     trash.mkdir(exist_ok=True)
-    src = MEM_DIR / fname
+    src = mdir / fname
     if src.exists():
-        src.rename(trash / f"{int(time.time())}-{fname}")
-    tb = MEM_THUMBS / (Path(fname).stem + ".jpg")
+        src.rename(trash / f"{int(time.time())}-{target}-{fname}")
+    tb = mthumbs / (Path(fname).stem + ".jpg")
     if tb.exists():
         tb.unlink()
-    audit(u["name"], f"removed memory photo {fname}")
+    audit(u["name"], f"removed memory photo {fname} target={target}")
     return jsonify(ok=True, output="Foto eliminada de las Memorias")
 
 @app.post("/api/memories/edit")
 def api_memories_edit():
     u = require("memories")
-    if not _csrf_ok():
-        abort(403)
+    if u["role"] not in ("mod", "admin") or not _csrf_ok():
+        return jsonify(error="Solo los moderadores pueden editar descripciones"), 403
     body = request.get_json(silent=True) or {}
     fname = re.sub(r"[^A-Za-z0-9._-]", "", body.get("file") or "")
-    title = (body.get("title") or "").strip()[:60]
-    if not title:
-        return jsonify(error="El título no puede quedar vacío"), 400
+    title = (body.get("title") or "").strip()[:120]
+    target = (body.get("target") or "global").strip().lower()
+    if len(title) < 3:
+        return jsonify(error="La descripción no puede quedar vacía"), 400
+    if target != "global" and not UUID_RE.match(target):
+        return jsonify(error="Destino inválido"), 400
+    _d, _t, mmeta = _mem_paths(target)
     with _mem_lock:
-        items = _mem_load()
+        items = _mem_load(mmeta)
         hit = next((m for m in items if m["file"] == fname), None)
         if not hit:
             return jsonify(error="Esa foto ya no existe"), 404
-        if u["role"] != "admin" and hit.get("uploader") != u["name"]:
-            return jsonify(error="Solo quien subió la foto (o el admin) puede cambiar el título"), 403
         hit["title"] = title
-        _mem_save(items)
+        _mem_save(mmeta, items)
     audit(u["name"], f"renamed memory {fname} -> {title}")
-    return jsonify(ok=True, output="Título actualizado")
+    return jsonify(ok=True, output="Descripción actualizada")
 
 @app.get("/memories/<path:p>")
 def mem_file(p):
     require("memories")
-    name = re.sub(r"[^A-Za-z0-9._-]", "", Path(p).name)
-    f = (MEM_THUMBS / name) if p.startswith("thumbs/") else (MEM_DIR / name)
+    parts = [re.sub(r"[^A-Za-z0-9._-]", "", x) for x in p.split("/") if x]
+    if parts and parts[0] == "p":                      # individuales: p/<uuid>/[thumbs/]<file>
+        if len(parts) == 3 and UUID_RE.match(parts[1]):
+            f = MEM_PLAYERS / parts[1] / parts[2]
+        elif len(parts) == 4 and parts[2] == "thumbs" and UUID_RE.match(parts[1]):
+            f = MEM_PLAYERS / parts[1] / "thumbs" / parts[3]
+        else:
+            abort(404)
+    elif parts and parts[0] == "thumbs" and len(parts) == 2:
+        f = MEM_THUMBS / parts[1]
+    elif len(parts) == 1:
+        f = MEM_DIR / parts[0]
+    else:
+        abort(404)
     if not f.exists():
         abort(404)
     return send_file(f, max_age=86400)
+
+# ------------------------------------------------------------------ skins (viewer 3D + archivo propio)
+SKINS_DIR = DATA_DIR / "skins"
+SKINS_CUR = SKINS_DIR / "current"
+SKINS_HIS = SKINS_DIR / "history"
+
+def _fetch_skin_info(uuid):
+    """Mojang session server -> (skin_url, slim). Lanza excepción si falla."""
+    import urllib.request
+    uid = uuid.replace("-", "")
+    with urllib.request.urlopen(
+            f"https://sessionserver.mojang.com/session/minecraft/profile/{uid}", timeout=8) as r:
+        prof = json.loads(r.read())
+    for prop in prof.get("properties", []):
+        if prop.get("name") == "textures":
+            tex = json.loads(base64.b64decode(prop["value"]))
+            skin = tex.get("textures", {}).get("SKIN", {})
+            url = skin.get("url")
+            slim = skin.get("metadata", {}).get("model") == "slim"
+            return url, slim
+    return None, False
+
+def _skin_refresh(uuid, force=False):
+    """Baja/actualiza la skin actual (cache 1h). -> (png_path|None, slim)"""
+    import urllib.request
+    SKINS_CUR.mkdir(parents=True, exist_ok=True)
+    png = SKINS_CUR / f"{uuid}.png"
+    meta_f = SKINS_CUR / f"{uuid}.json"
+    meta = {}
+    try:
+        meta = json.loads(meta_f.read_text())
+    except Exception:
+        pass
+    if not force and png.exists() and time.time() - meta.get("fetched", 0) < 3600:
+        return png, meta.get("slim", False)
+    try:
+        url, slim = _fetch_skin_info(uuid)
+        if not url:
+            raise ValueError("sin skin")
+        with urllib.request.urlopen(url, timeout=8) as r:
+            data = r.read()
+        png.write_bytes(data)
+        h = hashlib.sha1(data).hexdigest()[:10]
+        meta = {"fetched": int(time.time()), "slim": slim, "hash": h, "url": url}
+        meta_f.write_text(json.dumps(meta))
+        # archivo histórico: guarda solo si la skin cambió
+        hdir = SKINS_HIS / uuid
+        hdir.mkdir(parents=True, exist_ok=True)
+        idx_f = hdir / "index.json"
+        try:
+            idx = json.loads(idx_f.read_text())
+        except Exception:
+            idx = []
+        if not any(e.get("hash") == h for e in idx):
+            day = time.strftime("%Y-%m-%d")
+            fn = f"{day}-{h}.png"
+            (hdir / fn).write_bytes(data)
+            idx.append({"date": day, "file": fn, "hash": h, "slim": slim})
+            idx_f.write_text(json.dumps(idx))
+        return png, slim
+    except Exception:
+        if png.exists():
+            return png, meta.get("slim", False)
+        return None, False
+
+@app.get("/api/skin/<uuid>")
+def api_skin(uuid):
+    require("view_players")
+    uuid = uuid.lower()
+    if not UUID_RE.match(uuid):
+        abort(400)
+    png, _slim = _skin_refresh(uuid)
+    if png is None:
+        abort(404)
+    return send_file(png, max_age=1800)
+
+@app.get("/api/skininfo/<uuid>")
+def api_skininfo(uuid):
+    require("view_players")
+    uuid = uuid.lower()
+    if not UUID_RE.match(uuid):
+        abort(400)
+    _png, slim = _skin_refresh(uuid)
+    idx = []
+    try:
+        idx = json.loads((SKINS_HIS / uuid / "index.json").read_text())
+    except Exception:
+        pass
+    idx.sort(key=lambda e: e.get("date", ""), reverse=True)
+    return jsonify(slim=slim, history=idx, name=_uuid_name(uuid))
+
+@app.get("/skinhist/<uuid>/<fn>")
+def api_skin_hist(uuid, fn):
+    require("view_players")
+    uuid = uuid.lower()
+    fn = re.sub(r"[^A-Za-z0-9.-]", "", fn)
+    f = SKINS_HIS / uuid / fn
+    if not UUID_RE.match(uuid) or not f.exists():
+        abort(404)
+    return send_file(f, max_age=604800)
+
+def _skin_snapshot_loop():
+    """Hilo diario: fotografía la skin de cada whitelisted (el archivo crece solo)."""
+    mark = SKINS_DIR / "last_snapshot.txt"
+    while True:
+        try:
+            today = time.strftime("%Y-%m-%d")
+            done = mark.read_text().strip() if mark.exists() else ""
+            if done != today:
+                for e in whitelist():
+                    uid = (e.get("uuid") or "").lower()
+                    if UUID_RE.match(uid):
+                        _skin_refresh(uid, force=True)
+                        time.sleep(2)
+                SKINS_DIR.mkdir(parents=True, exist_ok=True)
+                mark.write_text(today)
+        except Exception:
+            pass
+        time.sleep(3600)
+
+threading.Thread(target=_skin_snapshot_loop, daemon=True).start()
+
+# ------------------------------------------------------------------ librería 3D (se auto-descarga en el servidor)
+def _fetch_libs():
+    import urllib.request
+    dest = PANEL_DIR / "static" / "skinview3d.js"
+    if dest.exists() and dest.stat().st_size > 100_000:
+        return
+    for url in ("https://unpkg.com/skinview3d@3.4.1/bundles/skinview3d.bundle.js",
+                "https://cdn.jsdelivr.net/npm/skinview3d@3.4.1/bundles/skinview3d.bundle.js"):
+        try:
+            with urllib.request.urlopen(url, timeout=20) as r:
+                data = r.read()
+            if len(data) > 100_000:
+                dest.write_bytes(data)
+                return
+        except Exception:
+            continue
+
+threading.Thread(target=_fetch_libs, daemon=True).start()
+
+# ------------------------------------------------------------------ sistema (solo admin)
+SYS_LOG = DATA_DIR / "system.log"
+_sys_lock = threading.Lock()
+_sys_busy = {}
+
+def _syslog(line):
+    with open(SYS_LOG, "a") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {line}\n")
+
+def _sys_run_bg(job, cmd):
+    def worker():
+        _syslog(f"[{job}] iniciando: {' '.join(cmd)}")
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            out = (r.stdout or "") + (r.stderr or "")
+            for ln in out.splitlines()[-40:]:
+                _syslog(f"[{job}] {ln}")
+            _syslog(f"[{job}] terminó con código {r.returncode}")
+        except Exception as e:
+            _syslog(f"[{job}] ERROR: {e}")
+        finally:
+            _sys_busy.pop(job, None)
+    with _sys_lock:
+        if job in _sys_busy:
+            return False
+        _sys_busy[job] = time.time()
+    threading.Thread(target=worker, daemon=True).start()
+    return True
+
+def _require_admin():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    return u
+
+@app.get("/api/system/status")
+def api_system_status():
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    lines = []
+    try:
+        lines = SYS_LOG.read_text().splitlines()[-30:]
+    except Exception:
+        pass
+    s = get_settings()
+    users = load_users()
+    return jsonify(busy=list(_sys_busy.keys()), log=lines,
+                   pin_set=bool(s.get("public_pin")),
+                   engine=engine_kind(),
+                   skinlib=(PANEL_DIR / "static" / "skinview3d.js").exists(),
+                   totp_on=bool(users.get(u["name"], {}).get("totp")))
+
+@app.post("/api/system/set_pin")
+def api_system_set_pin():
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    pin = (body.get("pin") or "").strip()
+    if not (4 <= len(pin) <= 32):
+        return jsonify(error="El PIN debe tener entre 4 y 32 caracteres"), 400
+    s = get_settings()
+    s["public_pin"] = pin
+    SETTINGS_F.write_text(json.dumps(s))
+    audit(u["name"], "changed the public PIN")
+    return jsonify(ok=True, output="PIN público actualizado")
+
+@app.post("/api/system/restart_panel")
+def api_system_restart_panel():
+    u = _require_admin()
+    audit(u["name"], "panel restart from Sistema")
+    _syslog("[panel] reinicio solicitado desde el panel")
+    subprocess.Popen(["bash", "-c", "sleep 1; sudo systemctl restart panel"],
+                     start_new_session=True)
+    return jsonify(ok=True, output="Reiniciando el panel — vuelve en ~10 segundos")
+
+@app.post("/api/system/regen_icons")
+def api_system_regen_icons():
+    u = _require_admin()
+    ok = _sys_run_bg("iconos", ["python3", str(PANEL_DIR / "get-icons.py")])
+    audit(u["name"], "regen icons from Sistema")
+    return jsonify(ok=ok, output="Regenerando íconos (1-2 min) — mira el registro"
+                   if ok else "Ya hay una regeneración corriendo")
+
+@app.post("/api/system/migrate_paper")
+def api_system_migrate_paper():
+    u = _require_admin()
+    if engine_kind() == "paper":
+        return jsonify(error="El motor ya es Paper"), 400
+    script = PANEL_DIR / "scripts" / "migrate-to-paper.sh"
+    if not script.exists():
+        script = PANEL_DIR / "migrate-to-paper.sh"
+    ok = _sys_run_bg("paper", ["bash", str(script)])
+    audit(u["name"], "PAPER MIGRATION from Sistema")
+    return jsonify(ok=ok, output="Migrando a Paper — el server estará ~3 min fuera. Mira el registro."
+                   if ok else "Ya hay una migración corriendo")
+
+@app.get("/api/system/backup_extras")
+def api_system_backup_extras():
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    import tarfile
+    out = Path(f"/tmp/panel-extras-{int(time.time())}.tar.gz")
+    with tarfile.open(out, "w:gz") as tar:
+        tar.add(DATA_DIR, arcname="data")
+        if MEM_DIR.is_dir():
+            tar.add(MEM_DIR, arcname="memories")
+    audit(u["name"], "downloaded extras backup")
+    return send_file(out, as_attachment=True,
+                     download_name=f"panel-extras-{time.strftime('%Y%m%d')}.tar.gz")
+
+# ------------------------------------------------------------------ 2FA alta/baja (solo admin)
+@app.post("/api/2fa/setup")
+def api_2fa_setup():
+    u = _require_admin()
+    users = load_users()
+    sec = base64.b32encode(secrets.token_bytes(20)).decode()
+    users[u["name"]]["totp_pending"] = sec
+    save_users(users)
+    label = f"ServerPanel:{u['name']}"
+    uri = f"otpauth://totp/{label}?secret={sec}&issuer=Server%20of%20Califree&digits=6&period=30"
+    audit(u["name"], "2FA setup started")
+    return jsonify(secret=sec, otpauth=uri)
+
+@app.post("/api/2fa/confirm")
+def api_2fa_confirm():
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    users = load_users()
+    rec = users.get(u["name"], {})
+    sec = rec.get("totp_pending")
+    if not sec:
+        return jsonify(error="No hay activación pendiente"), 400
+    if not _totp_ok(sec, body.get("code")):
+        return jsonify(error="Código incorrecto — revisa la app y el reloj del teléfono"), 401
+    rec["totp"] = sec
+    rec.pop("totp_pending", None)
+    save_users(users)
+    audit(u["name"], "2FA ACTIVATED")
+    return jsonify(ok=True, output="2FA activado — desde ahora el login te pedirá el código")
+
+@app.post("/api/2fa/disable")
+def api_2fa_disable():
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    users = load_users()
+    rec = users.get(u["name"], {})
+    if not rec.get("totp"):
+        return jsonify(error="El 2FA no está activo"), 400
+    if not _totp_ok(rec["totp"], body.get("code")):
+        return jsonify(error="Código incorrecto"), 401
+    rec.pop("totp", None)
+    save_users(users)
+    audit(u["name"], "2FA disabled")
+    return jsonify(ok=True, output="2FA desactivado")
+
+# ------------------------------------------------------------------ security headers
+@app.after_request
+def _sec_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    resp.headers.setdefault("Content-Security-Policy",
+        "default-src 'self'; img-src 'self' data: https://mc-heads.net; "
+        "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' "
+        "https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+        "connect-src 'self'; frame-ancestors 'none'")
+    return resp
 
 # ------------------------------------------------------------------ static
 @app.get("/")

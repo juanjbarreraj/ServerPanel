@@ -377,6 +377,73 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   font-size:.8rem; font-weight:700; background:var(--slotbg);
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.09)}
 
+
+/* ============ portada (landing) ============ */
+#landing{display:none; position:fixed; inset:0; z-index:40; overflow:hidden;
+  background:radial-gradient(900px 600px at 50% 30%, #10251a 0%, transparent 60%),
+             linear-gradient(180deg, #0a0d11, #0c1116)}
+#landing .top-r{position:absolute; top:16px; right:16px; display:flex; gap:8px; z-index:5}
+.land-inner{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; gap:22px; padding:20px}
+.land-cube{width:96px; height:96px; image-rendering:pixelated;
+  filter:drop-shadow(0 18px 30px rgba(0,0,0,.6));
+  animation:cubedrop 1.1s cubic-bezier(.34,1.56,.64,1) both}
+@keyframes cubedrop{0%{transform:translateY(-52vh) scale(.9); opacity:0}
+  55%{transform:translateY(0) scale(1); opacity:1}
+  70%{transform:translateY(0) scale(1.18,.82)}
+  84%{transform:translateY(-14px) scale(.95,1.06)}
+  100%{transform:translateY(0) scale(1)}}
+.land-dust{position:absolute; width:7px; height:7px; background:#6fd44e; opacity:0;
+  image-rendering:pixelated; border-radius:1px}
+.land-title{font-family:'MCFont','Press Start 2P',monospace; font-size:clamp(15px,3.4vw,26px);
+  color:#fff; text-shadow:3px 3px 0 rgba(0,0,0,.85); min-height:1.4em; text-align:center;
+  letter-spacing:.5px}
+.land-title .cursor{display:inline-block; width:.55em; height:1em; background:#6fd44e;
+  vertical-align:-2px; margin-left:3px; animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+.land-sub{color:var(--ink3); font-size:.85rem; margin-top:-10px; opacity:0; transition:opacity .6s}
+.land-xp{width:min(340px,72vw); height:12px; border-radius:3px; background:#0e1410; position:relative;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.7), inset -2px -2px 0 rgba(255,255,255,.08), 0 0 0 2px #000}
+.land-xp i{display:block; height:100%; width:0%;
+  background:repeating-linear-gradient(90deg,#7ed957 0 14px,#59c13c 14px 17px); border-radius:3px;
+  box-shadow:0 0 12px rgba(111,212,78,.5); transition:width .25s linear}
+#land-pin{display:none; flex-direction:column; align-items:center; gap:14px;
+  animation:pop .6s var(--spring)}
+#land-pin .pin-card{padding:22px 26px; text-align:center; max-width:340px}
+#land-pin input{width:200px; text-align:center; letter-spacing:.2em; font-size:1.15rem;
+  padding:12px; background:rgba(5,7,9,.72); color:var(--ink); border:2px solid rgba(0,0,0,.75);
+  border-radius:4px; box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.07)}
+#land-pin input:focus{outline:none; box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), 0 0 0 2px var(--slime)}
+#land-pin.err .pin-card{animation:shake .4s}
+@keyframes shake{0%,100%{transform:translateX(0)} 25%{transform:translateX(-9px)} 75%{transform:translateX(9px)}}
+.langbtn{font-family:'MCFont','Press Start 2P',monospace; font-size:.68rem; padding:8px 12px}
+/* login ahora es modal */
+#login{display:none; position:fixed; inset:0; z-index:50; background:rgba(2,4,6,.75);
+  backdrop-filter:blur(8px); overflow-y:auto; padding:6vh 16px}
+#login .login-card{max-width:440px; margin:0 auto; animation:pop .5s var(--spring)}
+#f2a-row{display:none}
+/* pública: fila de historial de skins */
+.skinstrip{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px}
+.skinstrip .sk{width:44px; text-align:center; cursor:pointer; transition:transform .25s var(--spring)}
+.skinstrip .sk:hover{transform:scale(1.15)}
+.skinstrip canvas{width:36px; height:36px; image-rendering:pixelated; background:var(--slotbg);
+  border-radius:4px; box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.09)}
+.skinstrip .d{font-size:.55rem; color:var(--ink3); margin-top:2px}
+#skin-canvas{width:100%; max-width:320px; height:380px; margin:0 auto; display:block;
+  background:radial-gradient(300px 200px at 50% 20%, rgba(111,212,78,.08), transparent 70%);
+  border-radius:6px}
+.memtabs{display:flex; gap:6px; margin-bottom:14px}
+.memtabs button{flex:none}
+.pgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; margin-top:12px}
+.pcardm{display:flex; flex-direction:column; align-items:center; gap:8px; padding:14px 10px; cursor:pointer;
+  background:var(--slotbg); border-radius:6px;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.09);
+  transition:transform .25s var(--spring)}
+.pcardm:hover{animation:jelly .55s var(--spring); box-shadow:inset 2px 2px 0 rgba(0,0,0,.5),
+  inset -2px -2px 0 rgba(255,255,255,.09), 0 0 0 2px rgba(138,235,103,.5)}
+.pcardm img{width:44px; height:44px; image-rendering:pixelated; border-radius:4px}
+.pcardm b{font-size:.82rem} .pcardm .c{font-size:.66rem; color:var(--ink3)}
+
 /* ============ memorias del server ============ */
 .memgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(215px,1fr)); gap:18px; margin-top:14px}
 .frame{background:linear-gradient(180deg,#8a5d33,#6d4526 60%,#5d3a1f); padding:8px; border-radius:4px;
@@ -423,17 +490,52 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 <div class="pix" style="top:18%; left:30%"></div><div class="pix" style="top:40%; left:80%; animation-delay:1s"></div>
 <div class="pix" style="top:70%; left:15%; animation-delay:2s"></div><div class="pix" style="top:85%; left:60%; animation-delay:.5s"></div>
 
-<!-- LOGIN -->
-<div id="login" style="display:none">
+<!-- PORTADA -->
+<div id="landing">
+  <div class="top-r">
+    <button class="btn small ghost langbtn" onclick="toggleLang()"><span id="langlab">EN</span></button>
+    <button class="btn small ghost" onclick="showLogin()">🛡️ <span data-i18n="mods">Moderadores</span></button>
+  </div>
+  <div class="land-inner">
+    <img class="land-cube" id="land-cube" src="/icons/grass_block.png?v=9"
+         onerror="this.src='/static/ender_chest.png'">
+    <div class="land-title"><span id="land-txt"></span><span class="cursor" id="land-cur"></span></div>
+    <div class="land-sub" id="land-sub">Server of Califree · 2020—∞</div>
+    <div class="land-xp" id="land-xp"><i></i></div>
+    <div id="land-pin">
+      <div class="card pin-card">
+        <h3 data-i18n="pin_title">🔒 PIN de acceso</h3>
+        <div class="note" style="margin:2px 0 12px" data-i18n="pin_note">Este panel es privado — pídele el PIN a alguien del server.</div>
+        <input id="pin-in" maxlength="32" autocomplete="off"
+               onkeydown="if(event.key==='Enter')sendPin()">
+        <div class="err" id="pin-err"></div>
+        <button class="btn wide" onclick="sendPin()" data-i18n="pin_btn">Entrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- LOGIN (modal de moderadores) -->
+<div id="login" onclick="if(event.target.id==='login')hideLogin()">
   <div class="card login-card">
     <img class="banner" src="/banner.png" onerror="this.style.display='none'">
     <div class="login-inner">
       <h1 class="brand pxfont"><span class="cube"></span><span id="brand-login">Serve Actual</span></h1>
       <div class="sub" style="margin-bottom:16px">Panel del servidor — solo con invitación</div>
-      <div class="field"><label>Usuario</label><input id="li-user" autocomplete="username"></div>
-      <div class="field"><label>Contraseña</label><input id="li-pass" type="password" autocomplete="current-password"></div>
+      <div id="li-creds">
+        <div class="field"><label>Usuario</label><input id="li-user" autocomplete="username"></div>
+        <div class="field"><label>Contraseña</label><input id="li-pass" type="password" autocomplete="current-password"
+             onkeydown="if(event.key==='Enter')doLogin()"></div>
+      </div>
+      <div id="f2a-row">
+        <div class="field"><label>Código de tu app autenticadora</label>
+          <input id="li-code" maxlength="6" inputmode="numeric" autocomplete="one-time-code"
+                 style="text-align:center; letter-spacing:.3em; font-size:1.2rem"
+                 onkeydown="if(event.key==='Enter')doLogin2()"></div>
+      </div>
       <div class="err" id="li-err"></div>
-      <button class="btn wide" onclick="doLogin()">⛏️ Entrar</button>
+      <button class="btn wide" id="li-btn" onclick="doLogin()">⛏️ Entrar</button>
+      <button class="btn ghost wide" style="margin-top:8px" onclick="hideLogin()">← Volver</button>
     </div>
   </div>
 </div>
@@ -450,8 +552,10 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
     <div class="space"></div>
     <span class="userchip">Hola, <b id="who"></b> · <span id="whorole"></span></span>
-    <button class="btn small ghost" onclick="showPw()">Contraseña</button>
-    <button class="btn small ghost" onclick="doLogout()">Salir</button>
+    <button class="btn small ghost langbtn hidden" id="hdr-lang" onclick="toggleLang()"><span id="langlab2">EN</span></button>
+    <button class="btn small ghost hidden" id="hdr-mods" onclick="showLogin()">🛡️ <span data-i18n="mods">Moderadores</span></button>
+    <button class="btn small ghost" id="pw-btn" onclick="showPw()">Contraseña</button>
+    <button class="btn small ghost" onclick="doLogout()" data-i18n="logout">Salir</button>
   </header>
 
   <nav class="tabs" id="tabs"></nav>
@@ -460,25 +564,25 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <section id="tab-dash">
     <div class="grid tiles" style="margin-bottom:14px">
       <div class="card lift tile"><img class="ti" src="/icons/grass_block_side.png" onerror="this.outerHTML='<span class=&quot;ti-e&quot;>🌍</span>'">
-        <div><div class="lab">Servidor</div><div class="val" id="t-state">—</div></div></div>
+        <div><div class="lab" data-i18n="t_state">Servidor</div><div class="val" id="t-state">—</div></div></div>
       <div class="card lift tile"><img class="ti" src="/icons/totem_of_undying.png" onerror="this.outerHTML='<span class=&quot;ti-e&quot;>🧍</span>'">
-        <div><div class="lab">Jugadores en línea</div><div class="val px" id="t-players">—</div></div></div>
+        <div><div class="lab" data-i18n="t_online">Jugadores en línea</div><div class="val px" id="t-players">—</div></div></div>
       <div class="card lift tile"><img class="ti" src="/icons/repeater.png" onerror="this.outerHTML='<span class=&quot;ti-e&quot;>⏱️</span>'">
-        <div><div class="lab">Tiempo de tick</div><div class="val px" id="t-tick">—</div></div></div>
+        <div><div class="lab" data-i18n="t_tick">Tiempo de tick</div><div class="val px" id="t-tick">—</div></div></div>
       <div class="card lift tile"><img class="ti" src="/icons/iron_ingot.png" onerror="this.outerHTML='<span class=&quot;ti-e&quot;>💾</span>'">
-        <div><div class="lab">Memoria del server</div><div class="val px" id="t-mem">—</div></div></div>
+        <div><div class="lab" data-i18n="t_mem">Memoria del server</div><div class="val px" id="t-mem">—</div></div></div>
     </div>
     <div class="grid two" style="margin-bottom:14px">
-      <div class="card"><h3>Tick — últimos 10 minutos (ms)</h3>
+      <div class="card"><h3 data-i18n="ch_tick">Tick — últimos 10 minutos (ms)</h3>
         <div class="chartwrap"><svg id="ch-tick"></svg><div class="tip" id="tip-tick"></div></div></div>
-      <div class="card"><h3>Memoria usada — últimos 10 minutos (GB)</h3>
+      <div class="card"><h3 data-i18n="ch_mem">Memoria usada — últimos 10 minutos (GB)</h3>
         <div class="chartwrap"><svg id="ch-mem"></svg><div class="tip" id="tip-mem"></div></div></div>
     </div>
     <div class="grid two">
-      <div class="card"><h3>Conectados ahora</h3><div class="chips" id="online-chips"><span class="chip">Nadie todavía</span></div></div>
-      <div class="card"><h3>Datos para entrar</h3>
-        <div class="kv">Versión <b>Java 26.2</b> · Motor <b id="k-engine">—</b> · Dificultad <b id="k-diff">—</b> · Distancia de visión <b id="k-view">—</b> · En la whitelist <b id="k-wl">—</b></div>
-        <div class="addr"><code id="k-addr">132.145.136.215</code><button class="btn small ghost" onclick="copyAddr()">Copiar</button></div>
+      <div class="card"><h3 data-i18n="conn_now">Conectados ahora</h3><div class="chips" id="online-chips"><span class="chip" data-i18n="nobody">Nadie conectado ahora</span></div></div>
+      <div class="card"><h3 data-i18n="join_data">Datos para entrar</h3>
+        <div class="kv"><span data-i18n="kv_ver">Versión</span> <b>Java 26.2</b> · <span data-i18n="kv_engine">Motor</span> <b id="k-engine">—</b> · <span data-i18n="kv_diff">Dificultad</span> <b id="k-diff">—</b> · <span data-i18n="kv_view">Distancia de visión</span> <b id="k-view">—</b> · <span data-i18n="kv_wl">En la whitelist</span> <b id="k-wl">—</b></div>
+        <div class="addr"><code id="k-addr">132.145.136.215</code><button class="btn small ghost" onclick="copyAddr()" data-i18n="copy">Copiar</button></div>
       </div>
     </div>
   </section>
@@ -486,12 +590,12 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- PLAYERS -->
   <section id="tab-players" class="hidden">
     <div class="card">
-      <h3>Libro de jugadores</h3>
+      <h3 data-i18n="players_book">Libro de jugadores</h3>
       <div style="overflow-x:auto"><table id="ptable">
-        <thead><tr><th>Jugador</th><th class="right">Horas</th><th class="right">Muertes</th><th class="right">Mobs</th>
-        <th class="right">PvP</th><th class="right">Km caminados</th><th>Última vez</th></tr></thead>
+        <thead><tr><th data-i18n="th_player">Jugador</th><th class="right" data-i18n="th_hours">Horas</th><th class="right" data-i18n="th_deaths">Muertes</th><th class="right" data-i18n="th_mobs">Mobs</th>
+        <th class="right" data-i18n="th_pvp">PvP</th><th class="right" data-i18n="th_km">Km caminados</th><th data-i18n="th_seen">Última vez</th></tr></thead>
         <tbody></tbody></table></div>
-      <div class="note">Las estadísticas vienen directo de los archivos del servidor. Toca un jugador para ver su ficha.</div>
+      <div class="note" data-i18n="pl_note">Las estadísticas vienen directo de los archivos del servidor. Toca un jugador para ver su ficha.</div>
     </div>
   </section>
 
@@ -584,11 +688,56 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- MEMORIAS DEL SERVER -->
   <section id="tab-memories" class="hidden">
     <div class="card">
-      <h3>🖼️ Memorias del server</h3>
-      <div class="note" style="margin-top:0">El álbum privado del server — solo los moderadores lo ven y suben fotos. Toca una foto para verla en grande.</div>
-      <div class="memgrid" id="memgrid"></div>
+      <h3 data-i18n="mem_title">🖼️ Memorias del server</h3>
+      <div class="note" style="margin-top:0" data-i18n="mem_note">El álbum del server — mira y comparte los mejores momentos.</div>
+      <div class="memtabs" style="margin-top:12px">
+        <button class="btn small" id="memtab-g" onclick="memMode('g')" data-i18n="mem_global">🌍 Globales</button>
+        <button class="btn small ghost" id="memtab-i" onclick="memMode('i')" data-i18n="mem_indiv">👤 Individuales</button>
+      </div>
+      <div id="mem-gwrap"><div class="memgrid" id="memgrid"></div></div>
+      <div id="mem-iwrap" class="hidden">
+        <div id="mem-plist" class="pgrid"></div>
+        <div id="mem-pfolder" class="hidden">
+          <div style="display:flex; align-items:center; gap:10px; margin:6px 0 4px; flex-wrap:wrap">
+            <button class="btn small ghost" onclick="memBackToList()" data-i18n="mem_back">← Todas las carpetas</button>
+            <b id="mem-pname" style="font-size:1.05rem"></b>
+          </div>
+          <div class="memgrid" id="memgrid-p"></div>
+        </div>
+      </div>
       <input type="file" id="mem-file" accept=".jpg,.jpeg,.png,.gif,.webp" multiple class="hidden">
     </div>
+  </section>
+
+  <!-- SISTEMA (solo admin) -->
+  <section id="tab-sistema" class="hidden">
+    <div class="grid two" style="margin-bottom:14px">
+      <div class="card">
+        <h3>⚙️ Estado del sistema</h3>
+        <div class="kv" id="sys-kv">cargando…</div>
+        <div class="formrow" style="margin-top:12px">
+          <input id="sys-pin" placeholder="PIN público (4-32)" maxlength="32">
+          <button class="btn small" onclick="sysSetPin()">Guardar PIN</button>
+        </div>
+        <div class="note">El PIN es la puerta de la vista pública. Cámbialo cuando quieras — las sesiones ya abiertas siguen vivas hasta 30 días.</div>
+      </div>
+      <div class="card">
+        <h3>🔐 Verificación en dos pasos (tu cuenta)</h3>
+        <div id="sys-2fa">cargando…</div>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <h3>🧰 Operaciones</h3>
+      <div class="actions">
+        <button class="btn small" onclick="sysOp('regen_icons','¿Regenerar todos los íconos? (1-2 min)')">🎨 Regenerar íconos</button>
+        <button class="btn small warn" onclick="sysOp('restart_panel','¿Reiniciar el panel? (~10 seg fuera)')">♻️ Reiniciar panel</button>
+        <button class="btn small danger" onclick="sysPaper()">📄 Migrar a Paper</button>
+        <a class="btn small ghost" href="/api/system/backup_extras">💾 Respaldo (fotos+cuentas)</a>
+      </div>
+      <div class="note">Las copias del MUNDO viven en la pestaña Copias. La migración a Paper deja el server ~3 min fuera y habilita plugins.</div>
+    </div>
+    <div class="card"><h3>📜 Registro del sistema</h3>
+      <div class="console" style="height:220px; color:#c3c2b7" id="sys-log">…</div></div>
   </section>
 </div>
 
@@ -616,6 +765,21 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <div class="modal mcpanel" id="ct-body"></div>
 </div>
 
+<!-- skin 3D -->
+<div class="modal-bg" id="skin-modal" onclick="if(event.target.id==='skin-modal')closeSkin()">
+  <div class="modal" style="max-width:420px">
+    <h3 style="margin-bottom:4px">🧍 <span id="skin-name"></span></h3>
+    <canvas id="skin-canvas"></canvas>
+    <div class="actions" style="justify-content:center; margin-top:10px">
+      <button class="btn small" id="skin-walkbtn" onclick="skinWalk()">▶</button>
+      <a class="btn small ghost" id="skin-namemc" target="_blank" rel="noopener" data-i18n="skin_namemc">NameMC ↗</a>
+      <button class="btn small ghost" onclick="closeSkin()" data-i18n="close">Cerrar</button>
+    </div>
+    <h4 style="font-size:.68rem; text-transform:uppercase; letter-spacing:.12em; color:var(--ink3); margin:14px 0 4px" data-i18n="skin_hist">Skins guardadas por el panel</h4>
+    <div class="skinstrip" id="skin-strip"></div>
+  </div>
+</div>
+
 <!-- memoria lightbox -->
 <div class="modal-bg" id="mem-modal" style="align-items:center">
   <button class="vnav prev" onclick="memNav(-1)">‹</button>
@@ -632,6 +796,137 @@ const $ = id => document.getElementById(id);
 const ICONV = 9;   // sube este número cuando cambien los renders (revienta el caché)
 const ICON = id => `/icons/${id}.png?v=${ICONV}`;   // self-hosted, extracted from the official client
 
+/* ---------- i18n (todo lo público es bilingüe; la vista de mods queda en español) ---------- */
+let LANG = 'es';
+try{ LANG = localStorage.getItem('panel_lang') || 'es'; }catch(_){}
+const I18N = {
+ es:{welcome:'Bienvenidos al Panel del servidor', mods:'Moderadores', pin_title:'🔒 PIN de acceso',
+  pin_note:'Este panel es privado — pídele el PIN a alguien del server.', pin_btn:'Entrar',
+  pin_wrong:'PIN incorrecto', pin_unset:'El PIN aún no está configurado — avísale al admin.',
+  pin_rate:'Demasiados intentos — espera 5 minutos',
+  tab_dash:'Inicio', tab_players:'Jugadores', tab_mem:'Memorias',
+  t_state:'Servidor', t_online:'Jugadores en línea', t_tick:'Tiempo de tick', t_mem:'Memoria del server',
+  st_on:'En línea', st_boot:'Arrancando', st_off:'Apagado',
+  ch_tick:'Tick — últimos 10 minutos (ms)', ch_mem:'Memoria usada — últimos 10 minutos (GB)',
+  conn_now:'Conectados ahora', nobody:'Nadie conectado ahora', join_data:'Datos para entrar',
+  kv_ver:'Versión', kv_engine:'Motor', kv_diff:'Dificultad', kv_view:'Distancia de visión', kv_wl:'En la whitelist',
+  copy:'Copiar', copied:'Dirección copiada', players_book:'Libro de jugadores',
+  pl_note:'Las estadísticas vienen directo de los archivos del servidor. Toca un jugador para ver su ficha.',
+  pl_empty:'Aún no hay estadísticas — aparecen cuando la gente juega.', collecting:'recolectando datos…',
+  th_player:'Jugador', th_hours:'Horas', th_deaths:'Muertes', th_mobs:'Mobs', th_pvp:'PvP',
+  th_km:'Km caminados', th_seen:'Última vez', online_tag:'(en línea)',
+  now:'ahora mismo', min_ago:'hace {0} min', h_ago:'hace {0} h', d_ago:'hace {0} días',
+  mem_title:'🖼️ Memorias del server', mem_global:'🌍 Globales', mem_indiv:'👤 Individuales',
+  mem_note:'El álbum del server — mira y comparte los mejores momentos.',
+  mem_up:'Subir una foto nueva', mem_up_to:'Subir a la carpeta de {0}', mem_desc:'Descripción (obligatoria):',
+  mem_by:'subida por', mem_back:'← Todas las carpetas', mem_photos:'foto(s)', mem_none:'Aún no hay fotos aquí',
+  close:'Cerrar', del:'Borrar', view_skin:'🧍 Ver skin en 3D', skin_walk:'▶ Caminar', skin_stop:'⏸ Quieto',
+  skin_hist:'Skins guardadas por el panel', skin_none:'El archivo arranca hoy — cada día el panel guarda la skin de todos.',
+  skin_namemc:'Ver historial completo en NameMC ↗', logout:'Salir', guest:'invitado',
+  landing_hint:'un server de amigos desde 2020'},
+ en:{welcome:'Welcome to the Server Panel', mods:'Moderators', pin_title:'🔒 Access PIN',
+  pin_note:'This panel is private — ask someone from the server for the PIN.', pin_btn:'Enter',
+  pin_wrong:'Wrong PIN', pin_unset:'The PIN is not configured yet — tell the admin.',
+  pin_rate:'Too many attempts — wait 5 minutes',
+  tab_dash:'Home', tab_players:'Players', tab_mem:'Memories',
+  t_state:'Server', t_online:'Players online', t_tick:'Tick time', t_mem:'Server memory',
+  st_on:'Online', st_boot:'Starting', st_off:'Offline',
+  ch_tick:'Tick — last 10 minutes (ms)', ch_mem:'Memory used — last 10 minutes (GB)',
+  conn_now:'Connected now', nobody:'Nobody online right now', join_data:'How to join',
+  kv_ver:'Version', kv_engine:'Engine', kv_diff:'Difficulty', kv_view:'View distance', kv_wl:'Whitelisted',
+  copy:'Copy', copied:'Address copied', players_book:'Player book',
+  pl_note:'Stats come straight from the server files. Tap a player to open their card.',
+  pl_empty:'No stats yet — they show up once people play.', collecting:'collecting data…',
+  th_player:'Player', th_hours:'Hours', th_deaths:'Deaths', th_mobs:'Mobs', th_pvp:'PvP',
+  th_km:'Km walked', th_seen:'Last seen', online_tag:'(online)',
+  now:'just now', min_ago:'{0} min ago', h_ago:'{0} h ago', d_ago:'{0} days ago',
+  mem_title:'🖼️ Server Memories', mem_global:'🌍 Global', mem_indiv:'👤 Individual',
+  mem_note:'The server album — browse and share the best moments.',
+  mem_up:'Upload a new photo', mem_up_to:"Upload to {0}'s folder", mem_desc:'Description (required):',
+  mem_by:'uploaded by', mem_back:'← All folders', mem_photos:'photo(s)', mem_none:'No photos here yet',
+  close:'Close', del:'Delete', view_skin:'🧍 View 3D skin', skin_walk:'▶ Walk', skin_stop:'⏸ Stop',
+  skin_hist:'Skins archived by the panel', skin_none:'The archive starts today — the panel saves everyone\'s skin daily.',
+  skin_namemc:'Full history on NameMC ↗', logout:'Log out', guest:'guest',
+  landing_hint:'a friends\' server since 2020'}
+};
+function t(k, a){ let s=(I18N[LANG]&&I18N[LANG][k])||I18N.es[k]||k; if(a!==undefined) s=s.replace('{0}',a); return s; }
+function applyLang(){
+  document.querySelectorAll('[data-i18n]').forEach(el=>{ el.textContent = t(el.dataset.i18n); });
+  for (const id of ['langlab','langlab2']){ const l=$(id); if(l) l.textContent = LANG==='es' ? 'EN' : 'ES'; }
+}
+function toggleLang(){
+  LANG = LANG==='es' ? 'en' : 'es';
+  try{ localStorage.setItem('panel_lang', LANG); }catch(_){}
+  applyLang();
+  if (window._landTyped) typeTitle(true);
+  if (ME && ME.role==='public'){ buildTabs(); show(window._curTab||'dash'); refreshStatus(); }
+}
+
+/* ---------- portada ---------- */
+let _landT = [];
+function landLoop(){
+  const el=$('landing'); el.style.display='block';
+  const txtEl=$('land-txt');
+  // polvito al aterrizar el bloque
+  setTimeout(()=>{
+    const inner=document.querySelector('.land-inner');
+    const cube=$('land-cube').getBoundingClientRect();
+    for(let i=0;i<14;i++){
+      const d=document.createElement('span'); d.className='land-dust';
+      d.style.left=(cube.left+cube.width/2)+'px'; d.style.top=(cube.bottom-8)+'px';
+      document.body.appendChild(d);
+      const ang=Math.random()*Math.PI, sp=40+Math.random()*70;
+      d.animate([{opacity:1, transform:'translate(0,0)'},
+        {opacity:0, transform:`translate(${Math.cos(ang)*sp*(Math.random()<.5?-1:1)}px, ${-Math.abs(Math.sin(ang))*sp}px)`}],
+        {duration:600+Math.random()*400, easing:'cubic-bezier(.2,.7,.4,1)'});
+      setTimeout(()=>d.remove(), 1100);
+    }
+  }, 650);
+  typeTitle();
+  // barra XP
+  const bar=$('land-xp').querySelector('i');
+  let w=0;
+  const iv=setInterval(()=>{ w+=Math.random()*16+6; if(w>=100){w=100; clearInterval(iv);
+      setTimeout(showPinGate, 250);} bar.style.width=w+'%'; }, 160);
+  _landT.push(iv);
+  setTimeout(()=>{ $('land-sub').style.opacity=1; $('land-sub').textContent=t('landing_hint'); }, 1400);
+}
+function typeTitle(instant){
+  window._landTyped=true;
+  const txtEl=$('land-txt'), msg=t('welcome');
+  if (instant){ txtEl.textContent=msg; return; }
+  txtEl.textContent='';
+  let i=0;
+  const iv=setInterval(()=>{ txtEl.textContent=msg.slice(0,++i);
+    if(i>=msg.length) clearInterval(iv); }, 42);
+  _landT.push(iv);
+}
+function showPinGate(){
+  $('land-xp').style.display='none';
+  $('land-pin').style.display='flex';
+  setTimeout(()=>$('pin-in').focus(), 150);
+}
+async function sendPin(){
+  $('pin-err').textContent='';
+  const pin=$('pin-in').value.trim(); if(!pin) return;
+  try{
+    // fetch directo: un PIN malo responde 401 y api() abriría el modal de login encima
+    const rf=await fetch('/api/pin',{method:'POST',
+      headers:{'Content-Type':'application/json','X-Panel':'1'}, body:JSON.stringify({pin})});
+    const r=await rf.json();
+    if (r.error){
+      const box=$('land-pin'); box.classList.add('err'); setTimeout(()=>box.classList.remove('err'),450);
+      $('pin-err').textContent = r.error==='unset'?t('pin_unset'):(r.error==='rate'?t('pin_rate'):t('pin_wrong'));
+      return;
+    }
+    ME=r.user;
+    const cube=$('land-cube');
+    cube.style.animation='none'; void cube.offsetWidth;
+    cube.style.animation='cubedrop .7s cubic-bezier(.34,1.56,.64,1) reverse both';
+    setTimeout(()=>{ $('landing').style.display='none'; enterApp(); }, 500);
+  }catch(e){ $('pin-err').textContent='…'; }
+}
+
 async function api(path, body, isForm){
   let opt = {};
   if (body !== undefined){
@@ -645,44 +940,86 @@ async function api(path, body, isForm){
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show');
   clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'), 2800); }
 function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
-function ago(ts){ const s=(Date.now()/1000-ts); if(s<120) return 'ahora mismo';
-  if(s<7200) return `hace ${Math.round(s/60)} min`; if(s<172800) return `hace ${Math.round(s/3600)} h`;
-  return `hace ${Math.round(s/86400)} días`; }
-const MOD_DEFAULTS=['view_dashboard','view_players','whitelist','ban','kick','say','player_actions','memories'];
-function hasPerm(p){ return ME && (ME.role==='admin' || (ME.perms && p in ME.perms ? ME.perms[p] : (ME.role==='mod' && MOD_DEFAULTS.includes(p)))); }
+function ago(ts){ const s=(Date.now()/1000-ts); if(s<120) return t('now');
+  if(s<7200) return t('min_ago', Math.round(s/60)); if(s<172800) return t('h_ago', Math.round(s/3600));
+  return t('d_ago', Math.round(s/86400)); }
+const MOD_DEFAULTS=['view_dashboard','view_players','whitelist','ban','kick','say','player_actions','memories','memories_upload'];
+const PUB_DEFAULTS=['view_dashboard','view_players','memories','memories_upload'];
+const VIEW_DEFAULTS=['view_dashboard','view_players','memories'];
+function hasPerm(p){
+  if (!ME) return false;
+  if (ME.role==='admin') return true;
+  if (ME.perms && p in ME.perms) return !!ME.perms[p];
+  if (ME.role==='mod') return MOD_DEFAULTS.includes(p);
+  if (ME.role==='public') return PUB_DEFAULTS.includes(p);
+  if (ME.role==='viewer') return VIEW_DEFAULTS.includes(p);
+  return false;
+}
 
 /* ---------- auth ---------- */
+let _2faTok = null;
 async function doLogin(){
+  if (_2faTok) return doLogin2();
   $('li-err').textContent='';
   try{
     const r = await api('/api/login', {username:$('li-user').value.trim(), password:$('li-pass').value});
     if (r.error){ $('li-err').textContent = r.error==='Wrong username or password'?'Usuario o contraseña incorrectos':r.error; return; }
-    ME = r.user; enterApp();
+    if (r.need_2fa){
+      _2faTok = r.token;
+      $('li-creds').style.display='none'; $('f2a-row').style.display='block';
+      $('li-btn').textContent='✔ Verificar código';
+      setTimeout(()=>$('li-code').focus(), 100);
+      return;
+    }
+    ME = r.user; hideLogin(); $('landing').style.display='none'; enterApp();
   }catch(e){ $('li-err').textContent = 'No se pudo conectar con el panel'; }
 }
+async function doLogin2(){
+  $('li-err').textContent='';
+  try{
+    const r = await api('/api/login2', {token:_2faTok, code:$('li-code').value.trim()});
+    if (r.error){ $('li-err').textContent=r.error;
+      if (/vuelve a ingresar/.test(r.error||'')) resetLogin();
+      return; }
+    ME = r.user; _2faTok=null; hideLogin(); $('landing').style.display='none'; enterApp();
+  }catch(e){ $('li-err').textContent='No se pudo conectar'; }
+}
+function resetLogin(){
+  _2faTok=null; $('li-creds').style.display='block'; $('f2a-row').style.display='none';
+  $('li-btn').textContent='⛏️ Entrar'; $('li-code').value='';
+}
 async function doLogout(){ await api('/api/logout', {}); location.reload(); }
-function showLogin(){ $('login').style.display='block'; $('app').style.display='none'; }
+function showLogin(){ resetLogin(); $('li-err').textContent=''; $('login').style.display='block';
+  setTimeout(()=>$('li-user').focus(), 120); }
+function hideLogin(){ $('login').style.display='none'; }
 
 function enterApp(){
   $('login').style.display='none'; $('app').style.display='block';
-  $('who').textContent = ME.name;
-  $('whorole').textContent = ME.role==='admin' ? 'Admin' : (ME.role==='mod' ? 'Moderador' : 'Observador');
+  const pub = ME.role==='public';
+  $('who').textContent = pub ? t('guest') : ME.name;
+  $('whorole').textContent = ME.role==='admin' ? 'Admin' : (ME.role==='mod' ? 'Moderador' : (pub ? '👋' : 'Observador'));
   if (ME.role==='admin'){ $('motd-edit').classList.remove('hidden'); $('name-edit').classList.remove('hidden'); }
-  buildTabs();
+  $('pw-btn').classList.toggle('hidden', pub);
+  $('hdr-lang').classList.toggle('hidden', !pub);
+  $('hdr-mods').classList.toggle('hidden', !pub);
+  if (!pub) LANG='es';
+  buildTabs(); applyLang();
   if (ME.must_change){ showPw(); $('pw-err').textContent='Crea tu propia contraseña para continuar.'; }
-  refreshStatus(); setInterval(refreshStatus, 10000);
+  refreshStatus();
+  if (!window._statT) window._statT=setInterval(refreshStatus, 10000);
   show('dash');
 }
 
 const TABS = [
-  ['dash','Inicio','grass_block_side','🏠', () => hasPerm('view_dashboard')],
-  ['players','Jugadores','diamond_sword','⚔️', () => hasPerm('view_players')],
-  ['mod','Moderación','iron_axe','🔨', () => hasPerm('whitelist')||hasPerm('ban')||hasPerm('say')],
-  ['memories','Memorias','painting','🖼️', () => hasPerm('memories')],
-  ['console','Consola','command_block_front','🖥️', () => hasPerm('view_console')||(ME&&ME.role==='admin')],
-  ['backups','Copias','barrel_side','📦', () => hasPerm('backups')],
-  ['plugins','Plugins','redstone','🔌', () => ME&&ME.role==='admin'],
-  ['users','Moderadores','name_tag','👑', () => ME&&ME.role==='admin'],
+  ['dash',()=>t('tab_dash'),'grass_block_side','🏠', () => hasPerm('view_dashboard')],
+  ['players',()=>t('tab_players'),'diamond_sword','⚔️', () => hasPerm('view_players')],
+  ['mod',()=>'Moderación','iron_axe','🔨', () => hasPerm('whitelist')||hasPerm('ban')||hasPerm('say')],
+  ['memories',()=>t('tab_mem'),'painting','🖼️', () => hasPerm('memories')],
+  ['console',()=>'Consola','command_block_front','🖥️', () => hasPerm('view_console')||(ME&&ME.role==='admin')],
+  ['backups',()=>'Copias','barrel_side','📦', () => hasPerm('backups')],
+  ['plugins',()=>'Plugins','redstone','🔌', () => ME&&ME.role==='admin'],
+  ['users',()=>'Moderadores','name_tag','👑', () => ME&&ME.role==='admin'],
+  ['sistema',()=>'Sistema','anvil','⚙️', () => ME&&ME.role==='admin'],
 ];
 function buildTabs(){
   const nav=$('tabs'); nav.innerHTML='';
@@ -694,7 +1031,7 @@ function buildTabs(){
     const img=document.createElement('img'); img.src=ICON(icon); img.alt='';
     img.onerror=()=>{ const e=document.createElement('span'); e.textContent=emoji; img.replaceWith(e); };
     ico.appendChild(img);
-    const lab=document.createElement('span'); lab.className='tlab'; lab.textContent=label;
+    const lab=document.createElement('span'); lab.className='tlab'; lab.textContent=label();
     b.appendChild(ico); b.appendChild(lab);
     nav.appendChild(b);
   }
@@ -707,32 +1044,35 @@ function show(id){
   }
   if (id==='players') loadPlayers();
   if (id==='mod'){ loadWhitelist(); loadJoinReq(); }
-  if (id==='memories') loadMemories();
+  if (id==='memories') memMode(MEM_MODE||'g');
   if (id==='console'){ loadConsole(); if(!window._conT) window._conT=setInterval(()=>{ if(!$('tab-console').classList.contains('hidden')) loadConsole(); },4000); }
   if (id==='backups') loadBackups();
   if (id==='plugins') loadPlugins();
   if (id==='users'){ loadUsers(); loadAudit(); }
+  if (id==='sistema'){ loadSistema(); if(!window._sysT) window._sysT=setInterval(()=>{ if(!$('tab-sistema').classList.contains('hidden')) loadSistema(); },5000); }
+  window._curTab=id;
 }
 
 /* ---------- dashboard ---------- */
 async function refreshStatus(){
   let s; try{ s=await api('/api/status'); }catch(e){ return; }
   const up = s.state==='active' && s.reachable;
-  $('t-state').innerHTML = up ? '<span class="dot good"></span>En línea'
-    : (s.state==='active' ? '<span class="dot warn"></span>Arrancando' : '<span class="dot crit"></span>Apagado');
+  $('t-state').innerHTML = up ? '<span class="dot good"></span>'+t('st_on')
+    : (s.state==='active' ? '<span class="dot warn"></span>'+t('st_boot') : '<span class="dot crit"></span>'+t('st_off'));
   $('t-players').innerHTML = `${s.online.length}<span class="unit"> / ${s.max_players}</span>`;
   $('t-tick').innerHTML = s.tick_ms==null ? '—' : `${s.tick_ms.toFixed(1)}<span class="unit"> ms</span>`;
   const gb = s.metrics.mc_mem_mb ? (s.metrics.mc_mem_mb/1024) : null;
   $('t-mem').innerHTML = gb ? `${gb.toFixed(1)}<span class="unit"> GB</span>` : '—';
   $('motd').textContent = s.motd;
-  $('k-diff').textContent = ({hard:'difícil',normal:'normal',easy:'fácil',peaceful:'pacífico'})[s.difficulty]||s.difficulty;
+  $('k-diff').textContent = (LANG==='en' ? s.difficulty
+    : ({hard:'difícil',normal:'normal',easy:'fácil',peaceful:'pacífico'})[s.difficulty]||s.difficulty);
   $('k-view').textContent = s.view_distance+' chunks';
-  $('k-wl').textContent = s.whitelist_count+' jugadores';
+  $('k-wl').textContent = s.whitelist_count+' '+(LANG==='en'?'players':'jugadores');
   $('k-engine').textContent = s.engine==='paper' ? 'Paper (plugins ✓)' : 'Vanilla';
   const chips=$('online-chips');
   chips.innerHTML = s.online.length
     ? s.online.map(n=>`<span class="chip"><img class="avatar" src="https://mc-heads.net/avatar/${esc(n)}/26"><span class="dot good"></span>${esc(n)}</span>`).join('')
-    : '<span class="chip">Nadie conectado ahora</span>';
+    : `<span class="chip">${t('nobody')}</span>`;
   const now=Date.now();
   if (s.tick_ms!=null) tickHist.push([now,s.tick_ms]);
   if (gb!=null) memHist.push([now,gb]);
@@ -741,12 +1081,12 @@ async function refreshStatus(){
   drawChart('ch-tick','tip-tick',tickHist,'var(--s1)','ms',50);
   drawChart('ch-mem','tip-mem',memHist,'var(--s2)','GB',null);
 }
-function copyAddr(){ navigator.clipboard.writeText($('k-addr').textContent).then(()=>toast('Dirección copiada — mándasela a tus amigos')); }
+function copyAddr(){ navigator.clipboard.writeText($('k-addr').textContent).then(()=>toast(t('copied'))); }
 
 function drawChart(svgId,tipId,pts,color,unit,guide){
   const svg=$(svgId); const W=svg.clientWidth||400, H=120, P=8;
   svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.innerHTML='';
-  if (pts.length<2){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#8a8d85" font-size="12" text-anchor="middle">recolectando datos…</text>`; return; }
+  if (pts.length<2){ svg.innerHTML=`<text x="${W/2}" y="${H/2}" fill="#8a8d85" font-size="12" text-anchor="middle">${t('collecting')}</text>`; return; }
   const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
   const x0=Math.min(...xs), x1=Math.max(...xs);
   let y0=0, y1=Math.max(...ys, guide||0)*1.15||1;
@@ -782,13 +1122,14 @@ async function loadPlayers(){
   for (const p of r.players){
     const tr=document.createElement('tr');
     if (openable){ tr.className='rowbtn'; tr.onclick=()=>openPlayer(p.uuid, p.name, p.online); }
+    else { tr.className='rowbtn'; tr.onclick=()=>openSkin(p.uuid, p.name); }
     tr.innerHTML=`<td class="name"><img class="avatar" src="https://mc-heads.net/avatar/${esc(p.name)}/26" onerror="this.style.display='none'">
-      <span class="dot ${p.online?'good':'off'}"></span>${esc(p.name)}${p.online?' <span style="color:var(--accent2);font-size:.75rem">(en línea)</span>':''}</td>
+      <span class="dot ${p.online?'good':'off'}"></span>${esc(p.name)}${p.online?` <span style="color:var(--accent2);font-size:.75rem">${t('online_tag')}</span>`:''}</td>
       <td class="right">${p.play_hours}</td><td class="right">${p.deaths}</td><td class="right">${p.mob_kills}</td>
       <td class="right">${p.player_kills}</td><td class="right">${p.walked_km}</td><td>${ago(p.last_seen)}</td>`;
     tb.appendChild(tr);
   }
-  if (!r.players.length) tb.innerHTML='<tr><td colspan="7">Aún no hay estadísticas — aparecen cuando la gente juega.</td></tr>';
+  if (!r.players.length) tb.innerHTML=`<tr><td colspan="7">${t('pl_empty')}</td></tr>`;
 }
 
 /* ---------- player card ---------- */
@@ -919,9 +1260,10 @@ async function openPlayer(uuid, name, online){
   const canAct = hasPerm('player_actions');
   let head = `<div class="pc-head">
     <img src="https://mc-heads.net/avatar/${esc(name)}/64" onerror="this.style.opacity=.2">
-    <div><div class="n">${esc(name)} ${online?'<span class="dot good"></span>':'<span class="dot off"></span>'}
+    <div style="flex:1"><div class="n">${esc(name)} ${online?'<span class="dot good"></span>':'<span class="dot off"></span>'}
       <span style="font-size:.8rem;color:var(--ink3)">${online?'en línea':'desconectado'}</span></div>
-    <div class="u">${uuid}</div></div></div>`;
+    <div class="u">${uuid}</div></div>
+    <button class="btn small ghost" onclick="openSkin('${uuid}','${esc(name)}')">🧍 3D</button></div>`;
   let actions = canAct ? `<div class="actions">
       <button class="btn small" onclick="playerAct('${esc(name)}','heal')">💚 Curar</button>
       <button class="btn small warn" onclick="playerAct('${esc(name)}','feed')">🍗 Alimentar</button>
@@ -1221,63 +1563,214 @@ async function loadAudit(){
   const r=await api('/api/audit'); $('audit-box').textContent=r.lines.slice().reverse().join('\n')||'Nada todavía';
 }
 
-/* ---------- memorias del server ---------- */
-let MEMS=[], MEM_CAN_DEL_ANY=false, MEM_IDX=0;
-function memDate(ts){ return new Date(ts).toLocaleDateString('es-CO',{year:'numeric',month:'long',day:'numeric'}); }
+/* ---------- skin viewer 3D ---------- */
+let _sv=null, _svWalking=true, _svLibTried=false;
+function loadSkinLib(){
+  return new Promise(res=>{
+    if (window.skinview3d){ res(true); return; }
+    if (_svLibTried){ res(false); return; }
+    _svLibTried=true;
+    const s=document.createElement('script'); s.src='/static/skinview3d.js';
+    s.onload=()=>res(!!window.skinview3d); s.onerror=()=>res(false);
+    document.head.appendChild(s);
+  });
+}
+async function openSkin(uuid, name){
+  $('skin-name').textContent=name;
+  $('skin-namemc').href='https://namemc.com/profile/'+encodeURIComponent(name);
+  $('skin-strip').innerHTML='<span class="note">…</span>';
+  $('skin-modal').classList.add('open');
+  const info = await api(`/api/skininfo/${uuid}`).catch(()=>({history:[]}));
+  const ok = await loadSkinLib();
+  const cv=$('skin-canvas');
+  if (ok){
+    try{
+      if (_sv){ _sv.dispose(); _sv=null; }
+      _sv = new skinview3d.SkinViewer({canvas:cv, width:cv.clientWidth||320, height:380,
+        skin:`/api/skin/${uuid}`, model: info.slim?'slim':'default'});
+      _sv.autoRotate = true; _sv.autoRotateSpeed = 0.6;
+      _sv.animation = new skinview3d.WalkingAnimation();
+      _sv.zoom = 0.85; _svWalking = true;
+      $('skin-walkbtn').textContent = t('skin_stop');
+    }catch(e){ svFallback(cv, name, uuid, info.slim); }
+  } else svFallback(cv, name, uuid, info.slim);
+  const strip=$('skin-strip'); strip.innerHTML='';
+  const hist=(info.history||[]);
+  if (!hist.length){ strip.innerHTML=`<span class="note" style="margin:0">${t('skin_none')}</span>`; }
+  hist.forEach(h=>{
+    const d=document.createElement('div'); d.className='sk';
+    const c=document.createElement('canvas'); c.width=32; c.height=32;
+    const img=new Image();
+    img.onload=()=>{ const g=c.getContext('2d'); g.imageSmoothingEnabled=false;
+      g.drawImage(img,8,8,8,8,0,0,32,32); g.drawImage(img,40,8,8,8,0,0,32,32); };
+    img.src=`/skinhist/${uuid}/${h.file}`;
+    const lab=document.createElement('div'); lab.className='d'; lab.textContent=h.date.slice(5);
+    d.appendChild(c); d.appendChild(lab);
+    d.onclick=()=>{ if(_sv) _sv.loadSkin(`/skinhist/${uuid}/${h.file}`, {model:h.slim?'slim':'default'}); };
+    strip.appendChild(d);
+  });
+}
+function mcFace(imgEl, uuid){
+  // avatar de respaldo: cara recortada de la skin servida por el propio panel
+  if (imgEl._mcf) { imgEl.style.visibility='hidden'; return; } imgEl._mcf=1;
+  const sk=new Image();
+  sk.onload=()=>{ const c=document.createElement('canvas'); c.width=c.height=44;
+    const g=c.getContext('2d'); g.imageSmoothingEnabled=false;
+    g.drawImage(sk,8,8,8,8,0,0,44,44); try{ g.drawImage(sk,40,8,8,8,0,0,44,44); }catch(_){}
+    imgEl.src=c.toDataURL(); };
+  sk.onerror=()=>{ imgEl.style.visibility='hidden'; };
+  sk.src=`/api/skin/${uuid}`;
+}
+function svFallback(cv, name, uuid, slim){
+  // sin lib 3D: dibuja la skin de frente (pixel art) desde nuestro propio proxy
+  const g=cv.getContext('2d');
+  cv.width=cv.clientWidth||320; cv.height=380;
+  const img=new Image();
+  img.onload=()=>{
+    g.imageSmoothingEnabled=false;
+    const S=10, AW=slim?3:4, W=(AW*2+8)*S, X=(cv.width-W)/2, Y=(cv.height-32*S)/2;
+    const legacy = img.height<=32;
+    const P=(sx,sy,sw,sh,dx,dy)=>g.drawImage(img,sx,sy,sw,sh,X+dx*S,Y+dy*S,sw*S,sh*S);
+    const M=(sx,sy,sw,sh,dx,dy)=>{ g.save(); g.translate(X+(dx+sw)*S,Y+dy*S); g.scale(-1,1);
+      g.drawImage(img,sx,sy,sw,sh,0,0,sw*S,sh*S); g.restore(); };
+    P(8,8,8,8, AW,0);                             // cabeza
+    P(20,20,8,12, AW,8);                          // cuerpo
+    P(44,20,AW,12, 0,8);                          // brazo der
+    if (legacy) M(44,20,AW,12, AW+8,8); else P(36,52,AW,12, AW+8,8);
+    P(4,20,4,12, AW,20);                          // pierna der
+    if (legacy) M(4,20,4,12, AW+4,20); else P(20,52,4,12, AW+4,20);
+    try{ P(40,8,8,8, AW,0); }catch(_){}           // capa de la cabeza (gorro)
+  };
+  img.onerror=()=>{ const i2=new Image();
+    i2.onload=()=>{ g.imageSmoothingEnabled=false;
+      const s=Math.min(cv.width/(i2.width||1), 340/(i2.height||1));
+      g.drawImage(i2,(cv.width-i2.width*s)/2,20,i2.width*s,i2.height*s); };
+    i2.src=`https://mc-heads.net/body/${encodeURIComponent(name)}/160`; };
+  img.src = uuid ? `/api/skin/${uuid}` : `https://mc-heads.net/skin/${encodeURIComponent(name)}`;
+}
+function skinWalk(){
+  if (!_sv) return;
+  _svWalking=!_svWalking;
+  _sv.animation = _svWalking ? new skinview3d.WalkingAnimation() : null;
+  $('skin-walkbtn').textContent = _svWalking ? t('skin_stop') : t('skin_walk');
+}
+function closeSkin(){
+  $('skin-modal').classList.remove('open');
+  if (_sv){ try{_sv.dispose();}catch(_){} _sv=null; }
+}
+
+/* ---------- memorias del server (globales + individuales) ---------- */
+let MEMS=[], MEM_CAN_DEL=false, MEM_CAN_UP=false, MEM_IDX=0;
+let MEM_MODE='g', MEM_TARGET='global', MEM_TNAME='';
+function memDate(ts){ return new Date(ts).toLocaleDateString(LANG==='es'?'es-CO':'en-US',{year:'numeric',month:'long',day:'numeric'}); }
+function memMode(m){
+  MEM_MODE=m;
+  $('memtab-g').classList.toggle('ghost', m!=='g');
+  $('memtab-i').classList.toggle('ghost', m!=='i');
+  $('mem-gwrap').classList.toggle('hidden', m!=='g');
+  $('mem-iwrap').classList.toggle('hidden', m!=='i');
+  if (m==='g'){ MEM_TARGET='global'; loadMemories(); }
+  else { memBackToList(); }
+}
+function memBackToList(){
+  $('mem-pfolder').classList.add('hidden'); $('mem-plist').classList.remove('hidden');
+  MEM_TARGET='global'; loadMemPlayers();
+}
+async function loadMemPlayers(){
+  const r=await api('/api/memories/players');
+  if (r.error){ toast(r.error); return; }
+  const grid=$('mem-plist'); grid.innerHTML='';
+  r.players.forEach(pl=>{
+    const c=document.createElement('div'); c.className='pcardm';
+    c.onclick=()=>openMemFolder(pl.uuid, pl.name);
+    c.innerHTML=`<img src="https://mc-heads.net/avatar/${esc(pl.name)}/44" onerror="mcFace(this,'${pl.uuid}')">
+      <b>${esc(pl.name)}</b><span class="c">${pl.count} ${t('mem_photos')}</span>`;
+    grid.appendChild(c);
+  });
+}
+async function openMemFolder(uuid, name){
+  MEM_TARGET=uuid; MEM_TNAME=name;
+  $('mem-plist').classList.add('hidden'); $('mem-pfolder').classList.remove('hidden');
+  $('mem-pname').textContent = name;
+  const r=await api(`/api/memories/player/${uuid}`);
+  if (r.error){ toast(r.error); return; }
+  MEMS=r.memories; MEM_CAN_DEL=r.can_delete_any; MEM_CAN_UP=r.can_upload;
+  renderMemGrid($('memgrid-p'), `/memories/p/${uuid}/`, t('mem_up_to', name));
+}
 async function loadMemories(){
   const r=await api('/api/memories');
   if (r.error){ toast(r.error); return; }
-  MEMS=r.memories; MEM_CAN_DEL_ANY=r.can_delete_any;
-  const grid=$('memgrid'); grid.innerHTML='';
-  const add=document.createElement('div');
-  add.className='frame add'; add.onclick=()=>$('mem-file').click();
-  add.innerHTML='<span class="plus">➕</span><span class="txt">Subir una foto nueva<br>al álbum del server</span>';
-  grid.appendChild(add);
+  MEMS=r.memories; MEM_CAN_DEL=r.can_delete_any; MEM_CAN_UP=r.can_upload;
+  renderMemGrid($('memgrid'), '/memories/', t('mem_up'));
+}
+function renderMemGrid(grid, base, upLabel){
+  grid.innerHTML='';
+  if (MEM_CAN_UP){
+    const add=document.createElement('div');
+    add.className='frame add'; add.onclick=()=>$('mem-file').click();
+    add.innerHTML=`<span class="plus">➕</span><span class="txt">${esc(upLabel)}</span>`;
+    grid.appendChild(add);
+  }
+  if (!MEMS.length && !MEM_CAN_UP){
+    grid.innerHTML=`<div class="note">${t('mem_none')}</div>`;
+  }
   MEMS.forEach((m,i)=>{
-    const f=document.createElement('div'); f.className='frame'; f.onclick=()=>memOpen(i);
-    f.innerHTML=`<div class="photo"><img loading="lazy" src="/memories/thumbs/${encodeURIComponent(m.thumb)}"
-        onerror="this.src='/memories/${encodeURIComponent(m.file)}'"></div>
-      <div class="cap">${esc(m.title)}<span class="by">subida por ${esc(m.uploader)} · ${memDate(m.ts)}</span></div>`;
+    const f=document.createElement('div'); f.className='frame'; f.onclick=()=>memOpen(i, base);
+    const thumbUrl = base + (base.includes('/p/') ? 'thumbs/' : 'thumbs/') + encodeURIComponent(m.thumb);
+    f.innerHTML=`<div class="photo"><img loading="lazy" src="${thumbUrl}"
+        onerror="this.src='${base}${encodeURIComponent(m.file)}'"></div>
+      <div class="cap">${esc(m.title)}<span class="by">${t('mem_by')} ${esc(m.uploader)} · ${memDate(m.ts)}</span></div>`;
     grid.appendChild(f);
   });
 }
-function memOpen(i){
+function memOpen(i, base){
   MEM_IDX=i; const m=MEMS[i]; if(!m) return;
-  const mine = MEM_CAN_DEL_ANY || m.uploader===ME.name;
-  $('mem-view').innerHTML=`<img class="big" src="/memories/${encodeURIComponent(m.file)}">
+  window._memBase = base || '/memories/';
+  const target = MEM_TARGET;
+  $('mem-view').innerHTML=`<img class="big" src="${window._memBase}${encodeURIComponent(m.file)}">
     <div class="vcap"><span>${esc(m.title)}</span>
-      ${mine?`<button class="iconbtn" title="Editar título" onclick="memEdit('${esc(m.file)}')">✏️</button>`:''}
-      <span class="by">subida por ${esc(m.uploader)} · ${memDate(m.ts)}</span>
+      ${MEM_CAN_DEL?`<button class="iconbtn" title="Editar descripción" onclick="memEdit('${esc(m.file)}','${target}')">✏️</button>`:''}
+      <span class="by">${t('mem_by')} ${esc(m.uploader)} · ${memDate(m.ts)}</span>
       <div style="flex:1"></div>
-      ${mine?`<button class="btn small danger" onclick="memDel('${esc(m.file)}')">Borrar</button>`:''}
-      <button class="btn small ghost" onclick="$('mem-modal').classList.remove('open')">Cerrar</button></div>`;
+      ${MEM_CAN_DEL?`<button class="btn small danger" onclick="memDel('${esc(m.file)}','${target}')">${t('del')}</button>`:''}
+      <button class="btn small ghost" onclick="$('mem-modal').classList.remove('open')">${t('close')}</button></div>`;
   $('mem-modal').classList.add('open');
 }
-async function memEdit(file){
-  const m=MEMS.find(x=>x.file===file); if(!m) return;
-  const v=prompt('Nuevo título para la foto:', m.title);
-  if (v===null || !v.trim()) return;
-  const r=await api('/api/memories/edit',{file, title:v.trim()});
-  toast(r.output||r.error||'Hecho');
-  if (!r.error){ await loadMemories(); const i=MEMS.findIndex(x=>x.file===file); if(i>=0) memOpen(i); }
-}
-function memNav(d){ if(!MEMS.length) return; memOpen((MEM_IDX+d+MEMS.length)%MEMS.length); }
-async function memDel(file){
+function memNav(d){ if(!MEMS.length) return; memOpen((MEM_IDX+d+MEMS.length)%MEMS.length, window._memBase); }
+async function memDel(file, target){
   if (!confirm('¿Borrar esta foto del álbum del server?')) return;
-  const r=await api('/api/memories/delete',{file});
+  const r=await api('/api/memories/delete',{file, target});
   toast(r.output||r.error||'Hecho');
-  if (!r.error){ $('mem-modal').classList.remove('open'); loadMemories(); }
+  if (!r.error){ $('mem-modal').classList.remove('open'); memRefresh(); }
+}
+async function memEdit(file, target){
+  const m=MEMS.find(x=>x.file===file); if(!m) return;
+  const v=prompt('Nueva descripción:', m.title);
+  if (v===null || v.trim().length<3) return;
+  const r=await api('/api/memories/edit',{file, title:v.trim(), target});
+  toast(r.output||r.error||'Hecho');
+  if (!r.error) memRefresh();
+}
+function memRefresh(){
+  if (MEM_TARGET==='global') loadMemories();
+  else openMemFolder(MEM_TARGET, MEM_TNAME);
 }
 async function uploadMemory(f){
   const okTypes=['.jpg','.jpeg','.png','.gif','.webp'];
-  if (!okTypes.some(x=>f.name.toLowerCase().endsWith(x))){ toast(f.name+': formato no válido (JPG, PNG, GIF o WebP)'); return; }
-  const title=prompt(`Título para "${f.name}" (opcional):`, f.name.replace(/\.[^.]+$/,'').replace(/[-_]/g,' '));
-  if (title===null) return;
-  const fd=new FormData(); fd.append('file', f); fd.append('title', title||'');
-  toast('Subiendo '+f.name+'…');
+  if (!okTypes.some(x=>f.name.toLowerCase().endsWith(x))){ toast(f.name+': JPG, PNG, GIF o WebP'); return; }
+  let title='';
+  while (true){
+    title=prompt(t('mem_desc'), title||'');
+    if (title===null) return;
+    title=title.trim();
+    if (title.length>=3) break;
+  }
+  const fd=new FormData(); fd.append('file', f); fd.append('title', title);
+  fd.append('target', MEM_TARGET);
+  toast('⬆ '+f.name+'…');
   const r=await api('/api/memories/upload', fd, true);
   toast(r.output||r.error||'Hecho');
-  if (!r.error) loadMemories();
+  if (!r.error) memRefresh();
 }
 function wireMemUpload(){
   const inp=$('mem-file');
@@ -1289,6 +1782,68 @@ function wireMemUpload(){
     if (e.key==='ArrowRight') memNav(1);
     if (e.key==='Escape') $('mem-modal').classList.remove('open');
   });
+}
+
+/* ---------- sistema (solo admin) ---------- */
+async function loadSistema(){
+  const r=await api('/api/system/status');
+  if (r.error) return;
+  $('sys-kv').innerHTML =
+    `PIN público: <b>${r.pin_set?'configurado ✓':'⚠️ SIN CONFIGURAR'}</b> · `+
+    `Motor: <b>${r.engine==='paper'?'Paper (plugins ✓)':'Vanilla'}</b> · `+
+    `Librería 3D: <b>${r.skinlib?'lista ✓':'descargando…'}</b> · `+
+    `Tareas activas: <b>${r.busy.length?r.busy.join(', '):'ninguna'}</b>`;
+  $('sys-log').textContent = (r.log||[]).join('\n') || 'Nada todavía';
+  const w=$('sys-2fa');
+  if (r.totp_on){
+    w.innerHTML=`<div class="note" style="margin-top:0">✅ Activo — tu login pide código de la app.</div>
+      <div class="formrow" style="margin-top:10px"><input id="f2a-off-code" placeholder="Código actual" maxlength="6">
+      <button class="btn small danger" onclick="sys2faOff()">Desactivar</button></div>`;
+  } else if (!window._2faSetup){
+    w.innerHTML=`<div class="note" style="margin-top:0">Tu cuenta es la llave maestra del server — actívalo.</div>
+      <button class="btn small" style="margin-top:10px" onclick="sys2faStart()">Activar 2FA</button>`;
+  }
+}
+async function sys2faStart(){
+  const r=await api('/api/2fa/setup',{});
+  if (r.error){ toast(r.error); return; }
+  window._2faSetup=true;
+  $('sys-2fa').innerHTML=`
+    <div class="note" style="margin-top:0">1) Abre Google Authenticator (o similar) → añadir cuenta → <b>clave de configuración</b> y pega esta clave, o toca el enlace desde el teléfono:</div>
+    <code style="display:block; margin:8px 0; padding:8px; background:rgba(5,7,9,.7); border-radius:4px; word-break:break-all; font-size:.8rem">${esc(r.secret)}</code>
+    <a class="btn small ghost" href="${esc(r.otpauth)}">📱 Abrir en la app</a>
+    <div class="note">2) Escribe el código de 6 dígitos que te muestra la app:</div>
+    <div class="formrow" style="margin-top:6px"><input id="f2a-code" maxlength="6" placeholder="000000">
+    <button class="btn small" onclick="sys2faConfirm()">Confirmar</button></div>`;
+}
+async function sys2faConfirm(){
+  const r=await api('/api/2fa/confirm',{code:$('f2a-code').value.trim()});
+  toast(r.output||r.error||'…');
+  if (!r.error){ window._2faSetup=false; loadSistema(); }
+}
+async function sys2faOff(){
+  const r=await api('/api/2fa/disable',{code:$('f2a-off-code').value.trim()});
+  toast(r.output||r.error||'…');
+  if (!r.error) loadSistema();
+}
+async function sysSetPin(){
+  const pin=$('sys-pin').value.trim(); if(!pin) return;
+  const r=await api('/api/system/set_pin',{pin});
+  toast(r.output||r.error||'Hecho'); $('sys-pin').value='';
+  if (!r.error) loadSistema();
+}
+async function sysOp(op, msg){
+  if (msg && !confirm(msg)) return;
+  const r=await api('/api/system/'+op,{});
+  toast(r.output||r.error||'Hecho');
+  setTimeout(loadSistema, 1200);
+}
+async function sysPaper(){
+  if (!confirm('¿Migrar el motor a Paper? El server queda ~3 minutos fuera. Se hace un backup antes.')) return;
+  if (!confirm('Última confirmación: los jugadores conectados serán expulsados durante la migración. ¿Seguro?')) return;
+  const r=await api('/api/system/migrate_paper',{});
+  toast(r.output||r.error||'Hecho');
+  setTimeout(loadSistema, 1500);
 }
 
 /* ---------- ajustes ---------- */
@@ -1353,13 +1908,13 @@ async function changePw(){
 (async ()=>{
   try{ const b=await api('/api/branding'); BRAND=b.name||BRAND;
     $('brand').textContent=BRAND; $('brand-login').textContent=BRAND; document.title=BRAND+' — Panel'; }catch(e){}
-  wireDrop(); wireMemUpload();
+  wireDrop(); wireMemUpload(); applyLang();
   try{
-    const r=await api('/api/me');
-    if (r.user){ ME=r.user; enterApp(); return; }
+    // fetch directo: sin sesión responde 401 y api() abriría el modal de login sobre la portada
+    const rf=await fetch('/api/me',{headers:{'X-Panel':'1'}});
+    if (rf.ok){ const r=await rf.json(); if (r.user){ ME=r.user; enterApp(); return; } }
   }catch(e){}
-  showLogin();
-  $('li-pass').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
+  landLoop();
 })();
 </script>
 </body>
