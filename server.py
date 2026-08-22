@@ -1951,6 +1951,34 @@ def api_skin_hist(uuid, fn):
         abort(404)
     return send_file(f, max_age=604800)
 
+@app.post("/api/skinhist/delete")
+def api_skinhist_delete():
+    """SOLO admin: borra una skin del archivo histórico de un jugador."""
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    uuid = (body.get("uuid") or "").strip().lower()
+    fn = re.sub(r"[^A-Za-z0-9.-]", "", body.get("file") or "")
+    if not UUID_RE.match(uuid) or not fn.endswith(".png"):
+        return jsonify(error="petición inválida"), 400
+    hdir = SKINS_HIS / uuid
+    idx_f = hdir / "index.json"
+    try:
+        idx = json.loads(idx_f.read_text())
+    except Exception:
+        idx = []
+    if not any(e.get("file") == fn for e in idx):
+        return jsonify(error="esa skin no está en el archivo"), 404
+    idx = [e for e in idx if e.get("file") != fn]
+    idx_f.write_text(json.dumps(idx))
+    try:
+        (hdir / fn).unlink()
+    except Exception:
+        pass
+    audit(u["name"], f"skin histórica borrada de {uuid} ({fn})")
+    return jsonify(ok=True)
+
 @app.post("/api/skinhist/upload")
 def api_skinhist_upload():
     """Mods/admin: mete una skin antigua al archivo con fecha manual (para el historial pre-panel)."""
