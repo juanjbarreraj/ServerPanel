@@ -41,20 +41,31 @@ fi
 [ -L "$BM_DIR/web" ] || ln -s "$WEBDIR" "$BM_DIR/web"
 sudo chown -R ubuntu:ubuntu "$WEBDIR"
 sudo chmod -R a+rX "$WEBDIR"
-sudo tee /etc/caddy/Caddyfile >/dev/null <<'EOF'
+sudo tee /etc/caddy/Caddyfile >/dev/null <<'CADDY'
 califree.net {
+    @gzfile path *.gz
+
     handle_path /map/* {
         forward_auth 127.0.0.1:8444 {
             uri /api/mapauth
         }
         root * /var/www/bluemap-web
-        file_server
+        # BlueMap solo guarda los tiles comprimidos (.prbm.gz, .json.gz) y el
+        # navegador los pide SIN .gz. try_files encuentra el .gz y el header le
+        # avisa al navegador que venga comprimido. Va dentro de route porque si
+        # no, Caddy evalúa el header ANTES del try_files y no lo aplica.
+        route {
+            try_files {path} {path}.gz
+            header @gzfile Content-Encoding gzip
+            file_server
+        }
     }
+
     handle {
         reverse_proxy 127.0.0.1:8444
     }
 }
-EOF
+CADDY
 sudo systemctl reload caddy
 
 echo "== 4/6 · Re-render automático cada noche (09:00 UTC, tras el backup) =="
