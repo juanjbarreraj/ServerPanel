@@ -31,13 +31,23 @@ fi
 sed -i -E "s|^#?\s*world:.*|world: \"$WORLD\"|" config/maps/*.conf
 
 echo "== 3/6 · Caddy: servir /map/ con el login del panel =="
+# El sitio del mapa vive FUERA del home: Caddy corre como otro usuario y
+# /home/ubuntu es 750 → si sirviera desde ahí, todo daría 403.
+WEBDIR="/var/www/bluemap-web"
+sudo mkdir -p "$WEBDIR"
+if [ -d "$BM_DIR/web" ] && [ ! -L "$BM_DIR/web" ]; then
+  sudo rsync -a "$BM_DIR/web/" "$WEBDIR/" && rm -rf "$BM_DIR/web"
+fi
+[ -L "$BM_DIR/web" ] || ln -s "$WEBDIR" "$BM_DIR/web"
+sudo chown -R ubuntu:ubuntu "$WEBDIR"
+sudo chmod -R a+rX "$WEBDIR"
 sudo tee /etc/caddy/Caddyfile >/dev/null <<'EOF'
 califree.net {
     handle_path /map/* {
         forward_auth 127.0.0.1:8444 {
             uri /api/mapauth
         }
-        root * /home/ubuntu/bluemap/web
+        root * /var/www/bluemap-web
         file_server
     }
     handle {
