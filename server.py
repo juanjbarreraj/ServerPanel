@@ -2157,6 +2157,82 @@ def api_system_regen_icons():
     return jsonify(ok=ok, output="Regenerando íconos (1-2 min) — mira el registro"
                    if ok else "Ya hay una regeneración corriendo")
 
+@app.post("/api/system/scan_map")
+def api_system_scan_map():
+    """Escanea estructuras reales del mundo y re-renderiza el mapa con los marcadores."""
+    u = require()
+    if u["role"] not in ("admin", "mod") or not _csrf_ok():
+        abort(403)
+    script = PANEL_DIR / "scripts/scan-structures.py"
+    if not script.exists():
+        return jsonify(ok=False, output="Falta scripts/scan-structures.py en el server"), 400
+    ok = _sys_run_bg("mapa", ["bash", "-c",
+        f"python3 {script} && cd ~/bluemap && nice -n 19 ionice -c3 "
+        f"java -Xmx1536M -jar bluemap-cli.jar -r"])
+    audit(u["name"], "escaneo de estructuras + render del mapa")
+    return jsonify(ok=ok, output="Escaneando el mundo y actualizando el mapa — mira el registro"
+                   if ok else "Ya hay una actualización del mapa corriendo")
+
+# ------------------------------------------------------------ marcadores del mapa
+MARKERS_FILE = DATA_DIR / "markers.json"
+MARKER_ICONS = ["base", "spawn", "shop", "farm", "landmark", "danger", "portal", "meeting"]
+
+def _markers_load():
+    try:
+        v = json.loads(MARKERS_FILE.read_text())
+        return v if isinstance(v, list) else []
+    except Exception:
+        return []
+
+def _markers_save(v):
+    MARKERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MARKERS_FILE.write_text(json.dumps(v, ensure_ascii=False))
+
+@app.get("/api/markers")
+def api_markers():
+    require("view_dashboard")
+    return jsonify(markers=_markers_load(), icons=MARKER_ICONS)
+
+@app.post("/api/markers/add")
+def api_markers_add():
+    u = require()
+    if u["role"] not in ("admin", "mod") or not _csrf_ok():
+        abort(403)
+    b = request.get_json(silent=True) or {}
+    name = (b.get("name") or "").strip()[:48]
+    icon = b.get("icon") if b.get("icon") in MARKER_ICONS else "landmark"
+    dim = b.get("dim") if b.get("dim") in ("overworld", "nether", "end") else "overworld"
+    if len(name) < 2:
+        return jsonify(error="Ponle un nombre (mínimo 2 letras)"), 400
+    try:
+        x, y, z = int(b.get("x")), int(b.get("y", 64)), int(b.get("z"))
+    except Exception:
+        return jsonify(error="Coordenadas inválidas"), 400
+    if not all(-30_000_000 <= c <= 30_000_000 for c in (x, z)) or not (-256 <= y <= 512):
+        return jsonify(error="Coordenadas fuera del mundo"), 400
+    ms = _markers_load()
+    if len(ms) >= 300:
+        return jsonify(error="Demasiados marcadores (máx. 300)"), 400
+    ms.append({"id": secrets.token_hex(6), "name": name, "x": x, "y": y, "z": z,
+               "icon": icon, "dim": dim, "by": u["name"], "ts": int(time.time())})
+    _markers_save(ms)
+    audit(u["name"], f"marcador '{name}' en {x},{y},{z} ({dim})")
+    return jsonify(ok=True, markers=ms)
+
+@app.post("/api/markers/delete")
+def api_markers_delete():
+    u = require()
+    if u["role"] not in ("admin", "mod") or not _csrf_ok():
+        abort(403)
+    mid = (request.get_json(silent=True) or {}).get("id")
+    ms = _markers_load()
+    keep = [m for m in ms if m.get("id") != mid]
+    if len(keep) == len(ms):
+        return jsonify(error="No encontré ese marcador"), 404
+    _markers_save(keep)
+    audit(u["name"], f"marcador borrado ({mid})")
+    return jsonify(ok=True, markers=keep)
+
 @app.post("/api/system/migrate_paper")
 def api_system_migrate_paper():
     u = _require_admin()

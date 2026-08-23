@@ -447,6 +447,10 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .pcardm.player{flex-direction:row; align-items:center; gap:10px; padding:12px 14px}
 .pcardm.player .c{white-space:nowrap}
 #pgrid{grid-template-columns:repeat(auto-fill,minmax(185px,1fr))}
+#mk-list{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+#mk-list .pcardm b{white-space:nowrap}
+#mk-list .pcardm .c{white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block}
+#mk-list .pcardm button{margin-left:auto; flex:none}
 .pv-tiles{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
 .pcardm.player img{width:40px; height:40px}
 .pcardm.player .arrow{width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,.10);
@@ -676,6 +680,26 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <div class="card" style="padding:10px">
       <iframe id="map-frame" title="Mapa del mundo" style="width:100%; height:calc(100vh - 250px); min-height:480px; border:0; border-radius:8px; background:#04060a"></iframe>
       <div class="note" style="margin:8px 4px 2px" data-i18n="map_note">El mundo real en 3D — arrastra para girar, rueda para acercar. Se actualiza cada noche con lo que construyeron en el día.</div>
+    </div>
+    <div class="card hidden" id="map-mk" style="margin-top:14px">
+      <h3>📍 Lugares del server</h3>
+      <div class="note" style="margin-top:0">Los marcadores aparecen sobre el mapa. Las coordenadas son las del juego (F3).</div>
+      <div class="formrow" style="margin-top:10px; flex-wrap:wrap">
+        <input id="mk-name" placeholder="Nombre (ej: Base de Jakobino)" style="min-width:200px">
+        <input id="mk-x" placeholder="X" style="width:88px" inputmode="numeric">
+        <input id="mk-y" placeholder="Y" style="width:88px" inputmode="numeric" value="64">
+        <input id="mk-z" placeholder="Z" style="width:88px" inputmode="numeric">
+        <select id="mk-icon" class="sunk"></select>
+        <select id="mk-dim" class="sunk">
+          <option value="overworld">Overworld</option><option value="nether">Nether</option><option value="end">End</option>
+        </select>
+        <button class="btn small" onclick="mkAdd()">Añadir</button>
+      </div>
+      <div class="pgrid" id="mk-list" style="margin-top:4px"></div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:14px">
+        <button class="btn small ghost" onclick="mkScan()">🔎 Escanear estructuras y actualizar mapa</button>
+      </div>
+      <div class="note">El escaneo busca aldeas, cámaras de prueba, ciudades antiguas y demás en lo que ya exploraron, y vuelve a renderizar el mapa (tarda un rato).</div>
     </div>
   </section>
 
@@ -1144,7 +1168,7 @@ function show(id){
     if (btn) btn.classList.toggle('on', t===id);
   }
   if (id==='players'){ closePView(); loadPlayers(); }
-  if (id==='map'){ const f=$('map-frame'); if(f && !f.src) f.src='/map/'; }
+  if (id==='map'){ const f=$('map-frame'); if(f && !f.src) f.src='/map/'; loadMarkers(); }
   if (id==='mod'){ loadWhitelist(); loadJoinReq(); }
   if (id==='memories') memMode(MEM_MODE||'g');
   if (id==='console'){ loadConsole(); if(!window._conT) window._conT=setInterval(()=>{ if(!$('tab-console').classList.contains('hidden')) loadConsole(); },4000); }
@@ -2208,6 +2232,54 @@ async function changePw(){
     if (e.target.closest && e.target.closest('.slot.has')) tip.style.display='none';
   });
 })();
+
+/* ---------- marcadores del mapa ---------- */
+const MK_LABEL={base:'🏠 Base', spawn:'🧭 Spawn', shop:'💚 Tienda', farm:'🌾 Granja',
+  landmark:'⭐ Lugar', danger:'🧨 Peligro', portal:'🌀 Portal', meeting:'🔥 Punto de reunión'};
+const MK_DIM={overworld:'Overworld', nether:'Nether', end:'End'};
+let MK_CAN=false;
+async function loadMarkers(){
+  MK_CAN = ME && (ME.role==='admin' || ME.role==='mod');
+  const card=$('map-mk'); if(!card) return;
+  card.classList.toggle('hidden', !MK_CAN);
+  if (!MK_CAN) return;
+  const sel=$('mk-icon');
+  if (!sel.options.length)
+    sel.innerHTML = Object.keys(MK_LABEL).map(k=>`<option value="${k}">${MK_LABEL[k]}</option>`).join('');
+  const r=await api('/api/markers').catch(()=>null);
+  renderMarkers((r&&r.markers)||[]);
+}
+function renderMarkers(ms){
+  const box=$('mk-list'); box.innerHTML='';
+  if (!ms.length){ box.innerHTML='<div class="note">Todavía no hay lugares marcados.</div>'; return; }
+  ms.forEach(m=>{
+    const c=document.createElement('div'); c.className='pcardm player';
+    c.innerHTML=`<img src="/static/markers/${esc(m.icon)}.png" alt="" onerror="this.style.visibility='hidden'">
+      <div style="min-width:0"><b style="display:block; overflow:hidden; text-overflow:ellipsis">${esc(m.name)}</b>
+      <span class="c">${m.x}, ${m.y}, ${m.z} · ${MK_DIM[m.dim]||m.dim}</span></div>`;
+    const del=document.createElement('button'); del.className='btn small danger'; del.textContent='✕';
+    del.onclick=async(e)=>{ e.stopPropagation();
+      if(!confirm(`¿Borrar el marcador "${m.name}"?`)) return;
+      const r=await api('/api/markers/delete',{id:m.id}).catch(()=>null);
+      if(r&&r.ok){ toast('Marcador borrado'); renderMarkers(r.markers); } else toast((r&&r.error)||'No se pudo'); };
+    c.appendChild(del); box.appendChild(c);
+  });
+}
+async function mkAdd(){
+  const b={name:$('mk-name').value.trim(), x:$('mk-x').value.trim(), y:$('mk-y').value.trim()||64,
+           z:$('mk-z').value.trim(), icon:$('mk-icon').value, dim:$('mk-dim').value};
+  if(!b.name || b.x===''|| b.z===''){ toast('Falta el nombre o las coordenadas'); return; }
+  const r=await api('/api/markers/add', b).catch(()=>null);
+  if(r&&r.ok){ toast('Marcador añadido 📍 — aparece en el mapa tras actualizarlo');
+    $('mk-name').value=''; $('mk-x').value=''; $('mk-z').value='';
+    renderMarkers(r.markers);
+  } else toast((r&&r.error)||'No se pudo añadir');
+}
+async function mkScan(){
+  if(!confirm('Escanear el mundo y volver a renderizar el mapa. Tarda un rato y usa CPU con prioridad baja. ¿Seguir?')) return;
+  const r=await api('/api/system/scan_map',{}).catch(()=>null);
+  toast((r&&r.output)||'No se pudo arrancar');
+}
 
 /* ---------- logo: ciclo de colores al hover ---------- */
 const LOGO_MAIN='/static/favicon-192.png';
