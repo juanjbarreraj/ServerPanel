@@ -26,11 +26,21 @@ OUT_JSON = PANEL / "data/structures.json"
 MANUAL_JSON = PANEL / "data/markers.json"       # marcadores puestos a mano desde el panel
 ICON_PX = 32                                     # tamaño del icono sobre el mapa
 
-DIMS = [
-    ("overworld", WORLD / "region"),
-    ("nether",    WORLD / "DIM-1/region"),
-    ("end",       WORLD / "DIM1/region"),
-]
+# Minecraft 26.2 guarda TODAS las dimensiones en world/dimensions/minecraft/<dim>/region
+# (ya no existen world/region, world/DIM-1 ni world/DIM1). Se prueba el layout nuevo
+# primero y el viejo como respaldo, para que el script sirva en cualquier versión.
+_NEW = {"overworld": "dimensions/minecraft/overworld",
+        "nether":    "dimensions/minecraft/the_nether",
+        "end":       "dimensions/minecraft/the_end"}
+_OLD = {"overworld": ".", "nether": "DIM-1", "end": "DIM1"}
+
+def region_dir(dim):
+    for p in (WORLD / _NEW[dim] / "region", WORLD / _OLD[dim] / "region"):
+        if p.is_dir():
+            return p
+    return WORLD / _NEW[dim] / "region"
+
+DIMS = [(d, region_dir(d)) for d in ("overworld", "nether", "end")]
 
 # id del juego -> (icono, nombre bonito)
 STRUCT_MAP = {
