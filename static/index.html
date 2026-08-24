@@ -1074,7 +1074,7 @@ let ME = null, BRAND = 'Serve Actual';
 let tickHist = [], memHist = [];
 let GEAR = null;   // current player card data
 const $ = id => document.getElementById(id);
-const ICONV = 11;   // sube este número cuando cambien los renders (revienta el caché)
+const ICONV = 12;   // sube este número cuando cambien los renders (revienta el caché)
 const ICON = id => `/icons/${id}.png?v=${ICONV}`;   // self-hosted, extracted from the official client
 
 /* ---------- i18n (todo lo público es bilingüe; la vista de mods queda en español) ---------- */
@@ -2573,12 +2573,22 @@ function hiDia(ts){
   return d.toLocaleDateString(hiLoc(),{weekday:'long', day:'numeric', month:'long'});
 }
 const hiIco=(n,emo)=>`<img class="hi-ic" src="${UI(n)}" alt="" onerror="this.outerHTML='<span class=&quot;hi-em&quot;>${emo}</span>'">`;
+/* variante con DOS respaldos: si el icono nuevo aún no existe se usa uno que ya
+   tenemos, y solo si tampoco está se cae al emoji. Así se puede cablear un
+   icono antes de tenerlo sin que el feed se vea peor mientras tanto. */
+const hiIco2=(n,alt,emo)=>`<img class="hi-ic" src="${UI(n)}" alt="" data-alt="${UI(alt)}" data-emo="${emo}" onerror="hiFall(this)">`;
+function hiFall(img){
+  const alt=img.dataset.alt;
+  if (alt){ img.dataset.alt=''; img.src=alt; return; }
+  img.outerHTML='<span class="hi-em">'+(img.dataset.emo||'')+'</span>';
+}
 
 function hiFila(e){
   const nom=esc(e.p||'?');
   let ico, txt, sub='', cls='';
   if (e.k==='sesion'){
-    ico = hiIco('s-puerta','🚪');
+    // dos cosas distintas: "sigue dentro ahora mismo" y "una sesión que terminó"
+    ico = e.abierta ? hiIco('online','🧍') : hiIco2('sesion','s-puerta','🚪');
     txt = `<b>${nom}</b> ${t(e.abierta?'hist_online':'hist_played', hiDur(e.seg))}`;
     if (e.cortada) sub = t('hist_cut');
   } else if (e.k==='logro'){
