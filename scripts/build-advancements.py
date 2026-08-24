@@ -125,6 +125,30 @@ def texto(lang, clave, respaldo):
     v = lang.get(clave)
     return v if isinstance(v, str) and v else respaldo
 
+# Mojang traduce "Overworld" como "la Superficie" en español latino. Juan prefiere
+# el nombre en inglés, que es como lo llama todo el mundo en el server.
+# Ojo con los límites de palabra: sin \b, "Explora la superficie" se convertía en
+# "Exploral Overworld" porque la "a" de "Explora" entraba en la regla "a la superficie".
+_SUPERFICIE = [
+    (r"\ba\s+la\s+[Ss]uperficie\b",  "al Overworld"),
+    (r"\bde\s+la\s+[Ss]uperficie\b", "del Overworld"),
+    (r"\ben\s+la\s+[Ss]uperficie\b", "en el Overworld"),
+    (r"\bLa\s+Superficie\b",         "El Overworld"),
+    (r"\bla\s+[Ss]uperficie\b",      "el Overworld"),
+    (r"\bSuperficie\b",              "Overworld"),
+]
+_cambios_superficie = []
+
+def sin_superficie(s, quien=""):
+    if not s:
+        return s
+    orig = s
+    for pat, rep in _SUPERFICIE:
+        s = re.sub(pat, rep, s)
+    if s != orig:
+        _cambios_superficie.append((quien, orig, s))
+    return s
+
 def traduce_componente(c, lang, respaldo=""):
     """Los títulos vienen como {"translate": "..."} o a veces texto plano."""
     if isinstance(c, str):
@@ -184,6 +208,8 @@ def main():
         d_en = traduce_componente(disp.get("description"), en)
         t_es = traduce_componente(disp.get("title"), es, t_en) if es else t_en
         d_es = traduce_componente(disp.get("description"), es, d_en) if es else d_en
+        t_es = sin_superficie(t_es, rel + " (título)")
+        d_es = sin_superficie(d_es, rel)
         if es and t_es == t_en:
             sin_es += 1
 
@@ -239,6 +265,12 @@ def main():
     iconos = sorted({l["icon"] for l in logros if l["icon"]})
     print("  iconos distintos: %d" % len(iconos))
     print("  por dimensión: %s" % ", ".join("%s=%d" % kv for kv in sorted(dims.items())))
+    if _cambios_superficie:
+        print("  'Superficie' → 'Overworld' en %d textos:" % len(_cambios_superficie))
+        for quien, a, b in _cambios_superficie[:12]:
+            print("    %-34s %s" % (quien, b))
+        if len(_cambios_superficie) > 12:
+            print("    … y %d más" % (len(_cambios_superficie) - 12))
     if "--listar" in sys.argv:
         for dm in ("overworld", "nether", "end"):
             print("\n  --- %s ---" % dm.upper())
