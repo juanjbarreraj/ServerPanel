@@ -121,9 +121,16 @@
   var HASH_INICIAL = (location.hash || "");
   var TRAE_VISTA = /:(flat|free|perspective)\s*$/i.test(HASH_INICIAL);
 
+  // Hasta que la vista de arranque esté puesta, NO se esconde ningún marcador:
+  // BlueMap nace en "perspective" y si el vigilante actuara en ese instante
+  // los iconos se irían y volverían — o se quedarían fuera si algo fallara.
+  // Lo que Juan quiere ver al entrar es el mapa plano CON los iconos.
+  var vistaFijada = TRAE_VISTA;
+
   function vistaPlanaPorDefecto() {
     if (TRAE_VISTA) { log("la dirección ya trae vista, no la toco"); return; }
     var intentos = 0;
+    // cada 100 ms, no cada 500: cuanto antes entre en plano, menos parpadeo
     var t = setInterval(function () {
       var a = app();
       intentos++;
@@ -131,14 +138,16 @@
         clearInterval(t);
         try {
           a.setFlatView(0);
-          log("vista plana puesta por defecto");
+          log("vista plana puesta por defecto (" + (intentos * 100) + " ms)");
         } catch (e) { log("no pude poner la vista plana:", e); }
+        vistaFijada = true;
         setTimeout(vigilarVista, 50);
-      } else if (intentos > 60) {          // 30 s y me rindo
+      } else if (intentos > 300) {         // 30 s y me rindo
         clearInterval(t);
+        vistaFijada = true;
         log("BlueMap no apareció; me quedo con su vista por defecto");
       }
-    }, 500);
+    }, 100);
   }
   vistaPlanaPorDefecto();
 
@@ -147,6 +156,7 @@
   var vistaAnterior = null;
 
   function vigilarVista() {
+    if (!vistaFijada) return;              // aún colocando la vista de arranque
     var modo = modoActual();
     var ocultar = (modo === "perspective" || modo === "free");
     if (ocultar === vistaAnterior) return;
