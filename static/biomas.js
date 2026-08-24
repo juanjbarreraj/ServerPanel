@@ -115,38 +115,88 @@
   }
 
   // ------------------------------ 4) vista plana por defecto (la segunda)
-  // El hash manda: si la dirección ya trae ":flat" / ":free" / ":perspective"
-  // se respeta. Dentro del panel el iframe abre /map/ sin hash, y ahí BlueMap
-  // entraría en perspectiva — que es justo lo que no queremos.
+  //
+  // Lo correcto es la opción de BlueMap: "defaultToFlatView" en settings.json,
+  // que lo pone scripts/parche-bluemap.sh. Esto de aquí es el respaldo, por si
+  // ese fichero se regenerara sin el ajuste.
+  //
+  // Por qué hace falta insistir: al final de BlueMapApp.load(), si la dirección
+  // no traía nada, se llama resetCamera(), y resetCamera() empieza poniendo
+  // appState.controls.state = "perspective". Como switchMap() marca
+  // mapViewer.map ANTES de terminar de cargar, hay una ventana en la que la app
+  // ya parece lista pero resetCamera todavía no ha corrido: si se pide el plano
+  // ahí, BlueMap lo pisa medio segundo después. Por eso se comprueba que el
+  // cambio se haya quedado, y se repite si no.
   var HASH_INICIAL = (location.hash || "");
   var TRAE_VISTA = /:(flat|free|perspective)\s*$/i.test(HASH_INICIAL);
 
   // Hasta que la vista de arranque esté puesta, NO se esconde ningún marcador:
   // BlueMap nace en "perspective" y si el vigilante actuara en ese instante
   // los iconos se irían y volverían — o se quedarían fuera si algo fallara.
-  // Lo que Juan quiere ver al entrar es el mapa plano CON los iconos.
+  // Lo que se quiere ver al entrar es el mapa plano CON los iconos.
   var vistaFijada = TRAE_VISTA;
+  var tocado = false;                       // ¿el usuario ya tocó la pantalla?
+
+  // "Tocar" significa ELEGIR una vista, no arrastrar el mapa. Los tres botones
+  // de vista viven en la capa de interfaz (#app); el lienzo del mapa vive en
+  // #map-container. Si se contara también el arrastre, alguien que mueve el
+  // mapa mientras carga se quedaría en perspectiva — que es justo el problema
+  // que esto viene a arreglar.
+  function marcarTocado(e) {
+    try {
+      var t = e && e.target;
+      if (t && t.closest && t.closest("#map-container")) return;   // arrastrar no cuenta
+    } catch (_) {}
+    tocado = true;
+    vistaFijada = true;
+  }
+  addEventListener("pointerdown", marcarTocado, true);
+  addEventListener("keydown", marcarTocado, true);
 
   function vistaPlanaPorDefecto() {
     if (TRAE_VISTA) { log("la dirección ya trae vista, no la toco"); return; }
-    var intentos = 0;
-    // cada 100 ms, no cada 500: cuanto antes entre en plano, menos parpadeo
+    var intentos = 0, puestas = 0, desde = 0;
+
     var t = setInterval(function () {
       var a = app();
       intentos++;
-      if (a && typeof a.setFlatView === "function" && a.mapViewer && a.mapViewer.map) {
-        clearInterval(t);
-        try {
-          a.setFlatView(0);
-          log("vista plana puesta por defecto (" + (intentos * 100) + " ms)");
-        } catch (e) { log("no pude poner la vista plana:", e); }
-        vistaFijada = true;
-        setTimeout(vigilarVista, 50);
-      } else if (intentos > 300) {         // 30 s y me rindo
-        clearInterval(t);
-        vistaFijada = true;
-        log("BlueMap no apareció; me quedo con su vista por defecto");
+
+      if (!(a && typeof a.setFlatView === "function" && a.mapViewer && a.mapViewer.map)) {
+        if (intentos > 300) {               // 30 s y me rindo
+          clearInterval(t);
+          vistaFijada = true;
+          log("BlueMap no apareció; me quedo con su vista por defecto");
+        }
+        return;
       }
+
+      if (!desde) desde = intentos;
+      // si el usuario ya eligió vista, no se le lleva la contraria
+      if (tocado) { clearInterval(t); log("el usuario ya tocó el mapa; lo dejo como esté"); return; }
+
+      if (modoActual() === "flat") {
+        // se quedó puesta; se espera 1 s de estabilidad antes de soltar
+        if (intentos - desde >= 10) {
+          clearInterval(t);
+          vistaFijada = true;
+          setTimeout(vigilarVista, 50);
+          log("vista plana estable" + (puestas ? " (" + puestas + " intento(s))" : " de fábrica"));
+        }
+        return;
+      }
+
+      if (puestas >= 6) {                   // no pelear para siempre
+        clearInterval(t);
+        vistaFijada = true;
+        log("no consigo dejar la vista plana; me rindo en '" + modoActual() + "'");
+        return;
+      }
+      try {
+        a.setFlatView(0);
+        puestas++;
+        desde = intentos;
+        log("pidiendo vista plana (intento " + puestas + ", " + intentos * 100 + " ms)");
+      } catch (e) { log("no pude poner la vista plana:", e); }
     }, 100);
   }
   vistaPlanaPorDefecto();

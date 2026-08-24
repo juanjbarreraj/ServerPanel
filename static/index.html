@@ -2427,7 +2427,7 @@ async function changePw(){
 /* El mapa va dentro de un <iframe>, así que sus mensajes de diagnóstico
    ([bioma] …) no salen en esta consola. El iframe los reenvía con postMessage
    y aquí se vuelven a imprimir, para poder depurar sin abrir /map/ aparte. */
-const MAP_SRC='/map/?v=5';   // sube el número igual que VER en parche-bluemap.sh
+const MAP_SRC='/map/?v=6';   // sube el número igual que VER en parche-bluemap.sh
 addEventListener('message', e=>{
   if (e.origin!==location.origin) return;
   const d=e.data;
