@@ -468,6 +468,47 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   overflow-wrap:break-word}
 .pv-cols{column-width:290px; column-gap:16px}
 .pv-cols .statcol{break-inside:avoid; -webkit-column-break-inside:avoid; margin:0 0 16px; width:100%}
+
+/* ---------- logros ---------- */
+#pv-advcard{margin-bottom:16px}
+.advhead{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:10px}
+.advcount{font-family:"Press Start 2P",monospace; font-size:.72rem; color:var(--acc)}
+.advbar{height:10px; background:var(--slotbg); border-radius:5px; overflow:hidden;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45)}
+.advbar i{display:block; height:100%; background:linear-gradient(90deg,#5aa02c,#a8e063);
+  transition:width .5s ease}
+.advtabs{display:flex; gap:6px; flex-wrap:wrap; margin:12px 0 10px}
+.advtab{border:2px solid rgba(255,255,255,.16); background:var(--slotbg); color:var(--ink);
+  border-radius:6px; padding:6px 11px; font-size:.8rem; font-weight:700; cursor:pointer;
+  display:flex; align-items:center; gap:6px; line-height:1}
+.advtab:hover{border-color:rgba(255,255,255,.34)}
+.advtab.on{border-color:var(--acc); color:var(--acc)}
+.advtab b{font-size:.7rem; opacity:.6; font-weight:700}
+.advgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(215px,1fr)); gap:8px}
+.adv{background:var(--slotbg); border-radius:7px; padding:9px 10px; display:flex; gap:9px;
+  align-items:flex-start; border-left:4px solid #4a545f; opacity:.5; position:relative}
+.adv.done{opacity:1; border-left-color:#7cc63f}
+.adv.f-goal{border-left-color:#3f7cc6}
+.adv.f-challenge{border-left-color:#a54fc6}
+.adv.done.f-goal{border-left-color:#4aa3ff}
+.adv.done.f-challenge{border-left-color:#c46dff}
+.adv img{width:30px; height:30px; flex:0 0 30px; image-rendering:pixelated; margin-top:1px;
+  filter:grayscale(1) brightness(.55)}
+.adv.done img{filter:none}
+.adv .an{font-weight:700; font-size:.86rem; line-height:1.25}
+.adv .ad{font-size:.74rem; opacity:.62; line-height:1.3; margin-top:2px}
+.adv .ap{font-family:"Press Start 2P",monospace; font-size:.6rem; color:var(--acc); margin-top:5px}
+.adv.hasteps{cursor:pointer}
+.adv.hasteps:hover{background:rgba(255,255,255,.06)}
+.adv .achev{position:absolute; right:8px; top:8px; opacity:.45; font-size:.7rem}
+.advsteps{grid-column:1/-1; background:var(--slotbg); border-radius:7px; padding:10px 12px;
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(165px,1fr)); gap:4px 12px;
+  border-left:4px solid var(--acc)}
+.advsteps .sh{grid-column:1/-1; font-weight:700; font-size:.82rem; margin-bottom:4px}
+.advstep{font-size:.78rem; display:flex; gap:6px; align-items:baseline; opacity:.45}
+.advstep.ok{opacity:1; color:#a8e063}
+.advstep .sd{font-size:.64rem; opacity:.5; white-space:nowrap; margin-left:2px}
+.advstep span:nth-child(2){overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 #psort{appearance:none; -webkit-appearance:none; color-scheme:dark;
   background:var(--slotbg) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23a8e063'/></svg>") no-repeat right 12px center;
   color:var(--ink); font-weight:700; font-size:.88rem; cursor:pointer;
@@ -669,6 +710,15 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         </div>
         <div class="pv-right">
           <div class="grid tiles pv-tiles" id="pv-tiles"></div>
+          <div class="card" id="pv-advcard">
+            <div class="advhead">
+              <h3 style="margin:0" data-i18n="adv_title">Logros</h3>
+              <span class="advcount" id="adv-count">—</span>
+            </div>
+            <div class="advbar"><i id="adv-bar" style="width:0%"></i></div>
+            <div class="advtabs" id="adv-tabs"></div>
+            <div class="advgrid" id="adv-grid"></div>
+          </div>
           <div class="pv-cols" id="pv-cols"></div>
         </div>
       </div>
@@ -921,6 +971,9 @@ const I18N = {
   sort_by:'Ordenar por', sort_alpha:'Alfabético (A-Z)', sort_hours:'Más horas jugadas', sort_mobs:'Más mobs matados',
   sort_placed:'Más bloques puestos', sort_deaths:'Más muertes', sort_pvp:'Más jugadores matados',
   st_dist:'📏 Distancias (bloques)', st_mined:'⛏️ Bloques rotos', st_used:'🧰 Items usados', st_killed:'⚔️ Mobs matados',
+  adv_title:'🏆 Logros', adv_all:'Todos', adv_none:'Los logros aún no están generados',
+  adv_of:'{0} de {1}', adv_secret:'Secreto', adv_steps:'Te faltan {0} de {1}',
+  adv_done_all:'¡Completo!', sort_adv:'Más logros conseguidos',
   st_total:'Total', see_all:'Ver todo ({0}) ▾', see_less:'Ver menos ▴',
   dist_elytra:'Volando (con élytros)', dist_walk:'Caminando', dist_sprint:'Corriendo', dist_walk_water:'Sobre el agua',
   dist_under_water:'Bajo el agua', dist_crouch:'Agachado', dist_swim:'Nadando', dist_fall:'Cayendo',
@@ -955,6 +1008,9 @@ const I18N = {
   sort_by:'Sort by', sort_alpha:'Alphabetical (A-Z)', sort_hours:'Most hours played', sort_mobs:'Most mobs killed',
   sort_placed:'Most blocks placed', sort_deaths:'Most deaths', sort_pvp:'Most players killed',
   st_dist:'📏 Distance (blocks)', st_mined:'⛏️ Blocks broken', st_used:'🧰 Items used', st_killed:'⚔️ Entities killed',
+  adv_title:'🏆 Advancements', adv_all:'All', adv_none:'Advancements have not been generated yet',
+  adv_of:'{0} of {1}', adv_secret:'Secret', adv_steps:'{0} of {1} left',
+  adv_done_all:'Complete!', sort_adv:'Most advancements',
   st_total:'Total', see_all:'See all ({0}) ▾', see_less:'See less ▴',
   dist_elytra:'Flown (with Elytra)', dist_walk:'Walked', dist_sprint:'Sprinted', dist_walk_water:'Walked on water',
   dist_under_water:'Walked under water', dist_crouch:'Crouched', dist_swim:'Swum', dist_fall:'Fallen',
@@ -1258,6 +1314,7 @@ const PSORTS = [
   ['placed', p=>-(p.blocks_placed||0), l=>l('sort_placed')],
   ['deaths', p=>-p.deaths,        l=>l('sort_deaths')],
   ['pvp',    p=>-p.player_kills,  l=>l('sort_pvp')],
+  ['adv',    p=>-(p.adv_done||0), l=>l('sort_adv')],
 ];
 let PSORT = 'hours';
 try{ PSORT = localStorage.getItem('panel_psort') || 'hours'; }catch(_){}
@@ -1277,6 +1334,7 @@ function psortStat(p){
     case 'deaths': return `💀 ${fmtN(p.deaths)}`;
     case 'pvp': return `🏹 ${fmtN(p.player_kills)}`;
     case 'hours': return `⏱️ ${fmtN(p.play_hours)} h`;
+    case 'adv': return p.adv_total ? `🏆 ${p.adv_done}/${p.adv_total} · ${Math.round(p.adv_pct)}%` : '🏆 —';
     default: return p.online ? t('online_tag').replace(/[()]/g,'') : ago(p.last_seen);
   }
 }
@@ -1341,6 +1399,7 @@ async function openPView(uuid, name, online){
   pvStrip(info);
   if (stats) pvStats(stats);
   else $('pv-cols').innerHTML=`<div class="note">${t('pl_empty')}</div>`;
+  pvAdv(uuid);
 }
 async function pvSkin(url, slim){
   const ok = await loadSkinLib();
@@ -1422,6 +1481,74 @@ function pvStats(s){
   cols.appendChild(statCol(t('st_killed'), s.killed.total, s.killed.items.map(r=>({
     icon:`/icons/${r.id}_spawn_egg.png`, emo:MOB_EMO[r.id]||'🐾', name:prettify(r.id), n:r.n})), 'killed'));
 }
+/* ---------- logros ---------- */
+const ADV_TABS=['story','nether','end','adventure','husbandry'];
+let ADV=null, ADV_TAB='all', ADV_OPEN=null;
+function advTitle(l){ return (l.title&&(l.title[LANG]||l.title.en))||l.id; }
+function advDesc(l){ return (l.desc&&(l.desc[LANG]||l.desc.en))||''; }
+function advTabName(tb){
+  const root=ADV.logros.find(x=>x.id===tb+'/root');
+  return root?advTitle(root):prettify(tb);
+}
+async function pvAdv(uuid){
+  ADV=null; ADV_TAB='all'; ADV_OPEN=null;
+  $('adv-count').textContent='…'; $('adv-tabs').innerHTML=''; $('adv-bar').style.width='0%';
+  $('adv-grid').innerHTML=`<div class="note">…</div>`;
+  const r=await api(`/api/advancements/${uuid}`).catch(()=>null);
+  if(!r || !r.logros || !r.logros.length){
+    $('adv-count').textContent='';
+    $('adv-grid').innerHTML=`<div class="note">${t('adv_none')}</div>`;
+    return;
+  }
+  ADV=r; renderAdv();
+}
+function advTab(k){ ADV_TAB=k; ADV_OPEN=null; renderAdv(); }
+function advToggle(id){ ADV_OPEN = (ADV_OPEN===id ? null : id); renderAdv(); }
+function renderAdv(){
+  const pct = ADV.total ? Math.round(ADV.done*100/ADV.total) : 0;
+  $('adv-count').textContent = t('adv_of').replace('{0}',ADV.done).replace('{1}',ADV.total)+` · ${pct}%`;
+  $('adv-bar').style.width = pct+'%';
+  const hay = ADV_TABS.filter(tb=>ADV.logros.some(l=>l.tab===tb));
+  $('adv-tabs').innerHTML = [['all',t('adv_all')], ...hay.map(tb=>[tb,advTabName(tb)])]
+    .map(([k,label])=>{
+      const set = k==='all' ? ADV.logros : ADV.logros.filter(l=>l.tab===k);
+      const d = set.filter(l=>l.done).length;
+      return `<button class="advtab ${ADV_TAB===k?'on':''}" onclick="advTab('${k}')">${esc(label)} <b>${d}/${set.length}</b></button>`;
+    }).join('');
+  const lista = ADV_TAB==='all' ? ADV.logros : ADV.logros.filter(l=>l.tab===ADV_TAB);
+  // hechos arriba, luego los que llevas más avanzados, luego alfabético
+  const ord = [...lista].sort((a,b)=>
+      (b.done-a.done) || ((b.ok/b.tot)-(a.ok/a.tot)) || advTitle(a).localeCompare(advTitle(b)));
+  $('adv-grid').innerHTML = ord.map(advCard).join('');
+}
+function advCard(l){
+  const pasos = l.steps && l.steps.length>1;
+  const prog  = l.tot>1 ? `<div class="ap">${l.ok}/${l.tot}</div>` : '';
+  const secr  = (l.hidden && !l.done) ? ` · ${t('adv_secret')}` : '';
+  const card = `<div class="adv ${l.done?'done':''} f-${l.frame} ${pasos?'hasteps':''}"
+      ${pasos?`onclick="advToggle('${l.id}')"`:''}>
+    <img src="/icons/${l.icon}.png" loading="lazy" onerror="this.style.visibility='hidden'">
+    <div style="min-width:0">
+      <div class="an">${esc(advTitle(l))}</div>
+      <div class="ad">${esc(advDesc(l))}${secr}</div>
+      ${prog}
+    </div>
+    ${pasos?`<span class="achev">${ADV_OPEN===l.id?'▴':'▾'}</span>`:''}
+  </div>`;
+  return card + (ADV_OPEN===l.id && pasos ? advSteps(l) : '');
+}
+function advSteps(l){
+  const faltan = l.steps.filter(s=>!s.d).length;
+  const cab = faltan ? t('adv_steps').replace('{0}',faltan).replace('{1}',l.steps.length)
+                     : t('adv_done_all');
+  return `<div class="advsteps">
+    <div class="sh">${esc(advTitle(l))} — ${cab}</div>
+    ${l.steps.map(s=>`<div class="advstep ${s.d?'ok':''}">
+      <span>${s.d?'✔':'·'}</span><span>${esc(s[LANG]||s.en||s.id)}</span>
+      ${s.d?`<span class="sd">${esc(String(s.d).slice(0,10))}</span>`:''}</div>`).join('')}
+  </div>`;
+}
+
 function statCol(title, total, rows, key){
   const col=document.createElement('div'); col.className='card statcol';
   const TOP=15;

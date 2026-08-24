@@ -299,6 +299,8 @@ def player_stats():
     block_ids = set()
     for st in allstats.values():
         block_ids.update(st.get("minecraft:mined", {}).keys())
+    cat = adv_catalog()
+    adir = adv_dir()
     for f in files:
         uuid = f.stem
         full = allstats.get(uuid, {})
@@ -321,6 +323,16 @@ def player_stats():
             "damage_dealt": round(st.get("minecraft:damage_dealt", 0) / 10, 0),
             "last_seen": last_seen,
         })
+        if cat:
+            try:
+                crudo = json.loads((adir / f"{uuid}.json").read_text())
+            except Exception:
+                crudo = {}
+            hecho = sum(1 for l in cat["logros"]
+                        if (crudo.get("minecraft:" + l["id"]) or crudo.get(l["id"]) or {}).get("done"))
+            out[-1]["adv_done"] = hecho
+            out[-1]["adv_total"] = cat["total"]
+            out[-1]["adv_pct"] = round(hecho * 100 / cat["total"], 1) if cat["total"] else 0
     out.sort(key=lambda p: (-p["online"], -p["play_hours"]))
     return out
 
@@ -548,6 +560,98 @@ def api_playerstats(uuid):
         used=cat("minecraft:used"),
         killed=cat("minecraft:killed"),
     )
+
+# ------------------------------------------------------------------ logros (advancements)
+# El catálogo (los 126 logros con sus textos y criterios) lo construye
+# scripts/build-advancements.py a partir del jar oficial. Aquí solo se lee.
+def adv_dir() -> Path:
+    for cand in (MC_DIR / "world/players/advancements", MC_DIR / "world/advancements"):
+        if cand.is_dir():
+            return cand
+    return MC_DIR / "world/players/advancements"
+
+ADV_FILE = DATA_DIR / "advancements.json"
+_adv_cache = {"mtime": 0, "data": None}
+
+def adv_catalog():
+    try:
+        m = ADV_FILE.stat().st_mtime
+    except Exception:
+        return None
+    if _adv_cache["data"] is None or m != _adv_cache["mtime"]:
+        try:
+            _adv_cache["data"] = json.loads(ADV_FILE.read_text())
+            _adv_cache["mtime"] = m
+        except Exception:
+            return None
+    return _adv_cache["data"]
+
+def adv_player_raw(uuid):
+    try:
+        return json.loads((adv_dir() / f"{uuid}.json").read_text())
+    except Exception:
+        return {}
+
+def adv_eval(logro, hechos):
+    """Devuelve (completado, grupos_cumplidos, grupos_totales).
+
+    En Minecraft `requirements` es una lista de grupos: cada grupo se cumple con
+    CUALQUIERA de los criterios que contiene, y hacen falta TODOS los grupos.
+    Por eso 'Monster Hunter' (un grupo con 41 mobs) se completa matando uno solo,
+    y 'Monsters Hunted' (41 grupos de uno) exige matarlos todos.
+    """
+    grupos = logro.get("requirements") or [[c] for c in logro.get("criteria", [])]
+    ok = sum(1 for g in grupos if any(c in hechos for c in g))
+    return ok == len(grupos) and len(grupos) > 0, ok, len(grupos)
+
+def adv_resumen(uuid, cat=None):
+    """(completados, total) — barato, para la cuadrícula de jugadores."""
+    cat = cat or adv_catalog()
+    if not cat:
+        return None, None
+    crudo = adv_player_raw(uuid)
+    hecho = 0
+    for l in cat["logros"]:
+        e = crudo.get("minecraft:" + l["id"]) or crudo.get(l["id"])
+        if e and e.get("done"):
+            hecho += 1
+    return hecho, cat["total"]
+
+@app.get("/api/advancements/<uuid>")
+def api_advancements(uuid):
+    require("view_players")          # mismo permiso que el resto de estadísticas
+    uuid = uuid.lower()
+    if not UUID_RE.match(uuid):
+        abort(400)
+    cat = adv_catalog()
+    if not cat:
+        return jsonify(error="catalogo_no_generado", logros=[], total=0), 200
+    crudo = adv_player_raw(uuid)
+    salida, hechos_tot = [], 0
+    for l in cat["logros"]:
+        e = crudo.get("minecraft:" + l["id"]) or crudo.get(l["id"]) or {}
+        hechos = e.get("criteria") or {}          # criterio -> fecha
+        done = bool(e.get("done"))
+        _calc, ok, tot = adv_eval(l, hechos)
+        if done:
+            hechos_tot += 1
+        pasos = None
+        if tot > 1:                                # solo los de varios pasos traen detalle
+            pasos = [{"id": c,
+                      "es": l["labels"].get(c, {}).get("es", c),
+                      "en": l["labels"].get(c, {}).get("en", c),
+                      "d": hechos.get(c)}
+                     for c in l["criteria"]]
+            pasos.sort(key=lambda p: (p["d"] is None, (p["es"] or "").lower()))
+        salida.append({
+            "id": l["id"], "tab": l["tab"], "icon": l["icon"], "frame": l["frame"],
+            "hidden": l["hidden"], "title": l["title"], "desc": l["desc"],
+            "done": done, "ok": ok, "tot": tot,
+            "date": max(hechos.values()) if done and hechos else None,
+            "steps": pasos,
+        })
+    return jsonify(version=cat.get("version"), total=cat["total"],
+                   done=hechos_tot, tabs=cat.get("por_pestana", {}), logros=salida)
 
 @app.get("/api/audit")
 def api_audit():
