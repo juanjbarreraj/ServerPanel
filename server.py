@@ -693,9 +693,15 @@ def api_biome():
     require("view_dashboard")
     def suelo(v, por_defecto):
         return int(float(v) // 1) if v not in (None, "") else por_defecto
+    # y="auto" (o sin y): el clic vino de un tile de baja resolución, donde la
+    # altura no significa nada — BlueMap manda y=0 y ahí abajo todo son cuevas.
+    # En ese caso se usa el bioma de la CIMA de la columna, que es el de la
+    # superficie: los biomas de arriba se extienden hacia el cielo.
+    crudo_y = request.args.get("y")
+    auto = crudo_y in (None, "", "auto")
     try:
         x = suelo(request.args.get("x"), 0)
-        y = suelo(request.args.get("y"), 64)
+        y = 0 if auto else suelo(crudo_y, 64)
         z = suelo(request.args.get("z"), 0)
     except (TypeError, ValueError):
         return jsonify(error="coordenadas inválidas"), 400
@@ -705,6 +711,8 @@ def api_biome():
     col = biomas_columna(dim, x, z)
     if not col:
         return jsonify(found=False)
+    if auto:
+        y = col[-1][0]
     cat = biomas_catalogo()
 
     def nombres(bid):

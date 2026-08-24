@@ -13,7 +13,7 @@
 #  Corre EN EL SERVER:  bash ~/panel/scripts/parche-bluemap.sh
 # ============================================================
 set -e
-VER=3
+VER=4
 WEBDIR="/var/www/bluemap-web"
 INDEX="$WEBDIR/index.html"
 TAG="<script src=\"/static/biomas.js?v=$VER\"></script>"

@@ -47,8 +47,14 @@
       /* la tarjeta de clic y la de un marcador, por encima de todo */
       '[id^="bm-marker-"][class*="popup"],.bm-marker-popup,#bm-marker-popup{' +
       'z-index:2147483000 !important}' +
-      /* el contenido del bioma hereda el estilo del popup */
+      /* el contenido del bioma hereda el estilo del popup, pero SIN recortar:
+         BlueMap le pone text-overflow:ellipsis y "Llanura de girasoles" se
+         quedaba en "Llanura de gira…" */
       '.bm-bioma .group{margin-top:4px}' +
+      '.bm-bioma .content,.bm-bioma .label{white-space:normal !important;' +
+      'overflow:visible !important;text-overflow:clip !important}' +
+      '[id^="bm-marker-"][class*="popup"],.bm-marker-popup,#bm-marker-popup{' +
+      'max-width:260px !important;width:auto !important}' +
       /* marcadores escondidos salvo en la vista plana (la clase la pone
          vigilarVista); el popup y los jugadores nunca se esconden */
       'body.bm-solo-plano [id^="bm-marker-"]:not([class*="popup"])' +
@@ -135,6 +141,7 @@
     pinta(html);
   }
 
+  // y === null  ->  "auto": que el servidor use la cima de la columna
   function consultar(x, y, z, origen) {
     var clave = x + "/" + y + "/" + z;
     if (clave === ultimaClave) return;      // el mismo punto otra vez, no repetir
@@ -146,7 +153,7 @@
     }, 0);
 
     var url = "/api/biome?mapa=" + encodeURIComponent(mapaActual()) +
-              "&x=" + x + "&y=" + y + "&z=" + z;
+              "&x=" + x + "&y=" + (y === null ? "auto" : y) + "&z=" + z;
     fetch(url, { credentials: "same-origin" })
       .then(function (r) {
         log("respuesta", r.status, url);
@@ -164,10 +171,14 @@
   // ------------------------------------------------- 2a) el evento de BlueMap
   function alInteractuar(evt) {
     var d = (evt && evt.detail) || {};
-    var golpe = d.hiresHit || (d.lowresHits && d.lowresHits[0]);
+    var hires = d.hiresHit;
+    var golpe = hires || (d.lowresHits && d.lowresHits[0]);
     var p = golpe && golpe.point;
     if (!p) { peticion++; ultimaClave = ""; return; }
-    consultar(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z), "evento");
+    // solo el golpe de alta resolución trae una altura real; en el mapa plano
+    // BlueMap devuelve y=0 y eso es subsuelo, así que se pide la superficie
+    consultar(Math.floor(p.x), hires ? Math.floor(p.y) : null, Math.floor(p.z),
+              hires ? "evento" : "evento (plano → superficie)");
   }
 
   var original = EventTarget.prototype.addEventListener;
