@@ -2993,6 +2993,22 @@ def _puede_ver_lugar(u, ev):
         return True
     return (u.get("name") or "").lower() == (ev.get("p") or "").lower()
 
+# Minecraft mezcla los dos estilos de hueco en el mismo fichero de textos:
+# "%1$s fue asesinado por %2$s" (numerado) y "%s se unió a la partida" (simple).
+# Hay que entender los dos o la frase sale con los huecos a la vista.
+_HUECO = re.compile(r"%(?:(\d)\$)?s")
+
+def _rellenar(plantilla, partes):
+    seq = [0]
+    def rep(m):
+        if m.group(1):
+            i = int(m.group(1))
+        else:
+            seq[0] += 1
+            i = seq[0]
+        return partes[i - 1] if 0 < i <= len(partes) else ""
+    return _HUECO.sub(rep, plantilla)
+
 def _texto_muerte(ev):
     """La frase de la muerte, ya montada, en los dos idiomas.
 
@@ -3004,11 +3020,8 @@ def _texto_muerte(ev):
     if not plant:
         return crudo, crudo
     partes = [ev.get("p") or ""] + [str(a) for a in (ev.get("args") or [])]
-    def sub(txt):
-        for i, val in enumerate(partes, 1):
-            txt = txt.replace("%%%d$s" % i, val)
-        return txt
-    return sub(plant.get("es") or crudo), sub(plant.get("en") or crudo)
+    return _rellenar(plant.get("es") or crudo, partes), \
+           _rellenar(plant.get("en") or crudo, partes)
 
 def _feed_publico(u, eventos):
     out = []

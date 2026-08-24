@@ -19,7 +19,10 @@ Salida: panel/data/mensajes.json
 Lo lee server.py para el feed (/api/feed) y para /api/effects.
 
 Uso:  python3 ~/panel/scripts/build-mensajes.py
-      python3 ~/panel/scripts/build-mensajes.py --sin-red   (solo inglés)
+      python3 ~/panel/scripts/build-mensajes.py --sin-red        (solo inglés)
+      python3 ~/panel/scripts/build-mensajes.py --rehacer-feed   (borra el feed
+                                        para que se reconstruya con las frases
+                                        nuevas; hace falta si cambian las plantillas)
 """
 import glob, json, re, sys, urllib.request, zipfile
 from pathlib import Path
@@ -101,28 +104,44 @@ def lang_es(version):
 # --------------------------------------------------------------- plantillas
 NOMBRE = r"[A-Za-z0-9_]{1,16}"
 
+# ⚠ Minecraft usa DOS formas de hueco en el mismo fichero de textos:
+#     death.attack.mob            -> "%1$s was slain by %2$s"   (numerado)
+#     multiplayer.player.joined   -> "%s joined the game"       (simple)
+#     chat.type.advancement.task  -> "%s has made the advancement %s"
+# Los numerados existen porque algunos idiomas cambian el orden. La primera
+# versión de este script solo entendía los numerados, así que las muertes salían
+# en el feed y las ENTRADAS y los LOGROS no: sus plantillas se quedaban sin regex
+# y se descartaban en silencio. De ahí la comprobación obligatoria de abajo.
+HUECO = re.compile(r"%(?:(\d)\$)?s")
+
 
 def a_regex(plantilla):
-    """'%1$s was slain by %2$s' -> regex con grupos numerados.
+    """Plantilla de Minecraft -> regex con grupos numerados.
 
-    El grupo 1 es SIEMPRE la víctima y se limita al juego de caracteres de un
+    El grupo 1 es SIEMPRE el jugador y se limita al juego de caracteres de un
     nombre de Minecraft: así una frase de chat que por casualidad se parezca a
     una muerte no cuela. Los demás grupos son perezosos menos el último, para
     que 'A was slain by B using C' reparta bien cuando B lleva espacios.
     """
-    huecos = re.findall(r"%(\d)\$s", plantilla)
-    if not huecos:
+    trozos, indices, pos, seq = [], [], 0, 0
+    for m in HUECO.finditer(plantilla):
+        trozos.append(re.escape(plantilla[pos:m.start()]))
+        seq += 1
+        indices.append(int(m.group(1)) if m.group(1) else seq)
+        pos = m.end()
+    if not indices:
         return None, 0
-    trozos = re.split(r"%\d\$s", plantilla)
-    ultimo = len(huecos) - 1
-    partes = [re.escape(trozos[0])]
-    for i, n in enumerate(huecos):
-        if n == "1":
+    cola = re.escape(plantilla[pos:])
+    ultimo = len(indices) - 1
+    partes = []
+    for i, idx in enumerate(indices):
+        partes.append(trozos[i])
+        if idx == 1:
             partes.append("(" + NOMBRE + ")")
         else:
             partes.append("(.+)" if i == ultimo else "(.+?)")
-        partes.append(re.escape(trozos[i + 1]))
-    return "^" + "".join(partes) + "$", len(huecos)
+    partes.append(cola)
+    return "^" + "".join(partes) + "$", len(indices)
 
 
 def main():
@@ -199,6 +218,24 @@ def main():
     salida["efectos"] = efectos
     print("  efectos: %d" % len(efectos))
 
+    # ------------------------------------------- 5) nada silencioso
+    # Si una plantilla no produce regex, el evento entero desaparece del feed sin
+    # que nadie se entere. Pasó de verdad: las entradas y los logros usan "%s" y
+    # el script solo entendía "%1$s", así que solo salían las muertes. Ahora eso
+    # es un error duro.
+    faltan = []
+    if not muertes:
+        faltan.append("ninguna plantilla de muerte")
+    for campo in ("entro", "salio"):
+        if not (ses.get(campo) or {}).get("rx"):
+            faltan.append("sesión/" + campo)
+    if not any((v or {}).get("rx") for v in logros.values()):
+        faltan.append("logros")
+    if faltan:
+        print("\n✗ NO puedo leer: %s" % ", ".join(faltan))
+        print("  El feed saldría incompleto. Revisa las claves en el jar antes de seguir.")
+        return 1
+
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(salida, ensure_ascii=False, indent=1))
     print("✔ %s  (%.1f KB)" % (OUT, OUT.stat().st_size / 1024))
@@ -210,6 +247,17 @@ def main():
               % ", ".join(sorted(sin_clasificar)))
 
     comprobar(salida)
+
+    if "--rehacer-feed" in sys.argv:
+        borrados = []
+        for n in ("feed.jsonl", "feed-historico.jsonl", "feed_state.json"):
+            f = PANEL / "data" / n
+            if f.exists():
+                f.unlink(); borrados.append(n)
+        print("\n🗑  feed borrado (%s) — el panel lo reconstruye solo desde los logs"
+              % (", ".join(borrados) if borrados else "no había nada"))
+        print("   ojo: se pierden las coordenadas de las muertes que ya se habían")
+        print("   capturado en vivo; el log no las trae y no se pueden recuperar.")
     return 0
 
 
@@ -219,6 +267,7 @@ def main():
 # que nadie se entere.
 PRUEBAS = [
     ("JEYtheFlash was slain by Zombie",                 "muerte", "JEYtheFlash"),
+    ("Jakobino155 was impaled by Piglin",               "muerte", "Jakobino155"),
     ("sofidiaz fell from a high place",                 "muerte", "sofidiaz"),
     ("kkrenalga0228 was shot by Skeleton",              "muerte", "kkrenalga0228"),
     ("tommy__odd drowned",                              "muerte", "tommy__odd"),

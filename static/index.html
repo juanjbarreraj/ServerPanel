@@ -2582,11 +2582,11 @@ function hiFila(e){
     txt = `<b>${nom}</b> ${t(e.abierta?'hist_online':'hist_played', hiDur(e.seg))}`;
     if (e.cortada) sub = t('hist_cut');
   } else if (e.k==='logro'){
-    ico = hiIco('logros','🏅');
+    ico = hiIco('logro','🏅');
     txt = `<b>${nom}</b> ${t('hist_got')} <b>${esc(e.titulo||'')}</b>`;
   } else {
     cls=' muerte';
-    ico = '<span class="hi-em">💀</span>';
+    ico = hiIco('muerte','💀');
     txt = esc((LANG==='en' ? (e.en||e.es) : (e.es||e.en)) || '');
     const b = e.bioma && (LANG==='en' ? e.bioma.en : e.bioma.es);
     const dim = (e.dim && e.dim!=='minecraft:overworld') ? (DIM_NOM[e.dim]||e.dim) : '';
