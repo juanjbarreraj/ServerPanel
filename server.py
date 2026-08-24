@@ -528,6 +528,181 @@ def api_mapauth():
     require("view_dashboard")
     return "", 204
 
+# ------------------------------------------------------------------ biomas
+# Se lee directo del mundo: cada sección de chunk guarda sus biomas en celdas de
+# 4x4x4 (64 por sección) con paleta + índices empaquetados en longs.
+_DIMS_REGION = {
+    "overworld": ("dimensions/minecraft/overworld", "."),
+    "nether":    ("dimensions/minecraft/the_nether", "DIM-1"),
+    "end":       ("dimensions/minecraft/the_end", "DIM1"),
+}
+
+def region_dir(dim: str) -> Path:
+    nuevo, viejo = _DIMS_REGION.get(dim, _DIMS_REGION["overworld"])
+    for p in (MC_DIR / "world" / nuevo / "region", MC_DIR / "world" / viejo / "region"):
+        if p.is_dir():
+            return p
+    return MC_DIR / "world" / nuevo / "region"
+
+def _dim_de_mapa(mapa: str) -> str:
+    m = (mapa or "").lower()
+    if "nether" in m:
+        return "nether"
+    if "end" in m:
+        return "end"
+    return "overworld"
+
+BIOMAS_FILE = DATA_DIR / "biomas.json"
+_biomas_cache = {"mtime": 0, "data": None}
+
+def biomas_catalogo() -> dict:
+    try:
+        m = BIOMAS_FILE.stat().st_mtime
+    except OSError:
+        return {}
+    if _biomas_cache["data"] is None or m != _biomas_cache["mtime"]:
+        try:
+            _biomas_cache["data"] = json.loads(BIOMAS_FILE.read_text())
+            _biomas_cache["mtime"] = m
+        except Exception:
+            _biomas_cache["data"] = {}
+    return _biomas_cache["data"] or {}
+
+def _chunk_nbt(dim: str, cx: int, cz: int):
+    import zlib
+    import nbt as _n
+    path = region_dir(dim) / f"r.{cx >> 5}.{cz >> 5}.mca"
+    try:
+        with open(path, "rb") as f:
+            i = ((cx & 31) + (cz & 31) * 32) * 4
+            f.seek(i)
+            head = f.read(4)
+            if len(head) < 4:
+                return None
+            off = struct.unpack(">I", head)[0] >> 8
+            if off == 0:
+                return None
+            f.seek(off * 4096)
+            cab = f.read(5)
+            if len(cab) < 5:
+                return None
+            ln = struct.unpack(">I", cab[:4])[0]
+            comp = cab[4]
+            raw = f.read(max(0, ln - 1))
+    except Exception:
+        return None
+    try:
+        if comp == 1:
+            raw = gzip.decompress(raw)
+        elif comp == 2:
+            raw = zlib.decompress(raw)
+        elif comp != 3:
+            return None
+        _nombre, root = _n.parse(raw)
+        return root
+    except Exception:
+        return None
+
+def biomas_columna(dim: str, x: int, z: int):
+    """Toda la columna de biomas en ese x/z: [(y_base, id)] de abajo a arriba.
+    La resolución vertical del juego es de 4 bloques, así que hay una entrada
+    por cada celda de 4."""
+    import nbt as _n
+    root = _chunk_nbt(dim, x >> 4, z >> 4)
+    if root is None:
+        return []
+    secs = _n.cget(root.v, "sections") or _n.cget(root.v, "Sections")
+    if secs is None:
+        return []
+    col = []
+    base = ((z & 15) >> 2) * 4 + ((x & 15) >> 2)
+    for s in secs.v.items:
+        ty = _n.cget(s, "Y")
+        b = _n.cget(s, "biomes")
+        if ty is None or b is None:
+            continue
+        pal = _n.cget(b.v, "palette")
+        if pal is None or not pal.v.items:
+            continue
+        nombres = [n.decode() if isinstance(n, bytes) else str(n) for n in pal.v.items]
+        datos = _n.cget(b.v, "data")
+        longs = None
+        if len(nombres) > 1 and datos is not None:
+            longs = datos.v.items if hasattr(datos.v, "items") else datos.v
+        bits = max(1, (len(nombres) - 1).bit_length())
+        por_long = 64 // bits
+        for cy in range(4):
+            if longs is None:
+                nom = nombres[0]
+            else:
+                idx = cy * 16 + base
+                j, k = divmod(idx, por_long)
+                if j >= len(longs):
+                    nom = nombres[0]
+                else:
+                    val = (longs[j] >> (k * bits)) & ((1 << bits) - 1)
+                    nom = nombres[val] if val < len(nombres) else nombres[0]
+            col.append((ty.v * 16 + cy * 4, nom))
+    col.sort()
+    return col
+
+def bioma_en(dim: str, x: int, y: int, z: int):
+    """Devuelve el id del bioma ('minecraft:plains') en ese bloque, o None."""
+    hallado = None
+    for yb, nom in biomas_columna(dim, x, z):
+        if yb <= y:
+            hallado = nom
+        else:
+            break
+    return hallado
+
+def _tramos(col):
+    """Une celdas consecutivas del mismo bioma → [(id, y_min, y_max)]."""
+    out = []
+    for yb, nom in col:
+        if out and out[-1][0] == nom and out[-1][2] + 1 == yb:
+            out[-1][2] = yb + 3
+        else:
+            out.append([nom, yb, yb + 3])
+    return out
+
+@app.get("/api/biome")
+def api_biome():
+    require("view_dashboard")
+    def suelo(v, por_defecto):
+        return int(float(v) // 1) if v not in (None, "") else por_defecto
+    try:
+        x = suelo(request.args.get("x"), 0)
+        y = suelo(request.args.get("y"), 64)
+        z = suelo(request.args.get("z"), 0)
+    except (TypeError, ValueError):
+        return jsonify(error="coordenadas inválidas"), 400
+    if max(abs(x), abs(z)) > 30_000_000 or not (-2048 <= y <= 2048):
+        return jsonify(error="fuera del mundo"), 400
+    dim = _dim_de_mapa(request.args.get("mapa", ""))
+    col = biomas_columna(dim, x, z)
+    if not col:
+        return jsonify(found=False)
+    cat = biomas_catalogo()
+
+    def nombres(bid):
+        corto = bid.split(":")[-1]
+        e = cat.get(bid) or cat.get(corto) or {}
+        bonito = corto.replace("_", " ").title()
+        return e.get("es") or bonito, e.get("en") or bonito
+
+    aqui = bioma_en(dim, x, y, z) or col[-1][1]
+    es, en = nombres(aqui)
+    # el resto de la columna: lo que hay DEBAJO del punto y es distinto
+    debajo = []
+    for bid, y0, y1 in _tramos(col):
+        if y0 > y or bid == aqui:
+            continue
+        e, i = nombres(bid)
+        debajo.append({"id": bid, "es": e, "en": i, "y0": y0, "y1": min(y1, y)})
+    debajo.reverse()      # de arriba hacia abajo
+    return jsonify(found=True, id=aqui, es=es, en=en, y=y, debajo=debajo[:4])
+
 @app.get("/api/players")
 def api_players():
     require("view_players")

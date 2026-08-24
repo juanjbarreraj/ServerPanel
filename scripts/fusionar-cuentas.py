@@ -9,10 +9,14 @@ Qué hace (decidido con Juan, agosto 2026):
       kkkren      -> kkrenalga0228
       Nachardo    -> tommy__odd      (viejas + las del servidor actual)
 
-  ALTAS (estadísticas + items del inventario, SIN xp y SIN logros):
-      ZCP2007     nuevo en el servidor, aparece en el spawn (886.5, 79, 191.5)
-      tommy__odd  hereda el .dat vivo de Nachardo (posición, inventario, xp
-                  actuales) y encima se le meten sus items viejos
+  ALTAS (estadísticas + sus items, SIN xp y SIN logros):
+      ZCP2007, tommy__odd
+      Si ya tienen .dat en el servidor (viajó con el mundo y ya se puso en el
+      spawn en su día), NO se toca: ese es el bueno. Solo si no lo tuvieran se
+      escribe el del respaldo, con la posición forzada al spawn y el xp a 0.
+      Nunca se mezclan inventarios de DataVersion distinta: el conversor de
+      Minecraft solo actúa sobre el archivo entero, así que meter items de 1.18
+      en un perfil de 1.21 los rompería.
 
   RETIRADA de Nachardo:
       sus archivos se ARCHIVAN (no se borran) en ~/minecraft/players-archive/
@@ -157,6 +161,29 @@ def _describe(item):
     return f"{iid.replace('minecraft:', '')} x{n}"
 
 
+def items_de(root):
+    """Lista legible de todo lo que lleva encima y en el cofre del End."""
+    out = []
+    for clave in ("Inventory", "EnderItems"):
+        t = _n.cget(root.v, clave)
+        if t is None:
+            continue
+        for it in t.v.items:
+            out.append(_describe(it) + ("" if clave == "Inventory" else " (cofre del End)"))
+    return out
+
+
+def resumen_dat(root):
+    def n(clave):
+        t = _n.cget(root.v, clave)
+        return len(t.v.items) if t is not None else 0
+    xp = _n.cget(root.v, "XpLevel")
+    pos = _n.cget(root.v, "Pos")
+    p = "?" if pos is None else "(%.0f, %.0f, %.0f)" % tuple(pos.v.items)
+    return f"{n('Inventory')} items, {n('EnderItems')} en el cofre del End, " \
+           f"nivel {xp.v if xp else 0}, en {p}"
+
+
 def fusionar_inventarios(destino_root, origen_root):
     """Mete los items de origen en huecos libres del inventario de destino.
     Todo se remapea a slots 0..35 (los slots 100-103 / -106 ya no existen en 26.2).
@@ -295,15 +322,17 @@ def main():
         if s_vivo:
             log(f"     {viejo_n:<14s} servidor : {horas(s_vivo):7.1f} h   DataVersion {s_vivo.get('DataVersion')}")
 
-        # si el mismo uuid está en respaldo y en el servidor con la MISMA versión de
-        # datos, el respaldo es una copia vieja del mismo archivo → no sumar dos veces
-        if s_viejo and s_vivo and s_viejo.get("DataVersion") == s_vivo.get("DataVersion"):
+        # MISMO UUID en el respaldo y en el servidor = el mismo archivo, el del
+        # servidor es el más nuevo (aunque le hayan cambiado la DataVersion al
+        # migrar el mundo). Sumar los dos sería contar las horas dos veces.
+        if s_viejo and s_vivo:
             if horas(s_viejo) <= horas(s_vivo):
-                log("     ↳ el respaldo es una copia antigua de lo que ya hay en el servidor; se ignora")
+                log("     ↳ el respaldo es una copia anterior del MISMO archivo; se ignora "
+                    "(si no, se contarían las horas dos veces)")
                 s_viejo = None
             else:
-                AVISOS.append(f"{viejo_n}: respaldo y servidor tienen la misma DataVersion "
-                              f"pero el respaldo tiene MÁS horas — revisar a mano")
+                AVISOS.append(f"{viejo_n}: el respaldo tiene MÁS horas que el archivo del "
+                              f"servidor ({horas(s_viejo)} vs {horas(s_vivo)}) — revisar a mano")
 
         if s_viejo:
             aporta(nuevo_u, nuevo_n, f"{viejo_n} (respaldo)", s_viejo)
@@ -313,74 +342,64 @@ def main():
             log("     ↳ no hay nada que sumar")
 
     # ---------------------------------------------------------- 2) altas / .dat
-    log("\n── 2. Perfiles nuevos (inventario, sin xp, sin logros) ─────────────")
+    log("\n── 2. Perfiles nuevos (estadísticas + sus items, sin xp, sin logros) ──")
     for nombre, uuid, hereda in ALTAS:
-        d_vivo = VIVO / "data" / f"{uuid}.dat"
+        d_vivo  = VIVO  / "data" / f"{uuid}.dat"
         d_viejo = VIEJO / "data" / f"{uuid}.dat"
+        d_padre = VIVO  / "data" / f"{hereda}.dat" if hereda else None
         log(f"\n  {nombre}")
 
-        if hereda:
-            d_padre = VIVO / "data" / f"{hereda}.dat"
-            if not d_padre.exists():
-                log(f"     ✗ no existe {d_padre.name} en el servidor — se usará su .dat viejo")
-                hereda = None
+        if d_vivo.exists():
+            # Caso normal aquí: el .dat ya viajó con el mundo y ya lo pusimos en el
+            # spawn en su día. Es el bueno: no se toca nada.
+            _, root, _ = dat_leer(d_vivo)
+            log(f"     ya tiene su .dat en el servidor (DataVersion {dat_version(root)}) — "
+                f"{resumen_dat(root)}")
+            log("     no se toca: es el suyo y ya está en el spawn")
+            if d_padre is not None and d_padre.exists():
+                _, pr, _ = dat_leer(d_padre)
+                log(f"     ojo: el .dat de {RETIRA_NOMBRE} (DataVersion {dat_version(pr)}) "
+                    f"tiene {resumen_dat(pr)}")
+                for it in items_de(pr):
+                    log(f"        · {it}")
+                if items_de(pr):
+                    AVISOS.append(f"{nombre}: las cosas de {RETIRA_NOMBRE} NO se pasan "
+                                  f"(su .dat es de otra versión de Minecraft y mezclarlo las "
+                                  f"corrompería). Si las quiere, se le dan con /give.")
 
-        if hereda:
-            raiz, base_root, _ = dat_leer(VIVO / "data" / f"{hereda}.dat")
-            log(f"     base: .dat de {RETIRA_NOMBRE} del servidor (DataVersion {dat_version(base_root)})"
-                f" — conserva posición, xp e inventario actuales")
-            if d_vivo.exists():   # ya había jugado con el nombre nuevo: no perder sus cosas
-                _, suyo_root, _ = dat_leer(d_vivo)
-                m, s = fusionar_inventarios(base_root, suyo_root)
-                log(f"     ! ya tenía perfil propio en el servidor: se conservan sus {len(m)} items")
-                AVISOS.append(f"{nombre}: ya tenía .dat propio; su posición/xp actuales se pierden "
-                              f"(se queda con las de {RETIRA_NOMBRE}), pero sus items se conservan")
-                for x in s:
-                    AVISOS.append(f"{nombre}: no cupo {x}")
-            if d_viejo.exists():
-                _, viejo_root, _ = dat_leer(d_viejo)
-                dv_b, dv_v = dat_version(base_root), dat_version(viejo_root)
-                if dv_v >= 3818 and dv_b >= 3818:
-                    metidos, sobrantes = fusionar_inventarios(base_root, viejo_root)
-                    for m in metidos:
-                        log(f"        + {m}")
-                    for s in sobrantes:
-                        log(f"        ! sin hueco: {s}")
-                        AVISOS.append(f"{nombre}: no cupo {s}")
-                else:
-                    AVISOS.append(f"{nombre}: los items viejos son de DataVersion {dv_v} y el perfil "
-                                  f"actual es {dv_b}; no se mezclan para no corromperlos")
-                    log(f"     ! items viejos en formato antiguo (DataVersion {dv_v}) — NO se mezclan")
+        elif d_padre is not None and d_padre.exists():
+            raiz, base_root, _ = dat_leer(d_padre)
+            log(f"     no tiene .dat propio → hereda el de {RETIRA_NOMBRE} "
+                f"(DataVersion {dat_version(base_root)}) — {resumen_dat(base_root)}")
             def hacer(root=base_root, d_vivo=d_vivo, raiz=raiz):
                 d_vivo.parent.mkdir(parents=True, exist_ok=True)
                 _n.save(d_vivo, raiz, root, gz=True)
             ejecutar.append(hacer)
-        else:
-            if not d_viejo.exists():
-                log("     ✗ no hay .dat viejo; solo tendrá estadísticas")
-                continue
+
+        elif d_viejo.exists():
             raiz, root, _ = dat_leer(d_viejo)
-            dv = dat_version(root)
-            if d_vivo.exists():
-                log(f"     ! ya tiene .dat en el servidor — NO se toca (se respeta lo actual)")
-                AVISOS.append(f"{nombre}: ya existía en el servidor; su .dat no se sobrescribió")
-                continue
             dat_al_spawn(root)
             dat_sin_xp(root)
-            inv = _n.cget(root.v, "Inventory")
-            end = _n.cget(root.v, "EnderItems")
-            log(f"     .dat viejo (DataVersion {dv}) → spawn {SPAWN}, xp a 0, "
-                f"{len(inv.v.items) if inv else 0} items + {len(end.v.items) if end else 0} en el cofre del End")
+            log(f"     .dat del respaldo (DataVersion {dat_version(root)}) → spawn {SPAWN}, "
+                f"xp a 0 — {resumen_dat(root)}")
             def hacer(root=root, d_vivo=d_vivo, raiz=raiz):
                 d_vivo.parent.mkdir(parents=True, exist_ok=True)
                 _n.save(d_vivo, raiz, root, gz=True)
             ejecutar.append(hacer)
+        else:
+            log("     no hay .dat por ningún lado; solo tendrá estadísticas")
 
-        # estadísticas propias del alta (las del respaldo)
+        # estadísticas: SIEMPRE (aunque el .dat no se toque)
         s_viejo = leer_stats(VIEJO / "stats" / f"{uuid}.json")
-        if s_viejo:
-            log(f"     estadísticas propias del respaldo: {horas(s_viejo)} h")
+        s_vivo  = leer_stats(VIVO  / "stats" / f"{uuid}.json")
+        if s_viejo and s_vivo and horas(s_viejo) <= horas(s_vivo):
+            log(f"     estadísticas: ya están en el servidor ({horas(s_vivo)} h); "
+                f"el respaldo ({horas(s_viejo)} h) se ignora")
+        elif s_viejo:
+            log(f"     estadísticas del respaldo: {horas(s_viejo)} h")
             aporta(uuid, nombre, f"{nombre} (respaldo)", s_viejo)
+        else:
+            log("     sin estadísticas en el respaldo")
 
     # logros de Nachardo → tommy__odd (los del servidor actual, no los del respaldo)
     a_nach = VIVO / "advancements" / f"{RETIRA_UUID}.json"

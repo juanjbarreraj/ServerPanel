@@ -70,7 +70,7 @@ sudo systemctl reload caddy
 
 echo "== 4/6 · Re-render automático cada noche (09:00 UTC, tras el backup) =="
 sudo tee /etc/cron.d/bluemap-render >/dev/null <<'CRON'
-0 9 * * * ubuntu python3 /home/ubuntu/panel/scripts/scan-structures.py >> /home/ubuntu/bluemap/render.log 2>&1; cd /home/ubuntu/bluemap && nice -n 19 ionice -c3 java -Xmx1536M -jar bluemap-cli.jar -r >> render.log 2>&1
+0 9 * * * ubuntu python3 /home/ubuntu/panel/scripts/scan-structures.py >> /home/ubuntu/bluemap/render.log 2>&1; cd /home/ubuntu/bluemap && nice -n 19 ionice -c3 java -Xmx1536M -jar bluemap-cli.jar -r >> render.log 2>&1; bash /home/ubuntu/panel/scripts/parche-bluemap.sh >> /home/ubuntu/bluemap/render.log 2>&1
 CRON
 
 echo "== 5/6 · Render inicial (en segundo plano, tarda HORAS la primera vez) =="
