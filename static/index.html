@@ -470,6 +470,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .pv-cols .statcol{break-inside:avoid; -webkit-column-break-inside:avoid; margin:0 0 16px; width:100%}
 
 /* ---------- logros ---------- */
+.pvswitch img{width:22px;height:22px;image-rendering:pixelated;vertical-align:-5px;margin-right:8px}
 .pvswitch{width:100%; justify-content:center; margin:0 0 16px; padding:12px 16px; font-size:.95rem}
 #pv-advcard{margin-bottom:16px}
 .advhead{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:10px}
@@ -655,13 +656,13 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- DASHBOARD -->
   <section id="tab-dash">
     <div class="grid tiles" style="margin-bottom:14px">
-      <div class="card lift tile"><img class="ti" src="/icons/grass_block_side.png" onerror="this.outerHTML='<span class=&quot;ti-e&quot;>🌍</span>'">
+      <div class="card lift tile"><img class="ti" src="/static/ui/servidor.png" onerror="this.outerHTML='<span class=&quot;ti-e&quot;>🌍</span>'">
         <div><div class="lab" data-i18n="t_state">Servidor</div><div class="val" id="t-state">—</div></div></div>
-      <div class="card lift tile"><img class="ti" src="/icons/totem_of_undying.png" onerror="this.outerHTML='<span class=&quot;ti-e&quot;>🧍</span>'">
+      <div class="card lift tile"><img class="ti" src="/static/ui/online.png" onerror="this.outerHTML='<span class=&quot;ti-e&quot;>🧍</span>'">
         <div><div class="lab" data-i18n="t_online">Jugadores en línea</div><div class="val px" id="t-players">—</div></div></div>
-      <div class="card lift tile"><img class="ti" src="/icons/repeater.png" onerror="this.outerHTML='<span class=&quot;ti-e&quot;>⏱️</span>'">
+      <div class="card lift tile"><img class="ti" src="/static/ui/tick.png" onerror="this.outerHTML='<span class=&quot;ti-e&quot;>⏱️</span>'">
         <div><div class="lab" data-i18n="t_tick">Tiempo de tick</div><div class="val px" id="t-tick">—</div></div></div>
-      <div class="card lift tile"><img class="ti" src="/icons/iron_ingot.png" onerror="this.outerHTML='<span class=&quot;ti-e&quot;>💾</span>'">
+      <div class="card lift tile"><img class="ti" src="/static/ui/memoria.png" onerror="this.outerHTML='<span class=&quot;ti-e&quot;>💾</span>'">
         <div><div class="lab" data-i18n="t_mem">Memoria del server</div><div class="val px" id="t-mem">—</div></div></div>
     </div>
     <div class="grid two" style="margin-bottom:14px">
@@ -711,7 +712,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         </div>
         <div class="pv-right">
           <div class="grid tiles pv-tiles" id="pv-tiles"></div>
-          <button class="btn pvswitch" id="pv-switch" onclick="pvToggleView()">🏆 Logros</button>
+          <button class="btn pvswitch" id="pv-switch" onclick="pvToggleView()"><img id="pv-switch-ico" src="/static/ui/logros.png" alt=""><span id="pv-switch-lab">Logros</span></button>
           <div class="card hidden" id="pv-advcard">
             <div class="advhead">
               <h3 style="margin:0" data-i18n="adv_title">Logros</h3>
@@ -977,7 +978,7 @@ const I18N = {
   adv_of:'{0} de {1}', adv_secret:'Secreto', adv_steps:'Te faltan {0} de {1}',
   adv_done_all:'¡Completo!', sort_adv:'Más logros conseguidos',
   adv_over:'Overworld', adv_nether:'Nether', adv_end:'End', adv_todo:'No completados',
-  pv_see_adv:'🏆 Logros', pv_see_stats:'📊 Estadísticas',
+  pv_see_adv:'Logros', pv_see_stats:'Estadísticas',
   st_total:'Total', see_all:'Ver todo ({0}) ▾', see_less:'Ver menos ▴',
   dist_elytra:'Volando (con élytros)', dist_walk:'Caminando', dist_sprint:'Corriendo', dist_walk_water:'Sobre el agua',
   dist_under_water:'Bajo el agua', dist_crouch:'Agachado', dist_swim:'Nadando', dist_fall:'Cayendo',
@@ -1016,7 +1017,7 @@ const I18N = {
   adv_of:'{0} of {1}', adv_secret:'Secret', adv_steps:'{0} of {1} left',
   adv_done_all:'Complete!', sort_adv:'Most advancements',
   adv_over:'Overworld', adv_nether:'Nether', adv_end:'End', adv_todo:'Not completed',
-  pv_see_adv:'🏆 Advancements', pv_see_stats:'📊 Stats',
+  pv_see_adv:'Advancements', pv_see_stats:'Stats',
   st_total:'Total', see_all:'See all ({0}) ▾', see_less:'See less ▴',
   dist_elytra:'Flown (with Elytra)', dist_walk:'Walked', dist_sprint:'Sprinted', dist_walk_water:'Walked on water',
   dist_under_water:'Walked under water', dist_crouch:'Crouched', dist_swim:'Swum', dist_fall:'Fallen',
@@ -1196,17 +1197,20 @@ function enterApp(){
   show('dash');
 }
 
+// Iconos propios, dibujados para que cada uno diga de qué va su pestaña
+// (una espada no significa "jugadores"). Viven en static/ui/ y se sirven tal cual.
+const UI = n => `/static/ui/${n}.png?v=${ICONV}`;
 const TABS = [
-  ['dash',()=>t('tab_dash'),'grass_block','🏠', () => hasPerm('view_dashboard')],
-  ['players',()=>t('tab_players'),'diamond_sword','⚔️', () => hasPerm('view_players')],
-  ['map',()=>t('tab_map'),'filled_map','🗺️', () => hasPerm('view_dashboard')],
-  ['mod',()=>'Moderación','iron_axe','🔨', () => hasPerm('whitelist')||hasPerm('ban')||hasPerm('say')],
-  ['memories',()=>t('tab_mem'),'painting','🖼️', () => hasPerm('memories')],
-  ['console',()=>'Consola','command_block','🖥️', () => hasPerm('view_console')||(ME&&ME.role==='admin')],
-  ['backups',()=>'Copias','barrel','📦', () => hasPerm('backups')],
-  ['plugins',()=>'Plugins','redstone','🔌', () => ME&&ME.role==='admin'],
-  ['users',()=>'Moderadores','name_tag','👑', () => ME&&ME.role==='admin'],
-  ['sistema',()=>'Sistema','anvil','⚙️', () => ME&&ME.role==='admin'],
+  ['dash',()=>t('tab_dash'),UI('inicio'),'🏠', () => hasPerm('view_dashboard')],
+  ['players',()=>t('tab_players'),UI('jugadores'),'⚔️', () => hasPerm('view_players')],
+  ['map',()=>t('tab_map'),UI('mapa'),'🗺️', () => hasPerm('view_dashboard')],
+  ['mod',()=>'Moderación',UI('moderacion'),'🔨', () => hasPerm('whitelist')||hasPerm('ban')||hasPerm('say')],
+  ['memories',()=>t('tab_mem'),UI('memorias'),'🖼️', () => hasPerm('memories')],
+  ['console',()=>'Consola',UI('consola'),'🖥️', () => hasPerm('view_console')||(ME&&ME.role==='admin')],
+  ['backups',()=>'Copias',UI('copias'),'📦', () => hasPerm('backups')],
+  ['plugins',()=>'Plugins',UI('plugins'),'🔌', () => ME&&ME.role==='admin'],
+  ['users',()=>'Moderadores',UI('moderadores'),'👑', () => ME&&ME.role==='admin'],
+  ['sistema',()=>'Sistema',UI('sistema'),'⚙️', () => ME&&ME.role==='admin'],
 ];
 function buildTabs(){
   const nav=$('tabs'); nav.innerHTML='';
@@ -1215,7 +1219,9 @@ function buildTabs(){
     const b=document.createElement('button');
     b.className='tabslot'; b.id='tabbtn-'+id; b.onclick=()=>show(id);
     const ico=document.createElement('span'); ico.className='tico';
-    const img=document.createElement('img'); img.src=ICON(icon); img.alt='';
+    const img=document.createElement('img');
+    img.src = icon.startsWith('/') ? icon : ICON(icon);   // ruta propia o icono del juego
+    img.alt='';
     img.onerror=()=>{ const e=document.createElement('span'); e.textContent=emoji; img.replaceWith(e); };
     ico.appendChild(img);
     const lab=document.createElement('span'); lab.className='tlab'; lab.textContent=label();
@@ -1509,7 +1515,8 @@ function pvApplyView(){
   const adv = PV_VIEW==='adv';
   $('pv-advcard').classList.toggle('hidden', !adv);
   $('pv-cols').classList.toggle('hidden', adv);
-  $('pv-switch').textContent = adv ? t('pv_see_stats') : t('pv_see_adv');
+  $('pv-switch-lab').textContent = adv ? t('pv_see_stats') : t('pv_see_adv');
+  $('pv-switch-ico').src = adv ? '/static/ui/estadisticas.png' : '/static/ui/logros.png';
 }
 async function pvAdv(uuid){
   ADV=null; ADV_TAB='all'; ADV_OPEN=null;
