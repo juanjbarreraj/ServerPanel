@@ -190,11 +190,27 @@ def poi(mid, label, x, y, z, icon, detalle, max_dist, listed=True):
             f'min-distance: 0, max-distance: {max_dist}, '
             f'listed: {"true" if listed else "false"} }}\n')
 
+def nb(s):
+    """Espacios duros: el globo de BlueMap es estrecho y parte las palabras."""
+    return esc(s).replace(" ", "&nbsp;")
+
+# La tarjeta lleva su propio fondo: el globo de BlueMap es estrecho y si el texto
+# se sale, sin fondo quedaría flotando sobre el mapa e ilegible. Con fondo propio
+# se ve como una tarjeta entera aunque desborde. Los márgenes negativos tapan el
+# relleno del globo para que no se note una caja dentro de otra.
+_CARD = ('white-space:nowrap;display:inline-block;text-align:left;'
+         'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;'
+         'line-height:1.35;color:#e8edf3;background:#181c21;'
+         'margin:-6px -10px;padding:9px 13px;border-radius:6px')
+
 def detalle_html(es, en, x, y, z):
-    """Lo que sale al hacer clic: nombre en los dos idiomas y coordenadas exactas."""
-    return (f'<div style="font-size:14px"><b>{esc(es)}</b><br>'
-            f'<span style="opacity:.65">{esc(en)}</span><br>'
-            f'<span style="font-family:monospace">X {x} &nbsp; Y {y} &nbsp; Z {z}</span></div>')
+    """Lo que sale al hacer clic: nombre, nombre en inglés y coordenadas, una línea cada uno."""
+    return (f'<div style="{_CARD}">'
+            f'<div style="font-weight:700;font-size:15px">{nb(es)}</div>'
+            f'<div style="font-size:12px;opacity:.55;margin-bottom:5px">{nb(en)}</div>'
+            f'<div style="font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">'
+            f'X:&nbsp;{x}&nbsp;&nbsp;&nbsp;Y:&nbsp;{y}&nbsp;&nbsp;&nbsp;Z:&nbsp;{z}</div>'
+            f'</div>')
 
 def build_block(structs, manual, dim):
     """Una capa por tipo de estructura, para poder encender y apagar cada una."""
@@ -221,8 +237,10 @@ def build_block(structs, manual, dim):
         for i, m in enumerate(mine):
             x, y, z = int(m["x"]), int(m.get("y", 64)), int(m["z"])
             nombre = m.get("name", "Lugar")
-            det = (f'<div style="font-size:14px"><b>{esc(nombre)}</b><br>'
-                   f'<span style="font-family:monospace">X {x} &nbsp; Y {y} &nbsp; Z {z}</span></div>')
+            det = (f'<div style="{_CARD}">'
+                   f'<div style="font-weight:700;font-size:15px;margin-bottom:5px">{nb(nombre)}</div>'
+                   f'<div style="font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">'
+                   f'X:&nbsp;{x}&nbsp;&nbsp;&nbsp;Y:&nbsp;{y}&nbsp;&nbsp;&nbsp;Z:&nbsp;{z}</div></div>')
             out.append(poi(f"m{i}", nombre, x, y, z,
                            re.sub(r"[^a-z_]", "", m.get("icon", "landmark")),
                            det, 100000, True))
@@ -252,10 +270,20 @@ def copy_icons():
 
 def main():
     dry = "--dry" in sys.argv
-    print("Escaneando el mundo…")
-    t0 = time.time()
-    found = scan()
-    print(f"  ({time.time()-t0:.1f}s)")
+    # --rapido reutiliza el escaneo anterior (data/structures.json) en vez de releer
+    # las 319 regiones. Sirve para retocar el aspecto de los marcadores en segundos.
+    rapido = "--rapido" in sys.argv
+    if rapido and OUT_JSON.exists():
+        found = json.loads(OUT_JSON.read_text())
+        print("Reutilizando el escaneo guardado (%s estructuras)"
+              % format(sum(len(v) for v in found.values()), ","))
+    else:
+        if rapido:
+            print("(no hay escaneo guardado todavía, toca escanear)")
+        print("Escaneando el mundo…")
+        t0 = time.time()
+        found = scan()
+        print(f"  ({time.time()-t0:.1f}s)")
     try:
         manual = json.loads(MANUAL_JSON.read_text())
     except Exception:
