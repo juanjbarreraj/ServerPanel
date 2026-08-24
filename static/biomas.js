@@ -1,42 +1,56 @@
 /* Retoques al mapa de BlueMap — Server of Califree
- * (el fichero se llama biomas.js por historia; hoy hace tres cosas)
+ * (el fichero se llama biomas.js por historia; hoy hace cuatro cosas)
  *
  * Lo inyecta scripts/parche-bluemap.sh en /var/www/bluemap-web/index.html, como
  * script CLÁSICO en el <head>: así corre antes que el bundle de BlueMap (que es
  * un módulo y va diferido) y alcanza a engancharse a su evento de clic.
  *
- * Hace tres cosas:
+ * Hace cuatro cosas:
  *   1. Sube el popup por encima de los marcadores. BlueMap dibuja marcadores y
  *      popup en la misma capa CSS2D y les pone el z-index según la distancia a
  *      la cámara, así que un icono cercano tapa la tarjeta. Un !important en
  *      hoja de estilos gana al z-index en línea que escribe su render.
- *   2. Añade el bioma (y los de debajo) a la tarjeta de clic.
+ *   2. Añade el bioma (y los de debajo) a la tarjeta de clic, ordenado en
+ *      filas: nombre a la izquierda, rango de altura a la derecha.
  *   3. Esconde los marcadores fuera de la vista plana cenital: en 3D y en vuelo
  *      libre tapaban el mundo entero.
+ *   4. Entra en la VISTA PLANA por defecto (la segunda de las tres). BlueMap
+ *      arranca en perspectiva salvo que la dirección traiga otra cosa.
  *
  * Para el bioma hay DOS caminos, por si BlueMap cambia de versión:
  *   a) el evento "bluemapMapInteraction", que trae las coordenadas exactas;
  *   b) si ese no llega, se leen las coordenadas del texto del propio popup.
  *
  * Diagnóstico: todo lo que hace se registra en la consola con el prefijo
- * [bioma]. Si algo no funciona, abrir la consola del navegador (F12) sobre el
- * mapa y mirar esas líneas.
+ * [bioma]. Como el mapa va dentro de un <iframe> en el panel, esos mensajes se
+ * mandan TAMBIÉN a la página de arriba con postMessage, así que se pueden leer
+ * en la consola de https://califree.net/ sin abrir el mapa aparte.
  */
 (function () {
   "use strict";
 
   var T = {
-    es: { aqui: "Bioma", bajo: "Bajo tierra", cargando: "…" },
-    en: { aqui: "Biome", bajo: "Underground", cargando: "…" }
+    es: { aqui: "Bioma", bajo: "Bajo tierra", cargando: "…", falla: "no pude leerlo" },
+    en: { aqui: "Biome", bajo: "Underground", cargando: "…", falla: "couldn't read it" }
   };
   var peticion = 0;
   var ultimaClave = "";
+  var yaPintado = 0;      // por si la respuesta llega antes que el "…" de espera
 
   function log() {
+    var a = Array.prototype.slice.call(arguments);
     try {
-      var a = Array.prototype.slice.call(arguments);
-      a.unshift("[bioma]");
-      console.log.apply(console, a);
+      var b = a.slice();
+      b.unshift("[bioma]");
+      console.log.apply(console, b);
+    } catch (_) {}
+    // el mapa vive dentro de un iframe: que el panel de arriba también lo vea
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ bioma: true, msg: a.map(function (x) {
+          return (typeof x === "object" && x !== null) ? JSON.stringify(x) : String(x);
+        }).join(" ") }, location.origin);
+      }
     } catch (_) {}
   }
 
@@ -47,14 +61,33 @@
       /* la tarjeta de clic y la de un marcador, por encima de todo */
       '[id^="bm-marker-"][class*="popup"],.bm-marker-popup,#bm-marker-popup{' +
       'z-index:2147483000 !important}' +
-      /* el contenido del bioma hereda el estilo del popup, pero SIN recortar:
-         BlueMap le pone text-overflow:ellipsis y "Llanura de girasoles" se
-         quedaba en "Llanura de gira…" */
-      '.bm-bioma .group{margin-top:4px}' +
-      '.bm-bioma .content,.bm-bioma .label{white-space:normal !important;' +
-      'overflow:visible !important;text-overflow:clip !important}' +
       '[id^="bm-marker-"][class*="popup"],.bm-marker-popup,#bm-marker-popup{' +
       'max-width:260px !important;width:auto !important}' +
+
+      /* --- la parte del bioma dentro de la tarjeta ---------------------
+         BlueMap pone .group>.content en display:flex EN FILA, así que una
+         lista con varios renglones se le desarma: los nombres se partían en
+         dos líneas y los "Y 115…24" quedaban flotando a la derecha. Aquí se
+         vuelve columna y cada renglón se reparte nombre | altura. */
+      '.bm-bioma{text-align:left}' +
+      '.bm-bioma .sep{border:none;border-bottom:solid 1px var(--theme-bg-light,rgba(255,255,255,.18));' +
+      'margin:.5em -.5em}' +
+      '.bm-bioma .group{margin-top:.35em}' +
+      '.bm-bioma .group>.label{position:relative;left:.5em;margin:0 .5em;font-size:.8em;' +
+      'color:var(--theme-fg-light,#9aa4ae)}' +
+      '#map-container .bm-marker-popup .bm-bioma .group>.content,' +
+      '.bm-bioma .group>.content{display:flex !important;flex-direction:column !important;' +
+      'align-items:stretch !important;justify-content:flex-start !important;gap:1px}' +
+      '.bm-bioma .uno{text-align:center}' +
+      '.bm-bioma .fila{display:flex;align-items:baseline;gap:.9em;justify-content:space-between;padding:0 .5em}' +
+      /* el nombre puede partirse en dos renglones antes que salirle puntos
+         suspensivos; la altura nunca se parte y se queda pegada a la derecha */
+      '.bm-bioma .nom{min-width:0;white-space:normal;overflow-wrap:anywhere}' +
+      '.bm-bioma .rango{flex:none;white-space:nowrap;font-size:.85em;opacity:.6;' +
+      'font-variant-numeric:tabular-nums}' +
+      '.bm-bioma .content,.bm-bioma .label,.bm-bioma .uno{overflow:visible !important;' +
+      'text-overflow:clip !important;white-space:normal !important}' +
+
       /* marcadores escondidos salvo en la vista plana (la clase la pone
          vigilarVista); el popup y los jugadores nunca se esconden */
       'body.bm-solo-plano [id^="bm-marker-"]:not([class*="popup"])' +
@@ -65,13 +98,56 @@
   if (document.head) estilos();
   else document.addEventListener("DOMContentLoaded", estilos);
 
+  // ------------------------------------------------- utilidades de BlueMap
+  function app() {
+    try { return window.bluemap || null; } catch (_) { return null; }
+  }
+
+  // el modo de cámara de verdad lo sabe la app; el hash solo se actualiza
+  // 1,5 s DESPUÉS de mover la cámara, y en el panel arranca vacío
+  function modoActual() {
+    var a = app();
+    try {
+      if (a && a.appState && a.appState.controls && a.appState.controls.state)
+        return String(a.appState.controls.state).toLowerCase();
+    } catch (_) {}
+    return ((location.hash || "").split(":").pop() || "").toLowerCase();
+  }
+
+  // ------------------------------ 4) vista plana por defecto (la segunda)
+  // El hash manda: si la dirección ya trae ":flat" / ":free" / ":perspective"
+  // se respeta. Dentro del panel el iframe abre /map/ sin hash, y ahí BlueMap
+  // entraría en perspectiva — que es justo lo que no queremos.
+  var HASH_INICIAL = (location.hash || "");
+  var TRAE_VISTA = /:(flat|free|perspective)\s*$/i.test(HASH_INICIAL);
+
+  function vistaPlanaPorDefecto() {
+    if (TRAE_VISTA) { log("la dirección ya trae vista, no la toco"); return; }
+    var intentos = 0;
+    var t = setInterval(function () {
+      var a = app();
+      intentos++;
+      if (a && typeof a.setFlatView === "function" && a.mapViewer && a.mapViewer.map) {
+        clearInterval(t);
+        try {
+          a.setFlatView(0);
+          log("vista plana puesta por defecto");
+        } catch (e) { log("no pude poner la vista plana:", e); }
+        setTimeout(vigilarVista, 50);
+      } else if (intentos > 60) {          // 30 s y me rindo
+        clearInterval(t);
+        log("BlueMap no apareció; me quedo con su vista por defecto");
+      }
+    }, 500);
+  }
+  vistaPlanaPorDefecto();
+
   // ------------------------------------------- 3) iconos solo en vista plana
-  // El modo de cámara va en el último trozo del hash: perspective | flat | free.
-  // Si no se reconoce, NO se esconde nada (mejor de más que de menos).
+  // Si el modo no se reconoce, NO se esconde nada (mejor de más que de menos).
   var vistaAnterior = null;
 
   function vigilarVista() {
-    var modo = ((location.hash || "").split(":").pop() || "").toLowerCase();
+    var modo = modoActual();
     var ocultar = (modo === "perspective" || modo === "free");
     if (ocultar === vistaAnterior) return;
     vistaAnterior = ocultar;
@@ -79,6 +155,7 @@
     log("vista '" + modo + "' →", ocultar ? "marcadores ocultos" : "marcadores visibles");
   }
   addEventListener("hashchange", vigilarVista);
+  setInterval(vigilarVista, 700);          // los botones de vista no tocan el hash al instante
   if (document.body) vigilarVista();
   else document.addEventListener("DOMContentLoaded", vigilarVista);
 
@@ -88,9 +165,17 @@
     catch (_) { return "es"; }
   }
 
+  // dentro del panel el iframe abre /map/ sin hash, así que hay que
+  // preguntarle a BlueMap qué mapa tiene puesto (overworld / nether / end)
   function mapaActual() {
-    var h = (location.hash || "").replace(/^#/, "");
-    return h.split(":")[0] || "";
+    var h = (location.hash || "").replace(/^#/, "").split(":")[0];
+    if (h) return h;
+    var a = app();
+    try {
+      if (a && a.mapViewer && a.mapViewer.map && a.mapViewer.map.data)
+        return a.mapViewer.map.data.id || "";
+    } catch (_) {}
+    return "";
   }
 
   function popup() {
@@ -119,7 +204,7 @@
       caja.className = "bm-bioma";
       el.appendChild(caja);
     }
-    caja.innerHTML = html;
+    caja.innerHTML = '<hr class="sep">' + html;
   }
 
   function quitar() {
@@ -131,12 +216,13 @@
 
   function render(d) {
     var l = T[idioma()], en = idioma() === "en";
-    var html = grupo(l.aqui, esc((en ? d.en : d.es) || d.id));
+    var html = grupo(l.aqui, '<div class="uno">' + esc((en ? d.en : d.es) || d.id) + "</div>");
     if (d.debajo && d.debajo.length) {
       html += grupo(l.bajo, d.debajo.map(function (b) {
-        return esc((en ? b.en : b.es) || b.id) +
-               ' <span style="opacity:.55;white-space:nowrap">Y ' + b.y1 + "…" + b.y0 + "</span>";
-      }).join("<br>"));
+        return '<div class="fila"><span class="nom">' +
+               esc((en ? b.en : b.es) || b.id) +
+               '</span><span class="rango">Y ' + b.y1 + "…" + b.y0 + "</span></div>";
+      }).join(""));
     }
     pinta(html);
   }
@@ -147,22 +233,33 @@
     if (clave === ultimaClave) return;      // el mismo punto otra vez, no repetir
     ultimaClave = clave;
     var mio = ++peticion;
-    log("consultando", clave, "(" + origen + ")");
+    var mapa = mapaActual();
+    log("consultando", clave, "en '" + (mapa || "(sin mapa)") + "' (" + origen + ")");
     setTimeout(function () {
-      if (mio === peticion) pinta(grupo(T[idioma()].aqui, T[idioma()].cargando));
+      if (mio === peticion && yaPintado !== mio)
+        pinta(grupo(T[idioma()].aqui, '<div class="uno">' + T[idioma()].cargando + "</div>"));
     }, 0);
 
-    var url = "/api/biome?mapa=" + encodeURIComponent(mapaActual()) +
+    var url = "/api/biome?mapa=" + encodeURIComponent(mapa) +
               "&x=" + x + "&y=" + (y === null ? "auto" : y) + "&z=" + z;
     fetch(url, { credentials: "same-origin" })
       .then(function (r) {
         log("respuesta", r.status, url);
-        return r.ok ? r.json() : null;
+        if (!r.ok) {
+          if (mio === peticion) {
+            yaPintado = mio;
+            pinta(grupo(T[idioma()].aqui,
+              '<div class="uno">' + T[idioma()].falla + " (" + r.status + ")</div>"));
+          }
+          return null;
+        }
+        return r.json();
       })
       .then(function (d) {
-        if (mio !== peticion) return;
-        if (!d || !d.found) { log("sin bioma ahí", d); quitar(); return; }
+        if (mio !== peticion || d === null) return;
+        if (!d || !d.found) { log("sin bioma ahí", d); yaPintado = mio; quitar(); return; }
         log("bioma:", d.es, d.debajo ? "(" + d.debajo.length + " debajo)" : "");
+        yaPintado = mio;
         render(d);
       })
       .catch(function (e) { log("falló la petición:", e); if (mio === peticion) quitar(); });
@@ -187,7 +284,7 @@
       this.__biomaEnganchado = true;
       try {
         original.call(this, tipo, alInteractuar, false);
-        log("enganchado a bluemapMapInteraction en", this);
+        log("enganchado a bluemapMapInteraction");
       } catch (e) { log("no pude engancharme:", e); }
     }
     return original.call(this, tipo, fn, opciones);
@@ -220,5 +317,5 @@
   if (document.body) observar();
   else document.addEventListener("DOMContentLoaded", observar);
 
-  log("cargado");
+  log("cargado" + (TRAE_VISTA ? " (con vista en la dirección)" : " (sin vista en la dirección)"));
 })();

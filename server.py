@@ -38,16 +38,20 @@ DEFAULT_PERMS = {
 }
 ALL_PERMS = ["view_dashboard", "view_players", "view_console", "whitelist",
              "ban", "kick", "restart", "backups", "say", "player_actions",
-             "memories", "memories_upload"]
+             "memories", "memories_upload", "markers_add"]
 DEFAULT_PERMS["mod"]["player_actions"] = True
 DEFAULT_PERMS["viewer"]["player_actions"] = False
 DEFAULT_PERMS["mod"]["memories"] = True         # ver memorias
 DEFAULT_PERMS["mod"]["memories_upload"] = True  # subir fotos
 DEFAULT_PERMS["viewer"]["memories"] = True
 DEFAULT_PERMS["viewer"]["memories_upload"] = False
-# vista pública (entra con el PIN compartido): solo mirar + subir a memorias
+DEFAULT_PERMS["mod"]["markers_add"] = True      # poner lugares en el mapa
+DEFAULT_PERMS["viewer"]["markers_add"] = True
+# vista pública (entra con el PIN compartido): mirar, subir a memorias y
+# marcar lugares en el mapa — borrarlos sigue siendo de moderadores y admin
 DEFAULT_PERMS["public"] = {"view_dashboard": True, "view_players": True,
-                           "memories": True, "memories_upload": True}
+                           "memories": True, "memories_upload": True,
+                           "markers_add": True}
 
 # ------------------------------------------------------------------ helpers
 def hash_pw(pw: str) -> str:
@@ -126,6 +130,13 @@ def has_perm(u, perm: str) -> bool:
     if perm not in perms:  # new permissions inherit role defaults
         return bool(DEFAULT_PERMS.get(u.get("role", "viewer"), {}).get(perm))
     return bool(perms.get(perm))
+
+def user_payload(u):
+    """Lo que el navegador necesita saber de la sesión."""
+    return {"name": u["name"], "role": u["role"],
+            "perms": u.get("perms", {}),
+            "must_change": u.get("must_change", False),
+            "can_markers": has_perm(u, "markers_add")}
 
 def require(perm=None):
     u = current_user()
@@ -410,9 +421,7 @@ def api_login():
         return jsonify(need_2fa=True, token=tmp)
     expires = time.time() + SESSION_HOURS * 3600
     tok = sign(f"{name}|{expires}")
-    resp = jsonify(ok=True, user={"name": name, "role": u["role"],
-                                  "perms": u.get("perms", {}),
-                                  "must_change": u.get("must_change", False)})
+    resp = jsonify(ok=True, user=user_payload({"name": name, **u}))
     resp.set_cookie("panel_session", tok, httponly=True, secure=True,
                     samesite="Strict", max_age=SESSION_HOURS * 3600)
     audit(name, f"logged in from {ip}")
@@ -458,9 +467,7 @@ def api_login2():
         return jsonify(error="Código incorrecto"), 401
     expires = time.time() + SESSION_HOURS * 3600
     tok = sign(f"{name}|{expires}")
-    resp = jsonify(ok=True, user={"name": name, "role": u["role"],
-                                  "perms": u.get("perms", {}),
-                                  "must_change": u.get("must_change", False)})
+    resp = jsonify(ok=True, user=user_payload({"name": name, **u}))
     resp.set_cookie("panel_session", tok, httponly=True, secure=True,
                     samesite="Strict", max_age=SESSION_HOURS * 3600)
     audit(name, f"logged in with 2FA from {ip}")
@@ -483,8 +490,8 @@ def api_pin():
         return jsonify(error="wrong"), 401
     expires = time.time() + 30 * 86400
     tok = sign(f"__public__|{expires}")
-    resp = jsonify(ok=True, user={"name": "invitado", "role": "public",
-                                  "perms": {}, "must_change": False})
+    resp = jsonify(ok=True, user=user_payload({"name": "invitado", "role": "public",
+                                               "perms": {}, "must_change": False}))
     resp.set_cookie("panel_session", tok, httponly=True, secure=True,
                     samesite="Strict", max_age=30 * 86400)
     audit("public", f"PIN accepted from {ip}")
@@ -501,9 +508,7 @@ def api_me():
     u = current_user()
     if not u:
         return jsonify(user=None)
-    return jsonify(user={"name": u["name"], "role": u["role"],
-                         "perms": u.get("perms", {}),
-                         "must_change": u.get("must_change", False)})
+    return jsonify(user=user_payload(u))
 
 @app.post("/api/password")
 def api_password():
@@ -2536,8 +2541,9 @@ def api_markers():
 
 @app.post("/api/markers/add")
 def api_markers_add():
-    u = require()
-    if u["role"] not in ("admin", "mod") or not _csrf_ok():
+    # cualquiera que entró con el PIN puede marcar un lugar; borrarlo no
+    u = require("markers_add")
+    if not _csrf_ok():
         abort(403)
     b = request.get_json(silent=True) or {}
     name = (b.get("name") or "").strip()[:48]

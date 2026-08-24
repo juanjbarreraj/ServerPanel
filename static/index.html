@@ -147,6 +147,7 @@ header.top img.icon:hover{transform:scale(1.15) rotate(-4deg)}
 .userchip b{color:var(--ink)}
 .iconbtn{background:transparent; border:0; font-size:.95rem; padding:4px 6px; border-radius:6px; transition:transform .3s var(--spring)}
 .iconbtn:hover{transform:scale(1.3) rotate(-8deg); background:rgba(255,255,255,.08)}
+.lapiz{width:15px; height:15px; image-rendering:pixelated; vertical-align:-2px; display:inline-block}
 
 /* ============ hotbar tabs ============ */
 nav.tabs{display:flex; gap:5px; margin:0 0 22px; padding:7px; border-radius:7px; width:fit-content; max-width:100%;
@@ -261,6 +262,23 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.07)}
 .formrow input:focus,.formrow select:focus{outline:none; box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), 0 0 0 2px var(--slime)}
 .formrow select option{background:#12181d}
+
+/* ---- selector de icono con dibujo (un <select> no puede mostrar imágenes) ---- */
+.mkpick{position:relative}
+.mkpick>button{display:flex; align-items:center; gap:8px; padding:8px 12px; min-width:172px;
+  border:2px solid rgba(0,0,0,.7); border-radius:4px; background:rgba(5,7,9,.72); color:var(--ink);
+  font:inherit; cursor:pointer; text-align:left;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.07)}
+.mkpick>button:hover{background:rgba(255,255,255,.06)}
+.mkpick>button .car{margin-left:auto; opacity:.6; font-size:.75rem}
+.mkpick img{width:22px; height:22px; image-rendering:pixelated; flex:none}
+.mkpick-menu{position:absolute; z-index:60; top:calc(100% + 4px); left:0; min-width:100%;
+  max-height:262px; overflow-y:auto; padding:5px; border:2px solid rgba(0,0,0,.7); border-radius:5px;
+  background:#12181d; box-shadow:0 10px 26px rgba(0,0,0,.55)}
+.mkpick-menu button{display:flex; align-items:center; gap:8px; width:100%; padding:7px 9px; border:0;
+  border-radius:4px; background:transparent; color:var(--ink); font:inherit; cursor:pointer; text-align:left}
+.mkpick-menu.arriba{top:auto; bottom:calc(100% + 4px)}
+.mkpick-menu button:hover,.mkpick-menu button.on{background:rgba(111,212,78,.18)}
 
 /* ============ toast (con goteo de slime) & modals ============ */
 .toast{position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(90px);
@@ -520,6 +538,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 #psort option{background:#12161d; color:#eceff3; font-weight:600}
 .statcol h3{margin-bottom:2px}
 .hico{width:22px; height:22px; image-rendering:pixelated; vertical-align:-5px; margin-right:8px}
+.bico{width:20px; height:20px; image-rendering:pixelated; flex:none}
 .statcol .sctotal{display:flex; justify-content:space-between; padding:7px 4px; border-bottom:2px solid rgba(255,255,255,.14);
   font-weight:bold; margin-bottom:4px}
 .strow{display:flex; align-items:center; gap:8px; padding:4.5px 4px; border-bottom:1px solid rgba(255,255,255,.05); font-size:.86rem}
@@ -639,10 +658,10 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <header class="top">
     <img class="icon" id="hdr-logo" src="/static/favicon-192.png" alt="Califree" onerror="this.style.display='none'">
     <div class="t">
-      <h1 class="pxfont"><span id="brand">Serve Actual</span>
-        <button id="name-edit" class="iconbtn hidden" title="Cambiar nombre del panel" onclick="editName()">✏️</button></h1>
+      <h1 class="pxfont"><span id="brand">Serve Actual</span></h1>
       <div class="sub"><span id="motd"></span>
-        <button id="motd-edit" class="iconbtn hidden" title="Cambiar descripción del servidor" onclick="editMotd()">✏️</button></div>
+        <button id="motd-edit" class="iconbtn hidden" title="Cambiar descripción del servidor" onclick="editMotd()"><img
+          class="lapiz" src="/static/ui/lapiz.png?v=1" alt="✏️" onerror="this.outerHTML='✏️'"></button></div>
     </div>
     <div class="space"></div>
     <span class="userchip" id="userchip">Hola, <b id="who"></b> · <span id="whorole"></span></span>
@@ -743,17 +762,22 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <input id="mk-x" placeholder="X" style="width:88px" inputmode="numeric">
         <input id="mk-y" placeholder="Y" style="width:88px" inputmode="numeric" value="64">
         <input id="mk-z" placeholder="Z" style="width:88px" inputmode="numeric">
-        <select id="mk-icon" class="sunk"></select>
+        <div class="mkpick" id="mk-pick">
+          <button type="button" onclick="mkPickOpen(event)"><img id="mk-pick-img" src="" alt=""><span id="mk-pick-lab"></span><span class="car">▾</span></button>
+          <div class="mkpick-menu hidden" id="mk-pick-menu"></div>
+        </div>
         <select id="mk-dim" class="sunk">
           <option value="overworld">Overworld</option><option value="nether">Nether</option><option value="end">End</option>
         </select>
         <button class="btn small" onclick="mkAdd()">Añadir</button>
       </div>
       <div class="pgrid" id="mk-list" style="margin-top:4px"></div>
-      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:14px">
-        <button class="btn small ghost" onclick="mkScan()">🔎 Escanear estructuras y actualizar mapa</button>
+      <div id="mk-scan-row" class="hidden">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:14px">
+          <button class="btn small ghost" onclick="mkScan()">🔎 Escanear estructuras y actualizar mapa</button>
+        </div>
+        <div class="note">El escaneo busca aldeas, cámaras de prueba, ciudades antiguas y demás en lo que ya exploraron, y vuelve a renderizar el mapa (tarda un rato).</div>
       </div>
-      <div class="note">El escaneo busca aldeas, cámaras de prueba, ciudades antiguas y demás en lo que ya exploraron, y vuelve a renderizar el mapa (tarda un rato).</div>
     </div>
   </section>
 
@@ -848,8 +872,10 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <div class="card">
       <h3 data-i18n="mem_title">🖼️ Memorias del server</h3>
       <div class="memtabs" style="margin-top:12px">
-        <button class="btn small" id="memtab-g" onclick="memMode('g')" data-i18n="mem_global">🌍 Globales</button>
-        <button class="btn small ghost" id="memtab-i" onclick="memMode('i')" data-i18n="mem_indiv">👤 Individuales</button>
+        <button class="btn small" id="memtab-g" onclick="memMode('g')"><img class="bico"
+          src="/static/ui/m-globales.png?v=1" alt="" onerror="this.outerHTML='🌍'"><span data-i18n="mem_global">Globales</span></button>
+        <button class="btn small ghost" id="memtab-i" onclick="memMode('i')"><img class="bico"
+          src="/static/ui/m-individuales.png?v=1" alt="" onerror="this.outerHTML='👤'"><span data-i18n="mem_indiv">Individuales</span></button>
       </div>
       <div id="mem-gwrap"><div class="memgrid" id="memgrid"></div></div>
       <div id="mem-iwrap" class="hidden">
@@ -989,14 +1015,13 @@ const I18N = {
   th_player:'Jugador', th_hours:'Horas', th_deaths:'Muertes', th_mobs:'Mobs', th_pvp:'PvP',
   th_km:'Km caminados', th_seen:'Última vez', online_tag:'(en línea)',
   now:'ahora mismo', min_ago:'hace {0} min', h_ago:'hace {0} h', d_ago:'hace {0} días',
-  mem_title:'🖼️ Memorias del server', mem_global:'🌍 Globales', mem_indiv:'👤 Individuales',
+  mem_title:'🖼️ Memorias del server', mem_global:'Globales', mem_indiv:'Individuales',
   mem_note:'El álbum del server — mira y comparte los mejores momentos.',
   mem_up:'Subir una foto nueva', mem_up_to:'Subir a la carpeta de {0}', mem_desc:'Descripción (obligatoria):',
   mem_by:'subida por', mem_back:'← Todas las carpetas', mem_photos:'foto(s)', mem_none:'Aún no hay fotos aquí',
   close:'Cerrar', del:'Borrar', view_skin:'🧍 Ver skin en 3D', skin_walk:'▶ Caminar', skin_stop:'⏸ Quieto',
   skin_hist:'Skins guardadas por el panel', skin_none:'El archivo arranca hoy — cada día el panel guarda la skin de todos.',
-  skin_namemc:'Ver historial completo en NameMC ↗', logout:'Salir', guest:'invitado',
-  landing_hint:'un server de amigos desde 2020'},
+  skin_namemc:'Ver historial completo en NameMC ↗', logout:'Salir', guest:'invitado'},
  en:{welcome:'Welcome to the Server Panel', mods:'Moderators', pin_title:'🔒 Access PIN',
   pin_note:'This panel is private — ask someone from the server for the PIN.', pin_btn:'Enter',
   pin_wrong:'Wrong PIN', pin_unset:'The PIN is not configured yet — tell the admin.',
@@ -1029,14 +1054,13 @@ const I18N = {
   th_player:'Player', th_hours:'Hours', th_deaths:'Deaths', th_mobs:'Mobs', th_pvp:'PvP',
   th_km:'Km walked', th_seen:'Last seen', online_tag:'(online)',
   now:'just now', min_ago:'{0} min ago', h_ago:'{0} h ago', d_ago:'{0} days ago',
-  mem_title:'🖼️ Server Memories', mem_global:'🌍 Global', mem_indiv:'👤 Individual',
+  mem_title:'🖼️ Server Memories', mem_global:'Global', mem_indiv:'Individual',
   mem_note:'The server album — browse and share the best moments.',
   mem_up:'Upload a new photo', mem_up_to:"Upload to {0}'s folder", mem_desc:'Description (required):',
   mem_by:'uploaded by', mem_back:'← All folders', mem_photos:'photo(s)', mem_none:'No photos here yet',
   close:'Close', del:'Delete', view_skin:'🧍 View 3D skin', skin_walk:'▶ Walk', skin_stop:'⏸ Stop',
   skin_hist:'Skins archived by the panel', skin_none:'The archive starts today — the panel saves everyone\'s skin daily.',
-  skin_namemc:'Full history on NameMC ↗', logout:'Log out', guest:'guest',
-  landing_hint:'a friends\' server since 2020'}
+  skin_namemc:'Full history on NameMC ↗', logout:'Log out', guest:'guest'}
 };
 function t(k, a){ let s=(I18N[LANG]&&I18N[LANG][k])||I18N.es[k]||k; if(a!==undefined) s=s.replace('{0}',a); return s; }
 function applyLang(){
@@ -1078,7 +1102,7 @@ function landLoop(){
   const iv=setInterval(()=>{ w+=Math.random()*16+6; if(w>=100){w=100; clearInterval(iv);
       setTimeout(showPinGate, 250);} bar.style.width=w+'%'; }, 160);
   _landT.push(iv);
-  setTimeout(()=>{ $('land-sub').style.opacity=1; $('land-sub').textContent=t('landing_hint'); }, 1400);
+  setTimeout(()=>{ $('land-sub').style.opacity=1; }, 1400);   // se queda "Server of Califree · 2020—∞"
 }
 function typeTitle(instant){
   window._landTyped=true;
@@ -1132,9 +1156,9 @@ function esc(s){ const d=document.createElement('div'); d.textContent=s; return 
 function ago(ts){ const s=(Date.now()/1000-ts); if(s<120) return t('now');
   if(s<7200) return t('min_ago', Math.round(s/60)); if(s<172800) return t('h_ago', Math.round(s/3600));
   return t('d_ago', Math.round(s/86400)); }
-const MOD_DEFAULTS=['view_dashboard','view_players','whitelist','ban','kick','say','player_actions','memories','memories_upload'];
-const PUB_DEFAULTS=['view_dashboard','view_players','memories','memories_upload'];
-const VIEW_DEFAULTS=['view_dashboard','view_players','memories'];
+const MOD_DEFAULTS=['view_dashboard','view_players','whitelist','ban','kick','say','player_actions','memories','memories_upload','markers_add'];
+const PUB_DEFAULTS=['view_dashboard','view_players','memories','memories_upload','markers_add'];
+const VIEW_DEFAULTS=['view_dashboard','view_players','memories','markers_add'];
 function hasPerm(p){
   if (!ME) return false;
   if (ME.role==='admin') return true;
@@ -1188,7 +1212,7 @@ function enterApp(){
   $('userchip').classList.toggle('hidden', pub);   // el invitado no ve saludo
   $('who').textContent = pub ? '' : ME.name;
   $('whorole').textContent = ME.role==='admin' ? 'Admin' : (ME.role==='mod' ? 'Moderador' : 'Observador');
-  if (ME.role==='admin'){ $('motd-edit').classList.remove('hidden'); $('name-edit').classList.remove('hidden'); }
+  if (ME.role==='admin'){ $('motd-edit').classList.remove('hidden'); }   // el nombre del panel ya no lleva lápiz
   $('pw-btn').classList.toggle('hidden', pub);
   $('hdr-lang').classList.toggle('hidden', !pub);
   $('hdr-mods').classList.toggle('hidden', !pub);
@@ -1241,7 +1265,7 @@ function show(id){
     if (btn) btn.classList.toggle('on', t===id);
   }
   if (id==='players'){ closePView(); loadPlayers(); }
-  if (id==='map'){ const f=$('map-frame'); if(f && !f.src) f.src='/map/'; loadMarkers(); }
+  if (id==='map'){ const f=$('map-frame'); if(f && !f.src) f.src=MAP_SRC; loadMarkers(); }
   if (id==='mod'){ loadWhitelist(); loadJoinReq(); }
   if (id==='memories') memMode(MEM_MODE||'g');
   if (id==='console'){ loadConsole(); if(!window._conT) window._conT=setInterval(()=>{ if(!$('tab-console').classList.contains('hidden')) loadConsole(); },4000); }
@@ -1992,7 +2016,8 @@ async function uploadPlugin(f){
 const PERM_LABELS={view_dashboard:'Ver el inicio', view_players:'Ver jugadores y estadísticas', view_console:'Ver la consola en vivo',
   whitelist:'Aceptar / quitar jugadores (whitelist)', ban:'Banear y desbanear', kick:'Expulsar jugadores',
   restart:'Reiniciar el servidor', backups:'Ver y hacer copias', say:'Enviar anuncios', player_actions:'Curar / alimentar / matar jugadores',
-  memories:'Ver y subir fotos a Memorias'};
+  memories:'Ver y subir fotos a Memorias', memories_upload:'Subir fotos a Memorias',
+  markers_add:'Marcar lugares en el mapa'};
 async function loadUsers(){
   const r=await api('/api/users');
   const wrap=$('users-list'); wrap.innerHTML='';
@@ -2399,18 +2424,62 @@ async function changePw(){
 })();
 
 /* ---------- marcadores del mapa ---------- */
-const MK_LABEL={base:'🏠 Base', spawn:'🧭 Spawn', shop:'💚 Tienda', farm:'🌾 Granja',
-  landmark:'⭐ Lugar', danger:'🧨 Peligro', portal:'🌀 Portal', meeting:'🔥 Punto de reunión'};
+/* El mapa va dentro de un <iframe>, así que sus mensajes de diagnóstico
+   ([bioma] …) no salen en esta consola. El iframe los reenvía con postMessage
+   y aquí se vuelven a imprimir, para poder depurar sin abrir /map/ aparte. */
+const MAP_SRC='/map/?v=5';   // sube el número igual que VER en parche-bluemap.sh
+addEventListener('message', e=>{
+  if (e.origin!==location.origin) return;
+  const d=e.data;
+  if (d && d.bioma) console.log('[bioma/mapa]', d.msg);
+});
+
+const MK_LABEL={base:'Base', spawn:'Spawn', shop:'Tienda', farm:'Granja',
+  landmark:'Lugar', danger:'Peligro', portal:'Portal', meeting:'Punto de reunión'};
 const MK_DIM={overworld:'Overworld', nether:'Nether', end:'End'};
-let MK_CAN=false;
+const MK_ICON = k => `/static/markers/${k}.png`;
+let MK_CAN=false, MK_DEL=false, MK_SEL='base';
+
+/* Un <select> nativo no puede mostrar imágenes, así que el selector de icono
+   es un desplegable propio con los mismos PNG que salen en el mapa. */
+function mkPickPinta(){
+  $('mk-pick-img').src=MK_ICON(MK_SEL);
+  $('mk-pick-lab').textContent=MK_LABEL[MK_SEL]||MK_SEL;
+  const menu=$('mk-pick-menu');
+  menu.innerHTML=Object.keys(MK_LABEL).map(k=>
+    `<button type="button" data-k="${k}" class="${k===MK_SEL?'on':''}">
+       <img src="${MK_ICON(k)}" alt="" onerror="this.style.visibility='hidden'">
+       <span>${esc(MK_LABEL[k])}</span></button>`).join('');
+  menu.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    MK_SEL=b.dataset.k; menu.classList.add('hidden'); mkPickPinta();
+  });
+}
+function mkPickOpen(ev){
+  ev.stopPropagation();
+  const menu=$('mk-pick-menu');
+  menu.classList.toggle('hidden');
+  if(menu.classList.contains('hidden')) return;
+  mkPickPinta();
+  // si no cabe hacia abajo, que se abra hacia arriba
+  const r=$('mk-pick').getBoundingClientRect();
+  menu.classList.toggle('arriba', r.bottom+272 > innerHeight && r.top > 272);
+}
+document.addEventListener('click', e=>{
+  const menu=$('mk-pick-menu');
+  if (menu && !menu.classList.contains('hidden') && !e.target.closest('#mk-pick'))
+    menu.classList.add('hidden');
+});
+
 async function loadMarkers(){
-  MK_CAN = ME && (ME.role==='admin' || ME.role==='mod');
+  // añadir lugares lo puede hacer cualquiera que entró con el PIN;
+  // borrar sigue siendo cosa de moderadores y admin
+  MK_CAN = !!(ME && (ME.role==='admin' || ME.role==='mod' || ME.can_markers));
   const card=$('map-mk'); if(!card) return;
   card.classList.toggle('hidden', !MK_CAN);
   if (!MK_CAN) return;
-  const sel=$('mk-icon');
-  if (!sel.options.length)
-    sel.innerHTML = Object.keys(MK_LABEL).map(k=>`<option value="${k}">${MK_LABEL[k]}</option>`).join('');
+  MK_DEL = !!(ME && (ME.role==='admin' || ME.role==='mod'));
+  $('mk-scan-row').classList.toggle('hidden', !MK_DEL);
+  mkPickPinta();
   const r=await api('/api/markers').catch(()=>null);
   renderMarkers((r&&r.markers)||[]);
 }
@@ -2422,17 +2491,20 @@ function renderMarkers(ms){
     c.innerHTML=`<img src="/static/markers/${esc(m.icon)}.png" alt="" onerror="this.style.visibility='hidden'">
       <div style="min-width:0"><b style="display:block; overflow:hidden; text-overflow:ellipsis">${esc(m.name)}</b>
       <span class="c">${m.x}, ${m.y}, ${m.z} · ${MK_DIM[m.dim]||m.dim}</span></div>`;
-    const del=document.createElement('button'); del.className='btn small danger'; del.textContent='✕';
-    del.onclick=async(e)=>{ e.stopPropagation();
-      if(!confirm(`¿Borrar el marcador "${m.name}"?`)) return;
-      const r=await api('/api/markers/delete',{id:m.id}).catch(()=>null);
-      if(r&&r.ok){ toast('Marcador borrado'); renderMarkers(r.markers); } else toast((r&&r.error)||'No se pudo'); };
-    c.appendChild(del); box.appendChild(c);
+    if (MK_DEL){
+      const del=document.createElement('button'); del.className='btn small danger'; del.textContent='✕';
+      del.onclick=async(e)=>{ e.stopPropagation();
+        if(!confirm(`¿Borrar el marcador "${m.name}"?`)) return;
+        const r=await api('/api/markers/delete',{id:m.id}).catch(()=>null);
+        if(r&&r.ok){ toast('Marcador borrado'); renderMarkers(r.markers); } else toast((r&&r.error)||'No se pudo'); };
+      c.appendChild(del);
+    }
+    box.appendChild(c);
   });
 }
 async function mkAdd(){
   const b={name:$('mk-name').value.trim(), x:$('mk-x').value.trim(), y:$('mk-y').value.trim()||64,
-           z:$('mk-z').value.trim(), icon:$('mk-icon').value, dim:$('mk-dim').value};
+           z:$('mk-z').value.trim(), icon:MK_SEL, dim:$('mk-dim').value};
   if(!b.name || b.x===''|| b.z===''){ toast('Falta el nombre o las coordenadas'); return; }
   const r=await api('/api/markers/add', b).catch(()=>null);
   if(r&&r.ok){ toast('Marcador añadido 📍 — aparece en el mapa tras actualizarlo');
