@@ -470,6 +470,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .pv-cols .statcol{break-inside:avoid; -webkit-column-break-inside:avoid; margin:0 0 16px; width:100%}
 
 /* ---------- logros ---------- */
+.pvswitch{width:100%; justify-content:center; margin:0 0 16px; padding:12px 16px; font-size:.95rem}
 #pv-advcard{margin-bottom:16px}
 .advhead{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:10px}
 .advcount{font-family:"Press Start 2P",monospace; font-size:.72rem; color:var(--acc)}
@@ -710,7 +711,8 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         </div>
         <div class="pv-right">
           <div class="grid tiles pv-tiles" id="pv-tiles"></div>
-          <div class="card" id="pv-advcard">
+          <button class="btn pvswitch" id="pv-switch" onclick="pvToggleView()">🏆 Logros</button>
+          <div class="card hidden" id="pv-advcard">
             <div class="advhead">
               <h3 style="margin:0" data-i18n="adv_title">Logros</h3>
               <span class="advcount" id="adv-count">—</span>
@@ -974,6 +976,8 @@ const I18N = {
   adv_title:'🏆 Logros', adv_all:'Todos', adv_none:'Los logros aún no están generados',
   adv_of:'{0} de {1}', adv_secret:'Secreto', adv_steps:'Te faltan {0} de {1}',
   adv_done_all:'¡Completo!', sort_adv:'Más logros conseguidos',
+  adv_over:'Overworld', adv_nether:'Nether', adv_end:'End', adv_todo:'No completados',
+  pv_see_adv:'🏆 Logros', pv_see_stats:'📊 Estadísticas',
   st_total:'Total', see_all:'Ver todo ({0}) ▾', see_less:'Ver menos ▴',
   dist_elytra:'Volando (con élytros)', dist_walk:'Caminando', dist_sprint:'Corriendo', dist_walk_water:'Sobre el agua',
   dist_under_water:'Bajo el agua', dist_crouch:'Agachado', dist_swim:'Nadando', dist_fall:'Cayendo',
@@ -1011,6 +1015,8 @@ const I18N = {
   adv_title:'🏆 Advancements', adv_all:'All', adv_none:'Advancements have not been generated yet',
   adv_of:'{0} of {1}', adv_secret:'Secret', adv_steps:'{0} of {1} left',
   adv_done_all:'Complete!', sort_adv:'Most advancements',
+  adv_over:'Overworld', adv_nether:'Nether', adv_end:'End', adv_todo:'Not completed',
+  pv_see_adv:'🏆 Advancements', pv_see_stats:'📊 Stats',
   st_total:'Total', see_all:'See all ({0}) ▾', see_less:'See less ▴',
   dist_elytra:'Flown (with Elytra)', dist_walk:'Walked', dist_sprint:'Sprinted', dist_walk_water:'Walked on water',
   dist_under_water:'Walked under water', dist_crouch:'Crouched', dist_swim:'Swum', dist_fall:'Fallen',
@@ -1389,6 +1395,7 @@ async function openPView(uuid, name, online){
   invbtn.classList.toggle('hidden', !canInv);
   if (canInv) invbtn.onclick=()=>openPlayer(uuid, name, online);
   $('pv-addskin').classList.toggle('hidden', !(ME.role==='admin'||ME.role==='mod'));
+  PV_VIEW='stats'; pvApplyView();
   $('pv-tiles').innerHTML=''; $('pv-cols').innerHTML=`<div class="note">…</div>`;
   $('pv-strip').innerHTML='';
   const [stats, info] = await Promise.all([
@@ -1482,13 +1489,27 @@ function pvStats(s){
     icon:`/icons/${r.id}_spawn_egg.png`, emo:MOB_EMO[r.id]||'🐾', name:prettify(r.id), n:r.n})), 'killed'));
 }
 /* ---------- logros ---------- */
-const ADV_TABS=['story','nether','end','adventure','husbandry'];
-let ADV=null, ADV_TAB='all', ADV_OPEN=null;
+// pestañas por DIMENSIÓN (donde se consigue el logro) + un filtro de pendientes
+const ADV_TABS=[['all','adv_all'],['overworld','adv_over'],['nether','adv_nether'],
+                ['end','adv_end'],['todo','adv_todo']];
+const FRAME_ORD={task:0, goal:1, challenge:2};      // verde, azul, morado
+let ADV=null, ADV_TAB='all', ADV_OPEN=null, PV_VIEW='stats';
 function advTitle(l){ return (l.title&&(l.title[LANG]||l.title.en))||l.id; }
 function advDesc(l){ return (l.desc&&(l.desc[LANG]||l.desc.en))||''; }
-function advTabName(tb){
-  const root=ADV.logros.find(x=>x.id===tb+'/root');
-  return root?advTitle(root):prettify(tb);
+function advFiltra(k){
+  if(k==='all') return ADV.logros;
+  if(k==='todo') return ADV.logros.filter(l=>!l.done);
+  return ADV.logros.filter(l=>(l.dim||'overworld')===k);
+}
+function pvToggleView(){
+  PV_VIEW = (PV_VIEW==='stats' ? 'adv' : 'stats');
+  pvApplyView();
+}
+function pvApplyView(){
+  const adv = PV_VIEW==='adv';
+  $('pv-advcard').classList.toggle('hidden', !adv);
+  $('pv-cols').classList.toggle('hidden', adv);
+  $('pv-switch').textContent = adv ? t('pv_see_stats') : t('pv_see_adv');
 }
 async function pvAdv(uuid){
   ADV=null; ADV_TAB='all'; ADV_OPEN=null;
@@ -1508,18 +1529,19 @@ function renderAdv(){
   const pct = ADV.total ? Math.round(ADV.done*100/ADV.total) : 0;
   $('adv-count').textContent = t('adv_of').replace('{0}',ADV.done).replace('{1}',ADV.total)+` · ${pct}%`;
   $('adv-bar').style.width = pct+'%';
-  const hay = ADV_TABS.filter(tb=>ADV.logros.some(l=>l.tab===tb));
-  $('adv-tabs').innerHTML = [['all',t('adv_all')], ...hay.map(tb=>[tb,advTabName(tb)])]
-    .map(([k,label])=>{
-      const set = k==='all' ? ADV.logros : ADV.logros.filter(l=>l.tab===k);
-      const d = set.filter(l=>l.done).length;
-      return `<button class="advtab ${ADV_TAB===k?'on':''}" onclick="advTab('${k}')">${esc(label)} <b>${d}/${set.length}</b></button>`;
+  $('adv-tabs').innerHTML = ADV_TABS.map(([k,clave])=>{
+      const set = advFiltra(k);
+      if(!set.length && k!=='todo') return '';
+      const marca = k==='todo' ? String(set.length) : `${set.filter(l=>l.done).length}/${set.length}`;
+      return `<button class="advtab ${ADV_TAB===k?'on':''}" onclick="advTab('${k}')">${esc(t(clave))} <b>${marca}</b></button>`;
     }).join('');
-  const lista = ADV_TAB==='all' ? ADV.logros : ADV.logros.filter(l=>l.tab===ADV_TAB);
-  // hechos arriba, luego los que llevas más avanzados, luego alfabético
-  const ord = [...lista].sort((a,b)=>
-      (b.done-a.done) || ((b.ok/b.tot)-(a.ok/a.tot)) || advTitle(a).localeCompare(advTitle(b)));
-  $('adv-grid').innerHTML = ord.map(advCard).join('');
+  // primero por color (verde → azul → morado), dentro de cada color los conseguidos
+  // arriba, luego los más avanzados, y a igualdad, alfabético
+  const ord = [...advFiltra(ADV_TAB)].sort((a,b)=>
+      (FRAME_ORD[a.frame]-FRAME_ORD[b.frame]) || (b.done-a.done)
+      || ((b.ok/b.tot)-(a.ok/a.tot)) || advTitle(a).localeCompare(advTitle(b)));
+  $('adv-grid').innerHTML = ord.map(advCard).join('') ||
+      `<div class="note">${t('adv_done_all')}</div>`;
 }
 function advCard(l){
   const pasos = l.steps && l.steps.length>1;

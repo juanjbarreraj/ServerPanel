@@ -644,7 +644,8 @@ def api_advancements(uuid):
                      for c in l["criteria"]]
             pasos.sort(key=lambda p: (p["d"] is None, (p["es"] or "").lower()))
         salida.append({
-            "id": l["id"], "tab": l["tab"], "icon": l["icon"], "frame": l["frame"],
+            "id": l["id"], "tab": l["tab"], "dim": l.get("dim", "overworld"),
+            "icon": l["icon"], "frame": l["frame"],
             "hidden": l["hidden"], "title": l["title"], "desc": l["desc"],
             "done": done, "ok": ok, "tot": tot,
             "date": max(hechos.values()) if done and hechos else None,

@@ -75,6 +75,52 @@ def lang_es(version):
 def bonito(s):
     return s.split(":")[-1].replace("_", " ").strip().capitalize()
 
+# ------------------------------------------------------------------ dimensión
+# Juan quiere agrupar por DÓNDE se consigue el logro, no por la pestaña del juego
+# (la pestaña "Aventura" mezcla las tres dimensiones). No hay ningún campo que lo
+# diga, así que se deduce de los criterios: se cuentan cuántos son cosas del
+# Nether, del End o de ningún sitio en particular, y gana la mayoría.
+# Los ids ambiguos (enderman y esqueleto salen en los tres sitios, el cofre de
+# ender se fabrica arriba) se dejan fuera a propósito para no falsear el recuento.
+NETHER = set("""
+blaze ghast magma_cube wither_skeleton piglin piglin_brute hoglin zoglin strider
+zombified_piglin nether_wastes soul_sand_valley crimson_forest warped_forest basalt_deltas
+netherrack nether_bricks nether_brick soul_sand soul_soil glowstone quartz nether_quartz_ore
+magma_block crimson_stem crimson_planks crimson_nylium warped_stem warped_planks warped_nylium
+netherite_ingot netherite_scrap netherite_block netherite_helmet netherite_chestplate
+netherite_leggings netherite_boots netherite_sword netherite_pickaxe netherite_axe
+netherite_shovel netherite_hoe netherite_upgrade_smithing_template ancient_debris
+blaze_rod blaze_powder ghast_tear nether_star nether_wart nether_wart_block basalt
+polished_basalt smooth_basalt blackstone gilded_blackstone shroomlight twisting_vines
+weeping_vines lodestone respawn_anchor crying_obsidian target fire_charge
+""".split())
+END = set("""
+ender_dragon shulker the_end end_barrens end_highlands end_midlands small_end_islands
+end_stone end_stone_bricks purpur_block purpur_pillar purpur_stairs purpur_slab
+chorus_fruit chorus_flower chorus_plant popped_chorus_fruit end_rod dragon_egg
+dragon_breath elytra shulker_shell shulker_box end_crystal endermite
+""".split())
+
+def dimension_de(rel, tab, crudo_json, criterios):
+    """overworld | nether | end"""
+    if tab == "nether":
+        return "nether"
+    if tab == "end":
+        return "end"
+    # una condición explícita de dimensión manda sobre todo lo demás
+    if '"minecraft:the_end"' in crudo_json:
+        return "end"
+    if '"minecraft:the_nether"' in crudo_json:
+        return "nether"
+    n = sum(1 for c in criterios if c.split(":")[-1] in NETHER)
+    e = sum(1 for c in criterios if c.split(":")[-1] in END)
+    o = len(criterios) - n - e
+    if n > o and n >= e:
+        return "nether"
+    if e > o and e > n:
+        return "end"
+    return "overworld"
+
 def texto(lang, clave, respaldo):
     v = lang.get(clave)
     return v if isinstance(v, str) and v else respaldo
@@ -117,9 +163,19 @@ def main():
     print("  textos en inglés: %d entradas" % len(en))
     es = lang_es(ver)
 
+    # correcciones a mano, por si algún logro queda mal clasificado
+    # formato: {"adventure/kill_all_mobs": "nether", ...}
+    ovr_file = PANEL / "data" / "adv-dimensiones.json"
+    try:
+        override = json.loads(ovr_file.read_text())
+        print("  correcciones de dimensión: %d (%s)" % (len(override), ovr_file.name))
+    except Exception:
+        override = {}
+
     logros, sin_es = [], 0
     for n in nombres:
-        d = json.loads(z.read(n))
+        bruto = z.read(n).decode("utf-8", "replace")
+        d = json.loads(bruto)
         rel = n[len("data/minecraft/advancement/"):-len(".json")]   # ej: adventure/kill_all_mobs
         disp = d.get("display") or {}
         if not disp:
@@ -146,6 +202,7 @@ def main():
         logros.append({
             "id": rel,
             "tab": rel.split("/")[0],
+            "dim": override.get(rel) or dimension_de(rel, rel.split("/")[0], bruto, criterios),
             "icon": (disp.get("icon") or {}).get("id", "").split(":")[-1],
             "frame": disp.get("frame", "task"),
             "hidden": bool(disp.get("hidden")),
@@ -161,11 +218,15 @@ def main():
     for l in logros:
         pestanas[l["tab"]] = pestanas.get(l["tab"], 0) + 1
 
+    dims = {}
+    for l in logros:
+        dims[l["dim"]] = dims.get(l["dim"], 0) + 1
     salida = {
         "version": ver,
         "idiomas": ["es", "en"] if es else ["en"],
         "total": len(logros),
         "por_pestana": pestanas,
+        "por_dimension": dims,
         "logros": logros,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -177,6 +238,23 @@ def main():
           % sum(1 for l in logros if len(l["requirements"]) > 1))
     iconos = sorted({l["icon"] for l in logros if l["icon"]})
     print("  iconos distintos: %d" % len(iconos))
+    print("  por dimensión: %s" % ", ".join("%s=%d" % kv for kv in sorted(dims.items())))
+    if "--listar" in sys.argv:
+        for dm in ("overworld", "nether", "end"):
+            print("\n  --- %s ---" % dm.upper())
+            for l in logros:
+                if l["dim"] == dm:
+                    print("    %-34s %-26s (%s)" % (l["id"], l["title"]["es"][:26], l["tab"]))
+    else:
+        # los que NO están en su pestaña natural: son los que conviene repasar
+        raros = [l for l in logros
+                 if (l["tab"] in ("nether", "end") and l["dim"] != l["tab"])
+                 or (l["tab"] not in ("nether", "end") and l["dim"] != "overworld")]
+        if raros:
+            print("  reclasificados fuera de su pestaña (%d) — revísalos:" % len(raros))
+            for l in raros:
+                print("    %-34s %-8s → %s" % (l["id"], l["tab"], l["dim"]))
+        print("  (usa --listar para ver el reparto completo)")
     print("→ %s  (%.0f KB)" % (OUT, OUT.stat().st_size / 1024))
 
 if __name__ == "__main__":
