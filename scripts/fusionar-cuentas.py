@@ -474,7 +474,9 @@ def main():
     if faltan:
         log("   usercache +" + ", ".join(n for n, _ in faltan))
         def hacer(uc=uc, faltan=faltan):
-            cad = time.strftime("%d %b %Y %H:%M:%S +0000", time.gmtime(time.time() + 365 * 86400))
+            # formato exacto que usa Minecraft: "2027-08-24 07:33:27 +0000".
+            # Con otro formato el juego no lo parsea y tira la entrada al re-guardar.
+            cad = time.strftime("%Y-%m-%d %H:%M:%S +0000", time.gmtime(time.time() + 365 * 86400))
             for n, u in faltan:
                 uc.append({"name": n, "uuid": u, "expiresOn": cad})
             escribir_json(MC_DIR / "usercache.json", uc)

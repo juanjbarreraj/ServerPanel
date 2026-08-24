@@ -262,12 +262,34 @@ def online_players():
         names = [n.strip() for n in m.group(1).split(",") if n.strip()]
     return names
 
+_nombres_cache = {"claves": None, "data": {}}
+
 def usercache() -> dict:
-    try:
-        data = json.loads((MC_DIR / "usercache.json").read_text())
-        return {e["uuid"]: e["name"] for e in data}
-    except Exception:
-        return {}
+    """uuid -> nombre. La caché del juego (usercache.json) manda, pero la
+    reescribe el propio Minecraft y a veces deja fuera a jugadores que aún no
+    se han conectado; la whitelist también trae uuid+nombre y sirve de respaldo
+    para que no salgan como '4c988640' sin cara."""
+    fuentes = [MC_DIR / "whitelist.json", MC_DIR / "usercache.json"]   # el último gana
+    claves = []
+    for f in fuentes:
+        try:
+            claves.append(f.stat().st_mtime)
+        except OSError:
+            claves.append(0)
+    if _nombres_cache["claves"] == claves:
+        return _nombres_cache["data"]
+    nombres = {}
+    for f in fuentes:
+        try:
+            for e in json.loads(f.read_text()):
+                u, n = e.get("uuid"), e.get("name")
+                if u and n:
+                    nombres[u] = n
+        except Exception:
+            pass
+    _nombres_cache["claves"] = claves
+    _nombres_cache["data"] = nombres
+    return nombres
 
 def whitelist() -> list:
     try:
