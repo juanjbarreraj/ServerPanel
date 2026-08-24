@@ -52,6 +52,10 @@ BUENOS = {
     "night_vision", "health_boost", "absorption", "saturation", "glowing",
     "luck", "slow_falling", "conduit_power", "dolphins_grace",
     "hero_of_the_village",
+    # 26.2 / 1.21.11: congela la barra de oxígeno para que no te ahogues.
+    # Mojang lo clasifica como positivo. Salió como "sin clasificar" la primera
+    # vez que se corrió esto en el servidor real y se comprobó en la wiki.
+    "breath_of_the_nautilus",
 }
 
 
