@@ -2519,6 +2519,803 @@ def api_system_scan_map():
     return jsonify(ok=ok, output="Escaneando el mundo y actualizando el mapa — mira el registro"
                    if ok else "Ya hay una actualización del mapa corriendo")
 
+# ============================================================ feed del servidor
+#
+# Una línea de tiempo leída del log de Minecraft. Vanilla puro: no hay plugin
+# que emita eventos, así que todo sale de las frases que el servidor escribe en
+# la consola, y esas frases se sacan del jar (scripts/build-mensajes.py) en vez
+# de escribirlas a mano — si Mojang las cambia, se regenera y ya.
+#
+# Tres tipos de evento:
+#   sesion  — entrada + salida emparejadas, una línea por sesión con su duración
+#   muerte  — con la causa exacta y, cuando se puede, dónde
+#   logro   — incluye el primer paso al Nether y al End, que en vanilla son logros
+#
+# Dos ficheros, a propósito:
+#   feed-historico.jsonl  el relleno de los .log.gz viejos, se escribe una vez
+#   feed.jsonl            lo que va pasando, se añade en caliente
+# Separados porque el relleno corre en segundo plano y podría tardar minutos; si
+# escribieran en el mismo fichero los eventos quedarían desordenados.
+FEED_F      = DATA_DIR / "feed.jsonl"
+FEEDHIST_F  = DATA_DIR / "feed-historico.jsonl"
+FEEDSTATE_F = DATA_DIR / "feed_state.json"
+FEEDLOCK_F  = DATA_DIR / "feed.lock"
+MENSAJES_F  = DATA_DIR / "mensajes.json"
+_feed_lock  = threading.Lock()
+
+# El candado tiene que valer entre PROCESOS, no solo entre hilos: gunicorn puede
+# levantar varios trabajadores y cada uno arranca su propio hilo de lectura del
+# log. Con solo un Lock de threading, dos trabajadores leen el mismo trozo a la
+# vez y el feed sale DUPLICADO (comprobado: pasó con dos paneles a la vez).
+try:
+    import fcntl as _fcntl
+except ImportError:
+    _fcntl = None
+
+class _feed_exclusivo:
+    def __enter__(self):
+        _feed_lock.acquire()
+        self.f = None
+        if _fcntl:
+            try:
+                FEEDLOCK_F.parent.mkdir(parents=True, exist_ok=True)
+                self.f = open(FEEDLOCK_F, "a+")
+                _fcntl.flock(self.f, _fcntl.LOCK_EX)
+            except Exception:
+                if self.f:
+                    try: self.f.close()
+                    except Exception: pass
+                self.f = None
+        return self
+    def __exit__(self, *a):
+        if self.f:
+            try:
+                _fcntl.flock(self.f, _fcntl.LOCK_UN)
+                self.f.close()
+            except Exception:
+                pass
+        _feed_lock.release()
+        return False
+
+# [17:20:00] [Server thread/INFO]: mensaje      (y la variante [17:20:00 INFO]:)
+LINEA_LOG = re.compile(r"^\[(\d\d):(\d\d):(\d\d)(?:\s+\w+)?\](?:\s*\[[^\]]*\])*:\s?(.*)$")
+ARCHIVO_LOG = re.compile(r"^(\d{4})-(\d\d)-(\d\d)-(\d+)\.log(\.gz)?$")
+
+_msgs_cache = {"mtime": None, "data": None}
+
+def mensajes():
+    """Las frases del juego ya compiladas. Las genera scripts/build-mensajes.py.
+    Si el fichero no está, el feed no puede leer nada y lo dice claro."""
+    try:
+        mt = MENSAJES_F.stat().st_mtime
+    except OSError:
+        return None
+    if _msgs_cache["mtime"] != mt:
+        try:
+            d = json.loads(MENSAJES_F.read_text())
+        except Exception:
+            return None
+        d["_muertes"] = [(re.compile(m["rx"]), m) for m in d.get("muertes", [])]
+        d["_sesion"] = {k: re.compile(v["rx"])
+                        for k, v in d.get("sesion", {}).items() if v.get("rx")}
+        d["_logros"] = {k: re.compile(v["rx"])
+                        for k, v in d.get("logros", {}).items() if v.get("rx")}
+        d["_porclave"] = {m["clave"]: m for m in d.get("muertes", [])}
+        _msgs_cache["mtime"], _msgs_cache["data"] = mt, d
+    return _msgs_cache["data"]
+
+def _feed_state():
+    try:
+        return json.loads(FEEDSTATE_F.read_text())
+    except Exception:
+        return {"latest": {}, "archivos": [], "abiertas": {}, "relleno": None}
+
+def _feed_state_save(s):
+    FEEDSTATE_F.write_text(json.dumps(s))
+
+def _uuid_de(nombre):
+    n = (nombre or "").lower()
+    for u, nom in usercache().items():
+        if (nom or "").lower() == n:
+            return u
+    return None
+
+# ------------------------------------------------------------------ el reloj
+#
+# GOTCHA: las líneas del log traen la HORA pero NO la fecha. La fecha sale del
+# nombre del fichero (2026-08-23-1.log.gz) y, para latest.log, de su mtime.
+# Dentro de un mismo fichero se detecta el cambio de día porque la hora
+# retrocede: si la línea de las 00:03 va después de la de las 23:58, es el día
+# siguiente.
+def _lineas_con_fecha(texto, dia0, hora_previa=None):
+    """Devuelve (lineas, hora_ultima, saltos_de_dia). dia0 = [año, mes, día]."""
+    out = []
+    dia = list(dia0)
+    ant = hora_previa
+    saltos = 0
+    for linea in texto.splitlines():
+        m = LINEA_LOG.match(linea)
+        if not m:
+            continue
+        h, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        hora = h * 3600 + mi * 60 + s
+        if ant is not None and hora < ant - 60:      # el reloj retrocedió: otro día
+            dia[2] += 1
+            saltos += 1
+        ant = hora
+        try:
+            ts = time.mktime((dia[0], dia[1], dia[2], h, mi, s, 0, 0, -1))
+        except (OverflowError, ValueError):
+            continue
+        out.append((ts, m.group(4)))
+        # normalizar el día por si mktime lo desbordó (31 de mes, etc.)
+        t = time.localtime(ts)
+        dia = [t.tm_year, t.tm_mon, t.tm_mday]
+    return out, ant, saltos
+
+def _dia_de_archivo(nombre):
+    m = ARCHIVO_LOG.match(nombre)
+    if not m:
+        return None
+    return [int(m.group(1)), int(m.group(2)), int(m.group(3))]
+
+# --------------------------------------------------------------- el traductor
+def _interpretar(msg, msgs):
+    """Una línea del log -> (tipo, jugador, extra) o None."""
+    for campo, rx in msgs["_sesion"].items():
+        g = rx.match(msg)
+        if g:
+            return ("entro" if campo == "entro" else "salio"), g.group(1), {}
+    for campo, rx in msgs["_logros"].items():
+        g = rx.match(msg)
+        if g:
+            titulo = g.group(2).strip()
+            if titulo.startswith("[") and titulo.endswith("]"):
+                titulo = titulo[1:-1]
+            return "logro", g.group(1), {"titulo": titulo, "tipo": campo}
+    for rx, plant in msgs["_muertes"]:
+        g = rx.match(msg)
+        if g:
+            return "muerte", g.group(1), {"clave": plant["clave"],
+                                          "args": list(g.groups()[1:]),
+                                          "frase": msg}
+    return None
+
+# --------------------------------------------------------- dónde murió alguien
+def _ultima_muerte_de(nombre, uuid, en_linea):
+    """LastDeathLocation: por RCON si está conectado (al instante) o del .dat.
+
+    El .dat solo se escribe al guardar, así que justo después de morir puede ir
+    atrasado; por eso para los conectados se pregunta al servidor."""
+    if en_linea:
+        ok, out = rcon_try(f"data get entity {nombre} LastDeathLocation")
+        if ok and "pos" in out:
+            mp = re.search(r"pos:\s*\[([-\d]+),\s*([-\d]+),\s*([-\d]+)\]", out)
+            md = re.search(r'dimension:\s*"([^"]+)"', out)
+            if mp:
+                return {"x": int(mp.group(1)), "y": int(mp.group(2)),
+                        "z": int(mp.group(3)),
+                        "dim": md.group(1) if md else "minecraft:overworld"}
+    if not uuid:
+        return None
+    try:
+        import nbt as _n
+        p = MC_DIR / "world/players/data" / f"{uuid}.dat"
+        if not p.exists():
+            return None
+        _, root, _gz = _n.load(p)
+        d = _n.cget(root.v, "LastDeathLocation")
+        if d is None:
+            return None
+        pos = _n.cget(d.v, "pos")
+        dim = _n.cget(d.v, "dimension")
+        if pos is None:
+            return None
+        xyz = list(pos.v.items if hasattr(pos.v, "items") else pos.v)
+        if len(xyz) < 3:
+            return None
+        return {"x": int(xyz[0]), "y": int(xyz[1]), "z": int(xyz[2]),
+                "dim": _texto_nbt(dim) or "minecraft:overworld"}
+    except Exception:
+        return None
+
+def _texto_nbt(tag):
+    """El payload de una cadena NBT son bytes crudos (UTF-8 modificado)."""
+    if tag is None:
+        return None
+    v = tag.v
+    if isinstance(v, bytes):
+        return v.decode("utf-8", "replace")
+    return str(v)
+
+def _bioma_suave(dim_id, x, z):
+    """El bioma de superficie en ese punto, si se puede. Nunca revienta."""
+    try:
+        dim = "nether" if "nether" in dim_id else ("end" if "end" in dim_id else "overworld")
+        col = biomas_columna(dim, int(x), int(z))
+        if not col:
+            return None
+        bid = col[-1][1]
+        cat = biomas_catalogo()
+        e = cat.get(bid) or {}
+        return {"id": bid, "es": e.get("es"), "en": e.get("en")}
+    except Exception:
+        return None
+
+# ------------------------------------------------------------------ el motor
+def _procesar(lineas, msgs, estado, salida, en_vivo):
+    """Convierte líneas (ts, msg) en eventos y los mete en `salida`.
+
+    `estado["abiertas"]` guarda las sesiones sin cerrar entre pasadas: una
+    entrada solo se convierte en evento cuando llega su salida, así el feed
+    tiene una línea por sesión con la duración y no dos sueltas."""
+    abiertas = estado.setdefault("abiertas", {})
+    ultima_muerte = {}
+    for ts, msg in lineas:
+        r = _interpretar(msg, msgs)
+        if not r:
+            continue
+        tipo, quien, extra = r
+        if tipo == "entro":
+            abiertas[quien] = ts
+        elif tipo == "salio":
+            ini = abiertas.pop(quien, None)
+            if ini is None or ts < ini:
+                continue
+            salida.append({"t": ini, "k": "sesion", "p": quien,
+                           "u": _uuid_de(quien), "fin": ts, "seg": int(ts - ini)})
+        elif tipo == "logro":
+            salida.append({"t": ts, "k": "logro", "p": quien, "u": _uuid_de(quien),
+                           "titulo": extra["titulo"], "tipo": extra["tipo"]})
+        elif tipo == "muerte":
+            ev = {"t": ts, "k": "muerte", "p": quien, "u": _uuid_de(quien),
+                  "clave": extra["clave"], "args": extra["args"],
+                  "frase": extra["frase"]}
+            salida.append(ev)
+            ultima_muerte[quien] = ev
+    # El sitio de la muerte solo se puede saber de la ÚLTIMA de cada jugador, y
+    # solo si vamos al día: LastDeathLocation guarda una sola. En el relleno
+    # histórico no se intenta — esas muertes se quedan sin coordenadas, y el
+    # panel lo dice en vez de inventárselas.
+    if en_vivo and ultima_muerte:
+        conectados = set(online_players() or [])
+        for quien, ev in ultima_muerte.items():
+            loc = _ultima_muerte_de(quien, ev.get("u"), quien in conectados)
+            if not loc:
+                continue
+            ev.update(loc)
+            b = _bioma_suave(loc["dim"], loc["x"], loc["z"])
+            if b:
+                ev["bioma"] = b
+
+def _añadir(fichero, eventos):
+    if not eventos:
+        return
+    fichero.parent.mkdir(parents=True, exist_ok=True)
+    with open(fichero, "a", encoding="utf-8") as f:
+        for e in eventos:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+
+def feed_scan():
+    """Lee lo nuevo de latest.log. Barato: recuerda dónde se quedó."""
+    msgs = mensajes()
+    if not msgs:
+        return False
+    log = MC_DIR / "logs/latest.log"
+    try:
+        st = log.stat()
+    except OSError:
+        return False
+    with _feed_exclusivo():
+        estado = _feed_state()
+        lat = estado.setdefault("latest", {})
+        nuevo_fichero = (lat.get("inode") != st.st_ino or st.st_size < lat.get("offset", 0))
+        if nuevo_fichero:
+            # El servidor reinició. Las sesiones que quedaron abiertas no van a
+            # recibir nunca su "left the game", así que se cierran en la última
+            # hora que se vio en el log anterior. Sin esto, quien estaba dentro
+            # cuando se cayó el servidor desaparecería del feed.
+            corte = lat.get("ultimo_ts")
+            sueltas = estado.get("abiertas") or {}
+            if corte and sueltas:
+                _añadir(FEED_F, [{"t": ini, "k": "sesion", "p": quien,
+                                  "u": _uuid_de(quien), "fin": corte,
+                                  "seg": max(0, int(corte - ini)), "cortada": True}
+                                 for quien, ini in sueltas.items() if ini <= corte])
+            estado["abiertas"] = {}
+            lat = estado["latest"] = {"inode": st.st_ino, "offset": 0}
+        try:
+            with open(log, "r", errors="replace") as f:
+                f.seek(lat.get("offset", 0))
+                trozo = f.read()
+                lat["offset"] = f.tell()
+        except OSError:
+            return False
+        lat["inode"] = st.st_ino
+        if not trozo.strip():
+            _feed_state_save(estado)
+            return True
+
+        if lat.get("ultimo_ts"):
+            t = time.localtime(lat["ultimo_ts"])
+            dia0 = [t.tm_year, t.tm_mon, t.tm_mday]
+            hora_previa = t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec
+            lineas, _h, _s = _lineas_con_fecha(trozo, dia0, hora_previa)
+        else:
+            # Primera lectura de este fichero: no se sabe qué día empezó. Se ancla
+            # la ÚLTIMA línea al mtime (que es justo cuando se escribió) y se
+            # cuenta hacia atrás cuántos cambios de día hubo. Si la última línea
+            # es de una hora MAYOR que la del mtime, el fichero cruzó medianoche
+            # y hay que restar un día más.
+            #
+            # No se suman segundos a los timestamps ya calculados: se vuelve a
+            # calcular con el día bueno. Sumar 86400 se rompe en los cambios de
+            # horario de verano, y aquí el desfase sería de un día entero.
+            t = time.localtime(st.st_mtime)
+            hoy = [t.tm_year, t.tm_mon, t.tm_mday]
+            lineas, _h, saltos = _lineas_con_fecha(trozo, hoy)
+            if lineas:
+                ult = time.localtime(lineas[-1][0])
+                cruzo = 1 if (ult.tm_hour * 3600 + ult.tm_min * 60 + ult.tm_sec) > \
+                             (t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec) else 0
+                atras = saltos + cruzo
+                if atras:
+                    base = time.localtime(time.mktime(
+                        (hoy[0], hoy[1], hoy[2], 12, 0, 0, 0, 0, -1)) - atras * 86400)
+                    lineas, _h, _s = _lineas_con_fecha(
+                        trozo, [base.tm_year, base.tm_mon, base.tm_mday])
+        if lineas:
+            lat["ultimo_ts"] = lineas[-1][0]
+        eventos = []
+        _procesar(lineas, msgs, estado, eventos, en_vivo=True)
+        _añadir(FEED_F, eventos)
+        _feed_state_save(estado)
+    return True
+
+def feed_relleno():
+    """Una sola vez: lee los .log.gz viejos y arma la historia hacia atrás."""
+    msgs = mensajes()
+    if not msgs:
+        return
+    carpeta = MC_DIR / "logs"
+    if not carpeta.is_dir():
+        return
+    estado = _feed_state()
+    hechos = set(estado.get("archivos", []))
+    pend = []
+    for p in carpeta.iterdir():
+        dia = _dia_de_archivo(p.name)
+        if dia and p.name not in hechos:
+            m = ARCHIVO_LOG.match(p.name)
+            pend.append((dia[0], dia[1], dia[2], int(m.group(4)), p))
+    if not pend:
+        return
+    pend.sort()
+    # OJO: hay que releer el estado DENTRO del candado antes de guardar. Con el
+    # `estado` de hace un momento se pisaba la lista de archivos ya procesados
+    # por otro trabajador, y entonces todos volvían a leer el mismo log: el feed
+    # salía duplicado. Es el fallo que se cazó con cuatro paneles a la vez.
+    with _feed_exclusivo():
+        estado = _feed_state()
+        estado["relleno"] = {"total": len(pend), "hechos": 0, "desde": time.time()}
+        _feed_state_save(estado)
+    for i, (_a, _m, _d, _n, p) in enumerate(pend, 1):
+        try:
+            with _feed_exclusivo():
+                if p.name in set(_feed_state().get("archivos", [])):
+                    continue          # otro trabajador se adelantó
+            if p.suffix == ".gz":
+                with gzip.open(p, "rt", errors="replace") as f:
+                    texto = f.read()
+            else:
+                texto = p.read_text(errors="replace")
+            lineas, _h, _s = _lineas_con_fecha(texto, _dia_de_archivo(p.name))
+            eventos = []
+            # cada archivo es un arranque distinto: nada de sesiones heredadas
+            temp = {"abiertas": {}}
+            _procesar(lineas, msgs, temp, eventos, en_vivo=False)
+            with _feed_exclusivo():
+                estado = _feed_state()
+                if p.name in set(estado.get("archivos", [])):
+                    continue          # se adelantaron mientras yo leía
+                _añadir(FEEDHIST_F, eventos)
+                estado.setdefault("archivos", []).append(p.name)
+                estado["relleno"] = {"total": len(pend), "hechos": i,
+                                     "desde": estado.get("relleno", {}).get("desde")}
+                _feed_state_save(estado)
+        except Exception:
+            with _feed_exclusivo():
+                estado = _feed_state()
+                if p.name not in set(estado.get("archivos", [])):
+                    estado.setdefault("archivos", []).append(p.name)   # no reintentar en bucle
+                    _feed_state_save(estado)
+        time.sleep(0.2)          # amable con las 2 CPU de la caja
+    with _feed_exclusivo():
+        estado = _feed_state()
+        estado["relleno"] = {"total": len(pend), "hechos": len(pend), "fin": time.time()}
+        _feed_state_save(estado)
+
+def _leer_cola(fichero, limite):
+    """Últimas `limite` líneas de un JSONL, sin cargarlo entero en memoria."""
+    try:
+        tam = fichero.stat().st_size
+    except OSError:
+        return []
+    trozo, paso, pos = b"", 65536, tam
+    while pos > 0 and trozo.count(b"\n") <= limite:
+        pos = max(0, pos - paso)
+        paso *= 2
+        with open(fichero, "rb") as f:
+            f.seek(pos)
+            trozo = f.read(tam - pos)
+        if pos == 0:
+            break
+    out = []
+    for linea in trozo.decode("utf-8", "replace").splitlines()[-limite:]:
+        linea = linea.strip()
+        if not linea:
+            continue
+        try:
+            out.append(json.loads(linea))
+        except Exception:
+            pass
+    return out
+
+def feed_eventos(limite=200, antes=None, tipos=None):
+    """Los eventos más nuevos primero. `antes` = timestamp para paginar."""
+    cuantos = limite * 4 + 200        # de sobra para filtrar y paginar
+    ev = _leer_cola(FEED_F, cuantos) + _leer_cola(FEEDHIST_F, cuantos)
+    # las sesiones que siguen abiertas no están en el fichero: se sintetizan
+    estado = _feed_state()
+    conectados = set(online_players() or [])
+    ahora = time.time()
+    for quien, ini in (estado.get("abiertas") or {}).items():
+        if quien in conectados:
+            ev.append({"t": ini, "k": "sesion", "p": quien, "u": _uuid_de(quien),
+                       "seg": int(ahora - ini), "abierta": True})
+    ev.sort(key=lambda e: -e.get("t", 0))
+    if tipos:
+        ev = [e for e in ev if e.get("k") in tipos]
+    if antes:
+        ev = [e for e in ev if e.get("t", 0) < antes]
+    return ev[:limite]
+
+# ------------------------------------------------------------------ rutas
+def _puede_ver_lugar(u, ev):
+    """Las coordenadas de una muerte son el sitio donde quedaron las cosas del
+    muerto: cualquiera que las vea puede ir a saquearlas antes que él. Así que
+    solo las ven los moderadores/admin y el propio interesado.
+
+    Ojo: "el propio interesado" solo funciona si el nombre de su cuenta del
+    panel coincide con su nombre de Minecraft. Quien entra con el PIN es
+    'invitado' y no tiene identidad, así que nunca ve coordenadas."""
+    if u.get("role") in ("admin", "mod"):
+        return True
+    return (u.get("name") or "").lower() == (ev.get("p") or "").lower()
+
+def _texto_muerte(ev):
+    """La frase de la muerte, ya montada, en los dos idiomas.
+
+    Se arma aquí y no en el navegador para no mandarle al cliente la tabla
+    entera de plantillas en cada petición."""
+    m = mensajes() or {}
+    plant = (m.get("_porclave") or {}).get(ev.get("clave"))
+    crudo = ev.get("frase") or ""
+    if not plant:
+        return crudo, crudo
+    partes = [ev.get("p") or ""] + [str(a) for a in (ev.get("args") or [])]
+    def sub(txt):
+        for i, val in enumerate(partes, 1):
+            txt = txt.replace("%%%d$s" % i, val)
+        return txt
+    return sub(plant.get("es") or crudo), sub(plant.get("en") or crudo)
+
+def _feed_publico(u, eventos):
+    out = []
+    for ev in eventos:
+        e = dict(ev)
+        if e.get("k") == "muerte":
+            e["es"], e["en"] = _texto_muerte(ev)
+            for k in ("frase", "args"):
+                e.pop(k, None)
+            if not _puede_ver_lugar(u, e):
+                for k in ("x", "y", "z"):
+                    e.pop(k, None)
+                e["lugar_oculto"] = ev.get("x") is not None
+        out.append(e)
+    return out
+
+@app.get("/api/feed")
+def api_feed():
+    u = require("view_dashboard")
+    if not mensajes():
+        return jsonify(error="Faltan las frases del juego — corre "
+                             "scripts/build-mensajes.py en el servidor",
+                       eventos=[], listo=False), 200
+    feed_scan()
+    try:
+        limite = max(1, min(200, int(request.args.get("limite", 60))))
+    except ValueError:
+        limite = 60
+    try:
+        antes = float(request.args["antes"]) if request.args.get("antes") else None
+    except ValueError:
+        antes = None
+    crudos = (request.args.get("tipos") or "").strip()
+    tipos = [t for t in crudos.split(",") if t in ("sesion", "muerte", "logro")] or None
+    ev = feed_eventos(limite, antes, tipos)
+    estado = _feed_state()
+    return jsonify(eventos=_feed_publico(u, ev), listo=True,
+                   relleno=estado.get("relleno"), hay_mas=len(ev) == limite)
+
+def _feed_loop():
+    """Lee el log cada 20 s aunque no haya nadie mirando el panel: si nadie lo
+    lee en caliente, las muertes se quedan sin coordenadas para siempre."""
+    time.sleep(8)
+    try:
+        threading.Thread(target=feed_relleno, daemon=True).start()
+    except Exception:
+        pass
+    while True:
+        try:
+            feed_scan()
+        except Exception:
+            pass
+        time.sleep(20)
+
+threading.Thread(target=_feed_loop, daemon=True).start()
+
+# ==================================== posición, teleport y efectos (solo admin)
+#
+# Todo por RCON y solo con el jugador CONECTADO. Mover a alguien desconectado
+# obligaría a editarle el .dat mientras el servidor puede estar escribiéndolo:
+# es la forma de perderle la partida a un amigo, así que no se hace.
+DIMS = {"minecraft:overworld": "Overworld",
+        "minecraft:the_nether": "Nether",
+        "minecraft:the_end": "End"}
+DIM_CORTA = {"overworld": "minecraft:overworld",
+             "nether": "minecraft:the_nether",
+             "end": "minecraft:the_end"}
+
+def _dim_larga(v):
+    v = (v or "").strip().lower()
+    if v in DIMS:
+        return v
+    return DIM_CORTA.get(v, "minecraft:overworld")
+
+def _pos_conectado(nombre):
+    """Pos y Dimension del jugador vivo. Devuelve None si no se puede."""
+    ok, out = rcon_try(f"data get entity {nombre} Pos")
+    if not ok or "[" not in out:
+        return None
+    m = re.search(r"\[\s*(-?[\d.]+)d,\s*(-?[\d.]+)d,\s*(-?[\d.]+)d\s*\]", out)
+    if not m:
+        return None
+    p = {"x": float(m.group(1)), "y": float(m.group(2)), "z": float(m.group(3))}
+    ok2, out2 = rcon_try(f"data get entity {nombre} Dimension")
+    md = re.search(r'"([^"]+)"', out2 or "")
+    p["dim"] = md.group(1) if (ok2 and md) else "minecraft:overworld"
+    return p
+
+def _pos_desconectado(uuid):
+    """Última posición conocida, del .dat. Es de cuando se desconectó."""
+    try:
+        import nbt as _n
+        p = MC_DIR / "world/players/data" / f"{uuid}.dat"
+        if not p.exists():
+            return None
+        _, root, _gz = _n.load(p)
+        pos = _n.cget(root.v, "Pos")
+        if pos is None:
+            return None
+        xyz = list(pos.v.items if hasattr(pos.v, "items") else pos.v)
+        if len(xyz) < 3:
+            return None
+        d = _texto_nbt(_n.cget(root.v, "Dimension")) or "minecraft:overworld"
+        if d.lstrip("-").isdigit():          # mundos viejos guardaban un número
+            d = {"-1": "minecraft:the_nether", "1": "minecraft:the_end"}.get(
+                d, "minecraft:overworld")
+        return {"x": float(xyz[0]), "y": float(xyz[1]), "z": float(xyz[2]), "dim": d}
+    except Exception:
+        return None
+
+# Los datos viejos de este mundo traen posiciones basura a 25 MILLONES de
+# bloques (ver claude/bluemap-mapa.md: de ahí salieron los dos .mca perdidos).
+# Mandar a alguien ahí genera terreno nuevo en medio de la nada y es justo lo
+# que hay que evitar, así que se marca y el panel avisa antes de saltar.
+LEJOS = 1_000_000
+
+def _con_bioma(p):
+    if not p:
+        return p
+    extra = {}
+    if abs(p.get("x", 0)) > LEJOS or abs(p.get("z", 0)) > LEJOS:
+        extra["lejano"] = True
+    else:
+        b = _bioma_suave(p.get("dim", ""), p.get("x", 0), p.get("z", 0))
+        if b:
+            extra["bioma"] = b
+    return dict(p, **extra) if extra else p
+
+@app.get("/api/player/<uuid>/pos")
+def api_player_pos(uuid):
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    uuid = uuid.lower()
+    if not DATA_UUID.match(uuid):
+        abort(400)
+    nombre = usercache().get(uuid)
+    if not nombre:
+        return jsonify(error="No sé el nombre de ese jugador"), 404
+    conectados = set(online_players() or [])
+    en_linea = nombre in conectados
+    pos = _pos_conectado(nombre) if en_linea else None
+    if pos is None:
+        pos = _pos_desconectado(uuid)
+        fuente = "archivo"
+    else:
+        fuente = "vivo"
+    muerte = _ultima_muerte_de(nombre, uuid, en_linea)
+    return jsonify(name=nombre, online=en_linea, fuente=fuente,
+                   pos=_con_bioma(pos), muerte=_con_bioma(muerte),
+                   dims=DIMS,
+                   otros=sorted(n for n in conectados if n != nombre))
+
+# ------------------------------------------------------------------- efectos
+@app.get("/api/effects")
+def api_effects():
+    require("view_dashboard")
+    m = mensajes()
+    if not m:
+        return jsonify(efectos=[], error="Faltan las frases del juego — corre "
+                                         "scripts/build-mensajes.py"), 200
+    return jsonify(efectos=m.get("efectos", []))
+
+def _efectos_validos():
+    m = mensajes() or {}
+    return {e["id"]: e for e in m.get("efectos", [])}
+
+def _comando_efecto(nombre, e):
+    """Un dict {id, segundos|'infinite', nivel, ocultar} -> comando /effect.
+
+    OJO con el nivel: /effect toma el AMPLIFICADOR, que empieza en 0. Lo que en
+    el juego se llama "Fuerza II" es amplificador 1. Aquí la interfaz habla de
+    niveles empezando en 1 y aquí se resta."""
+    cat = _efectos_validos()
+    eid = str(e.get("id", ""))
+    if eid not in cat:
+        return None, f"Efecto desconocido: {eid}"
+    dur = e.get("segundos", 30)
+    if str(dur).lower() in ("infinite", "infinito", "inf"):
+        dur = "infinite"
+    else:
+        try:
+            dur = int(dur)
+        except (TypeError, ValueError):
+            return None, "Duración inválida"
+        if not (1 <= dur <= 1_000_000):
+            return None, "La duración va de 1 a 1.000.000 de segundos"
+    try:
+        nivel = int(e.get("nivel", 1))
+    except (TypeError, ValueError):
+        return None, "Nivel inválido"
+    if not (1 <= nivel <= 256):
+        return None, "El nivel va de 1 a 256"
+    ocultar = "true" if e.get("ocultar") else "false"
+    return (f"effect give {nombre} minecraft:{eid} {dur} {nivel - 1} {ocultar}"), None
+
+def _jugador_conectado(body):
+    """Saca el nombre del cuerpo de la petición y comprueba que esté dentro."""
+    nombre = (body.get("name") or "").strip()
+    if not nombre:
+        uuid = (body.get("uuid") or "").lower()
+        if DATA_UUID.match(uuid):
+            nombre = usercache().get(uuid, "")
+    if not SAFE_NAME.match(nombre or ""):
+        return None, "Nombre de jugador inválido"
+    if nombre not in set(online_players() or []):
+        return None, f"{nombre} no está conectado — esto solo funciona en vivo"
+    return nombre, None
+
+@app.post("/api/player/effects")
+def api_player_effects():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    nombre, err = _jugador_conectado(body)
+    if err:
+        return jsonify(error=err), 400
+
+    if body.get("limpiar"):
+        eid = body.get("limpiar")
+        if eid is True or eid == "todos":
+            cmd = f"effect clear {nombre}"
+            desc = f"limpió todos los efectos de {nombre}"
+        else:
+            if str(eid) not in _efectos_validos():
+                return jsonify(error="Efecto desconocido"), 400
+            cmd = f"effect clear {nombre} minecraft:{eid}"
+            desc = f"quitó {eid} a {nombre}"
+        ok, out = rcon_try(cmd)
+        audit(u["name"], f"{desc} -> {out[:120]}")
+        return jsonify(ok=ok, output=out)
+
+    efectos = body.get("efectos") or []
+    if not isinstance(efectos, list) or not efectos:
+        return jsonify(error="No mandaste ningún efecto"), 400
+    if len(efectos) > 12:
+        return jsonify(error="Máximo 12 efectos de una vez"), 400
+    cmds = []
+    for e in efectos:
+        cmd, err = _comando_efecto(nombre, e if isinstance(e, dict) else {})
+        if err:
+            return jsonify(error=err), 400
+        cmds.append(cmd)
+    salidas = []
+    for c in cmds:
+        ok, out = rcon_try(c)
+        salidas.append(out)
+        if not ok:
+            break
+    audit(u["name"], f"efectos a {nombre}: {len(cmds)} -> {' | '.join(salidas)[:160]}")
+    return jsonify(ok=True, output=" | ".join(salidas))
+
+# ------------------------------------------------------------------ teleport
+@app.post("/api/player/teleport")
+def api_player_teleport():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    nombre, err = _jugador_conectado(body)
+    if err:
+        return jsonify(error=err), 400
+
+    # los efectos van ANTES del salto: así una caída larga con Caída lenta o
+    # Resistencia al fuego ya está puesta cuando el jugador aparece allí
+    previos = body.get("efectos") or []
+    salidas = []
+    if previos:
+        if len(previos) > 12:
+            return jsonify(error="Máximo 12 efectos de una vez"), 400
+        for e in previos:
+            cmd, err = _comando_efecto(nombre, e if isinstance(e, dict) else {})
+            if err:
+                return jsonify(error=err), 400
+            ok, out = rcon_try(cmd)
+            salidas.append(out)
+
+    tipo = (body.get("tipo") or "coords").strip()
+    if tipo == "jugador":
+        otro = (body.get("jugador") or "").strip()
+        if not SAFE_NAME.match(otro):
+            return jsonify(error="Nombre de destino inválido"), 400
+        if otro not in set(online_players() or []):
+            return jsonify(error=f"{otro} no está conectado"), 400
+        cmd = f"tp {nombre} {otro}"
+        desc = f"teletransportó a {nombre} hasta {otro}"
+    else:
+        try:
+            x = float(body.get("x")); y = float(body.get("y")); z = float(body.get("z"))
+        except (TypeError, ValueError):
+            return jsonify(error="Coordenadas inválidas"), 400
+        if not all(-30_000_000 <= c <= 30_000_000 for c in (x, z)) or not (-256 <= y <= 512):
+            return jsonify(error="Coordenadas fuera del mundo"), 400
+        dim = _dim_larga(body.get("dim"))
+        # +0.5 para caer en el centro del bloque y no en una esquina
+        cmd = (f"execute in {dim} run tp {nombre} "
+               f"{x:.2f} {y:.2f} {z:.2f}")
+        etiqueta = DIMS.get(dim, dim)
+        desc = (f"teletransportó a {nombre} a {x:.0f} {y:.0f} {z:.0f} ({etiqueta})"
+                + (f" tras {len(previos)} efecto(s)" if previos else ""))
+
+    ok, out = rcon_try(cmd)
+    salidas.append(out)
+    audit(u["name"], f"{desc} -> {out[:120]}")
+    return jsonify(ok=ok, output=" | ".join(s for s in salidas if s))
+
 # ------------------------------------------------------------ marcadores del mapa
 MARKERS_FILE = DATA_DIR / "markers.json"
 MARKER_ICONS = ["base", "spawn", "shop", "farm", "landmark", "danger", "portal", "meeting"]

@@ -257,10 +257,10 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .rolebadge.admin{color:#ffd970; box-shadow:inset 1px 1px 0 rgba(255,255,255,.12), inset -1px -1px 0 rgba(0,0,0,.4), 0 0 10px rgba(250,178,25,.25)}
 .rolebadge.mod{color:var(--slime2); box-shadow:inset 1px 1px 0 rgba(255,255,255,.12), inset -1px -1px 0 rgba(0,0,0,.4), 0 0 10px rgba(111,212,78,.2)}
 .formrow{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px}
-.formrow input,.formrow select{padding:10px 12px; background:rgba(5,7,9,.72); border:2px solid rgba(0,0,0,.7);
+.formrow input,.formrow select,.efrow input,.efrow select{padding:10px 12px; background:rgba(5,7,9,.72); border:2px solid rgba(0,0,0,.7);
   border-radius:4px; color:var(--ink);
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.07)}
-.formrow input:focus,.formrow select:focus{outline:none; box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), 0 0 0 2px var(--slime)}
+.formrow input:focus,.formrow select:focus,.efrow input:focus,.efrow select:focus{outline:none; box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), 0 0 0 2px var(--slime)}
 .formrow select option{background:#12181d}
 
 /* ---- selector de icono con dibujo (un <select> no puede mostrar imágenes) ---- */
@@ -539,6 +539,30 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .statcol h3{margin-bottom:2px}
 .hico{width:22px; height:22px; image-rendering:pixelated; vertical-align:-5px; margin-right:8px}
 .bico{width:20px; height:20px; image-rendering:pixelated; flex:none}
+.btn:disabled{opacity:.42; filter:grayscale(.7); cursor:not-allowed}
+/* ---- historia del server ---- */
+.hilist{display:flex; flex-direction:column; gap:3px; margin-top:10px}
+.hirow{display:flex; align-items:flex-start; gap:10px; padding:8px 10px; border-radius:8px;
+  background:rgba(255,255,255,.025); border:1px solid rgba(255,255,255,.05)}
+.hirow.muerte{border-color:rgba(214,90,74,.28); background:rgba(214,90,74,.07)}
+.hi-ic{width:20px; height:20px; flex:none; image-rendering:pixelated; margin-top:2px}
+.hi-em{font-size:16px; width:20px; flex:none; text-align:center; margin-top:1px}
+.hi-tx{flex:1; min-width:0; line-height:1.45; overflow-wrap:anywhere}
+.hi-sub{color:var(--ink3); font-size:.8rem}
+.hi-when{color:var(--ink3); font-size:.76rem; white-space:nowrap; flex:none; margin-top:3px}
+.hi-dia{margin:16px 4px 2px; color:var(--ink3); font-size:.75rem; letter-spacing:.08em; text-transform:uppercase}
+.hi-dia:first-child{margin-top:4px}
+.hi-f{display:flex; gap:6px; flex-wrap:wrap}
+.hi-f .btn.on{background:var(--acc); border-color:var(--acc)}
+/* ---- posición / teleport ---- */
+.posgrid{display:flex; gap:22px; flex-wrap:wrap; align-items:baseline}
+.posgrid b{font-family:'MCFont','Press Start 2P',monospace; font-size:.95rem; letter-spacing:.02em}
+.posgrid .k{color:var(--ink3); font-size:.78rem; margin-right:5px}
+.efrow{display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px 0;
+  border-bottom:1px solid rgba(255,255,255,.06)}
+.efrow:last-child{border-bottom:0}
+.efpel{color:#ffb4a8}
+.efdesc{color:#ffd9a0}
 .statcol .sctotal{display:flex; justify-content:space-between; padding:7px 4px; border-bottom:2px solid rgba(255,255,255,.14);
   font-weight:bold; margin-bottom:4px}
 .strow{display:flex; align-items:center; gap:8px; padding:4.5px 4px; border-bottom:1px solid rgba(255,255,255,.05); font-size:.86rem}
@@ -698,6 +722,14 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <div class="addr"><code id="k-addr">play.califree.net</code><button class="btn small ghost" onclick="copyAddr()" data-i18n="copy">Copiar</button></div>
       </div>
     </div>
+    <div class="card" id="hi-card" style="margin-top:14px">
+      <h3><img class="hico" src="/static/ui/historia.png?v=11" alt=""
+           onerror="this.outerHTML='🕰️ '"><span data-i18n="hist_latest">Lo último en el server</span></h3>
+      <div class="hilist" id="hi-mini"></div>
+      <div style="margin-top:12px">
+        <button class="btn small ghost" onclick="show('historia')" data-i18n="hist_seeall">Ver toda la historia</button>
+      </div>
+    </div>
   </section>
 
   <!-- PLAYERS -->
@@ -732,6 +764,14 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         </div>
         <div class="pv-right">
           <div class="grid tiles pv-tiles" id="pv-tiles"></div>
+          <div class="card hidden" id="pv-admin" style="margin-bottom:14px">
+            <h3>📍 Posición y control</h3>
+            <div id="pv-pos" class="note" style="margin-top:0">…</div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
+              <button class="btn small" id="pv-tp" onclick="tpAbrir()">🧍 Teleport</button>
+              <button class="btn small ghost" id="pv-ef" onclick="efAbrir()">✨ Efectos</button>
+            </div>
+          </div>
           <button class="btn pvswitch" id="pv-switch" onclick="pvToggleView()"><img id="pv-switch-ico" src="/static/ui/logros.png" alt=""><span id="pv-switch-lab">Logros</span></button>
           <div class="card hidden" id="pv-advcard">
             <div class="advhead">
@@ -777,6 +817,21 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
           <button class="btn small ghost" onclick="mkScan()">🔎 Escanear estructuras y actualizar mapa</button>
         </div>
         <div class="note">El escaneo busca aldeas, cámaras de prueba, ciudades antiguas y demás en lo que ya exploraron, y vuelve a renderizar el mapa (tarda un rato).</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HISTORIA -->
+  <section id="tab-historia" class="hidden">
+    <div class="card">
+      <h3><img class="hico" src="/static/ui/historia.png?v=11" alt=""
+           onerror="this.outerHTML='🕰️ '"><span data-i18n="hist_title">Lo que ha pasado en el server</span></h3>
+      <div class="note" style="margin-top:0" data-i18n="hist_note">Sale del registro del propio servidor. Sin plugins ni mods.</div>
+      <div class="note hidden" id="hi-relleno"></div>
+      <div class="hi-f" style="margin-top:12px" id="hi-filtros"></div>
+      <div class="hilist" id="hi-lista"></div>
+      <div style="text-align:center; margin-top:14px">
+        <button class="btn small ghost hidden" id="hi-mas" onclick="hiMas()" data-i18n="hist_more">Ver más atrás</button>
       </div>
     </div>
   </section>
@@ -927,6 +982,49 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 <div class="toast" id="toast"></div>
 
 <!-- password modal -->
+<div class="modal-bg" id="tp-modal" onclick="if(event.target.id==='tp-modal')cerrar('tp-modal')">
+  <div class="modal" style="max-width:520px" onclick="event.stopPropagation()">
+    <h3 style="margin-top:0">🧍 Teleport — <span id="tp-quien"></span></h3>
+    <div class="hi-f" id="tp-tipos" style="margin-bottom:12px"></div>
+    <div id="tp-jug" class="hidden">
+      <div class="note" style="margin-top:0">Lo mando junto a otro que esté conectado.</div>
+      <select id="tp-otro" class="sunk" style="width:100%; margin-top:6px"></select>
+    </div>
+    <div id="tp-coords">
+      <div class="formrow" style="flex-wrap:wrap">
+        <select id="tp-dim" class="sunk"></select>
+        <input id="tp-x" placeholder="X" style="width:100px" inputmode="numeric">
+        <input id="tp-y" placeholder="Y" style="width:100px" inputmode="numeric">
+        <input id="tp-z" placeholder="Z" style="width:100px" inputmode="numeric">
+      </div>
+      <div class="note" id="tp-pista"></div>
+    </div>
+    <h3 style="margin:16px 0 4px; font-size:.95rem">Efectos antes de moverlo <span class="hi-sub">(opcional)</span></h3>
+    <div class="note" style="margin-top:0">Se aplican justo antes del salto — útil para caer de alto o llegar al Nether.</div>
+    <div id="tp-efectos"></div>
+    <div id="tp-err" class="note" style="color:#ffb4a8"></div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px">
+      <button class="btn ghost" onclick="cerrar('tp-modal')">Cancelar</button>
+      <button class="btn" id="tp-ok" onclick="tpHacer()">Teleport</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="ef-modal" onclick="if(event.target.id==='ef-modal')cerrar('ef-modal')">
+  <div class="modal" style="max-width:520px" onclick="event.stopPropagation()">
+    <h3 style="margin-top:0">✨ Efectos — <span id="ef-quien"></span></h3>
+    <div class="note" style="margin-top:0">Solo funciona con el jugador conectado.</div>
+    <div id="ef-efectos"></div>
+    <div id="ef-err" class="note" style="color:#ffb4a8"></div>
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap">
+      <button class="btn small danger ghost" onclick="efLimpiar()">Quitarle todos</button>
+      <div class="space" style="flex:1"></div>
+      <button class="btn ghost" onclick="cerrar('ef-modal')">Cancelar</button>
+      <button class="btn" id="ef-ok" onclick="efHacer()">Aplicar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="pw-modal">
   <div class="modal">
     <h3 style="margin-bottom:12px">Cambia tu contraseña</h3>
@@ -1005,6 +1103,17 @@ const I18N = {
   adv_of:'{0} de {1}', adv_secret:'Secreto', adv_steps:'Te faltan {0} de {1}',
   adv_done_all:'¡Completo!', sort_adv:'Más logros conseguidos',
   sort_xp:'Nivel de experiencia', sort_seen:'Conectado más recientemente', lvl_short:'Nv.',
+  tab_hist:'Historia',
+  hist_title:'Lo que ha pasado en el server',
+  hist_note:'Sale del registro del propio servidor. Sin plugins ni mods.',
+  hist_all:'Todo', hist_ses:'Sesiones', hist_dea:'Muertes', hist_adv:'Logros',
+  hist_more:'Ver más atrás', hist_empty:'Todavía no hay nada por aquí.',
+  hist_played:'jugó {0}', hist_online:'lleva {0} conectado',
+  hist_cut:'la sesión se cortó al reiniciar el servidor',
+  hist_got:'consiguió', hist_hidden:'el sitio solo lo ve quien murió',
+  hist_latest:'Lo último en el server', hist_seeall:'Ver toda la historia',
+  hist_wait:'Armando la historia con los registros viejos…',
+  hist_nomsg:'Falta generar las frases del juego en el servidor.',
   adv_over:'Overworld', adv_nether:'Nether', adv_end:'End', adv_todo:'No completados',
   pv_see_adv:'Logros', pv_see_stats:'Estadísticas',
   st_total:'Total', see_all:'Ver todo ({0}) ▾', see_less:'Ver menos ▴',
@@ -1044,6 +1153,17 @@ const I18N = {
   adv_of:'{0} of {1}', adv_secret:'Secret', adv_steps:'{0} of {1} left',
   adv_done_all:'Complete!', sort_adv:'Most advancements',
   sort_xp:'Experience level', sort_seen:'Most recently online', lvl_short:'Lv.',
+  tab_hist:'History',
+  hist_title:'What has happened on the server',
+  hist_note:"Read from the server's own log. No plugins, no mods.",
+  hist_all:'All', hist_ses:'Sessions', hist_dea:'Deaths', hist_adv:'Advancements',
+  hist_more:'Further back', hist_empty:'Nothing here yet.',
+  hist_played:'played {0}', hist_online:'online for {0}',
+  hist_cut:'the session was cut short by a server restart',
+  hist_got:'earned', hist_hidden:'only the player who died can see the spot',
+  hist_latest:'Latest on the server', hist_seeall:'See the whole history',
+  hist_wait:'Building the history from the old logs…',
+  hist_nomsg:'The game phrases still need to be generated on the server.',
   adv_over:'Overworld', adv_nether:'Nether', adv_end:'End', adv_todo:'Not completed',
   pv_see_adv:'Advancements', pv_see_stats:'Stats',
   st_total:'Total', see_all:'See all ({0}) ▾', see_less:'See less ▴',
@@ -1071,6 +1191,7 @@ function toggleLang(){
   LANG = LANG==='es' ? 'en' : 'es';
   try{ localStorage.setItem('panel_lang', LANG); }catch(_){}
   applyLang();
+  try{ hiMini(); if(!$('tab-historia').classList.contains('hidden')) hiCargar(true); }catch(_){}
   if (window._landTyped) typeTitle(true);
   if (ME && ME.role==='public'){ buildTabs(); show(window._curTab||'dash'); refreshStatus(); }
 }
@@ -1233,6 +1354,7 @@ const TABS = [
   ['dash',()=>t('tab_dash'),UI('inicio'),'🏠', () => hasPerm('view_dashboard')],
   ['players',()=>t('tab_players'),UI('jugadores'),'⚔️', () => hasPerm('view_players')],
   ['map',()=>t('tab_map'),UI('mapa'),'🗺️', () => hasPerm('view_dashboard')],
+  ['historia',()=>t('tab_hist'),UI('historia'),'🕰️', () => hasPerm('view_dashboard')],
   ['mod',()=>'Moderación',UI('moderacion'),'🔨', () => hasPerm('whitelist')||hasPerm('ban')||hasPerm('say')],
   ['memories',()=>t('tab_mem'),UI('memorias'),'🖼️', () => hasPerm('memories')],
   ['console',()=>'Consola',UI('consola'),'🖥️', () => hasPerm('view_console')||(ME&&ME.role==='admin')],
@@ -1266,6 +1388,8 @@ function show(id){
   }
   if (id==='players'){ closePView(); loadPlayers(); }
   if (id==='map'){ const f=$('map-frame'); if(f && !f.src) f.src=MAP_SRC; loadMarkers(); }
+  if (id==='historia') hiCargar(true);
+  if (id==='dash') hiMini();
   if (id==='mod'){ loadWhitelist(); loadJoinReq(); }
   if (id==='memories') memMode(MEM_MODE||'g');
   if (id==='console'){ loadConsole(); if(!window._conT) window._conT=setInterval(()=>{ if(!$('tab-console').classList.contains('hidden')) loadConsole(); },4000); }
@@ -1435,6 +1559,7 @@ async function openPView(uuid, name, online){
   if (canInv) invbtn.onclick=()=>openPlayer(uuid, name, online);
   $('pv-addskin').classList.toggle('hidden', !(ME.role==='admin'||ME.role==='mod'));
   PV_VIEW='stats'; pvApplyView();
+  pvCargarPos(uuid);
   $('pv-tiles').innerHTML=''; $('pv-cols').innerHTML=`<div class="note">…</div>`;
   $('pv-strip').innerHTML='';
   const [stats, info] = await Promise.all([
@@ -2422,6 +2547,322 @@ async function changePw(){
     if (e.target.closest && e.target.closest('.slot.has')) tip.style.display='none';
   });
 })();
+
+/* ---------- historia del server ---------- */
+/* Los eventos salen del log de Minecraft (vanilla, sin plugins). El backend ya
+   manda la frase de la muerte montada en los dos idiomas y esconde las
+   coordenadas a quien no debe verlas, así que aquí solo se pinta. */
+let HI_FILTRO='todo', HI_ULTIMO=null, HI_FIN=false, HI_CARGANDO=false;
+const HI_TIPOS={todo:'', ses:'sesion', dea:'muerte', adv:'logro'};
+const DIM_NOM={'minecraft:overworld':'Overworld','minecraft:the_nether':'Nether','minecraft:the_end':'End'};
+
+function hiDur(seg){
+  seg=Math.max(0, seg|0);
+  const h=Math.floor(seg/3600), m=Math.round((seg%3600)/60);
+  if (h && m) return `${h} h ${m} min`;
+  if (h) return `${h} h`;
+  return `${m||1} min`;
+}
+function hiLoc(){ return LANG==='es' ? 'es-ES' : 'en-GB'; }
+function hiHora(ts){ return new Date(ts*1000).toLocaleTimeString(hiLoc(),{hour:'2-digit',minute:'2-digit'}); }
+function hiDia(ts){
+  const d=new Date(ts*1000), hoy=new Date(), ayer=new Date(); ayer.setDate(hoy.getDate()-1);
+  const igual=(a,b)=>a.toDateString()===b.toDateString();
+  if (igual(d,hoy))  return LANG==='es'?'Hoy':'Today';
+  if (igual(d,ayer)) return LANG==='es'?'Ayer':'Yesterday';
+  return d.toLocaleDateString(hiLoc(),{weekday:'long', day:'numeric', month:'long'});
+}
+const hiIco=(n,emo)=>`<img class="hi-ic" src="${UI(n)}" alt="" onerror="this.outerHTML='<span class=&quot;hi-em&quot;>${emo}</span>'">`;
+
+function hiFila(e){
+  const nom=esc(e.p||'?');
+  let ico, txt, sub='', cls='';
+  if (e.k==='sesion'){
+    ico = hiIco('s-puerta','🚪');
+    txt = `<b>${nom}</b> ${t(e.abierta?'hist_online':'hist_played', hiDur(e.seg))}`;
+    if (e.cortada) sub = t('hist_cut');
+  } else if (e.k==='logro'){
+    ico = hiIco('logros','🏅');
+    txt = `<b>${nom}</b> ${t('hist_got')} <b>${esc(e.titulo||'')}</b>`;
+  } else {
+    cls=' muerte';
+    ico = '<span class="hi-em">💀</span>';
+    txt = esc((LANG==='en' ? (e.en||e.es) : (e.es||e.en)) || '');
+    const b = e.bioma && (LANG==='en' ? e.bioma.en : e.bioma.es);
+    const dim = (e.dim && e.dim!=='minecraft:overworld') ? (DIM_NOM[e.dim]||e.dim) : '';
+    const piezas=[];
+    if (e.x!==undefined && e.x!==null) piezas.push(`${e.x}, ${e.y}, ${e.z}`);
+    if (b) piezas.push(esc(b));
+    if (dim) piezas.push(esc(dim));
+    if (e.lugar_oculto) piezas.push(t('hist_hidden'));
+    sub = piezas.join(' · ');
+  }
+  return `<div class="hirow${cls}">${ico}<div class="hi-tx">${txt}`+
+         (sub?`<div class="hi-sub">${sub}</div>`:'')+
+         `</div><div class="hi-when">${hiHora(e.t)}</div></div>`;
+}
+
+function hiPinta(caja, eventos, conDias){
+  let html='', dia=null;
+  for (const e of eventos){
+    if (conDias){
+      const d=hiDia(e.t);
+      if (d!==dia){ dia=d; html += `<div class="hi-dia">${esc(d)}</div>`; }
+    }
+    html += hiFila(e);
+  }
+  caja.insertAdjacentHTML('beforeend', html);
+}
+
+function hiFiltros(){
+  const c=$('hi-filtros'); if(!c) return;
+  c.innerHTML = Object.keys(HI_TIPOS).map(k=>
+    `<button class="btn small ghost${HI_FILTRO===k?' on':''}" onclick="hiFiltro('${k}')">${t('hist_'+(k==='todo'?'all':k))}</button>`
+  ).join('');
+}
+function hiFiltro(k){ HI_FILTRO=k; hiFiltros(); hiCargar(true); }
+
+async function hiCargar(reinicio){
+  if (HI_CARGANDO) return;
+  HI_CARGANDO=true;
+  const caja=$('hi-lista');
+  if (reinicio){ HI_ULTIMO=null; HI_FIN=false; caja.innerHTML=`<div class="note">…</div>`; hiFiltros(); }
+  let q=`/api/feed?limite=60`;
+  if (HI_TIPOS[HI_FILTRO]) q+=`&tipos=${HI_TIPOS[HI_FILTRO]}`;
+  if (HI_ULTIMO) q+=`&antes=${HI_ULTIMO}`;
+  let r=null;
+  try{ r=await api(q); }catch(_){}
+  HI_CARGANDO=false;
+  if (!r){ caja.innerHTML=`<div class="note">${t('hist_empty')}</div>`; return; }
+  if (reinicio) caja.innerHTML='';
+  if (r.listo===false){ caja.innerHTML=`<div class="note">${t('hist_nomsg')}</div>`; return; }
+
+  const rel=$('hi-relleno');
+  if (r.relleno && r.relleno.hechos < r.relleno.total){
+    rel.classList.remove('hidden');
+    rel.textContent = `${t('hist_wait')} (${r.relleno.hechos}/${r.relleno.total})`;
+  } else rel.classList.add('hidden');
+
+  const ev=r.eventos||[];
+  if (!ev.length && !HI_ULTIMO){ caja.innerHTML=`<div class="note">${t('hist_empty')}</div>`; }
+  else hiPinta(caja, ev, true);
+  if (ev.length) HI_ULTIMO = ev[ev.length-1].t;
+  HI_FIN = !r.hay_mas;
+  $('hi-mas').classList.toggle('hidden', HI_FIN || !ev.length);
+}
+function hiMas(){ hiCargar(false); }
+
+async function hiMini(){
+  const caja=$('hi-mini'); if(!caja) return;
+  let r=null;
+  try{ r=await api('/api/feed?limite=5'); }catch(_){ return; }
+  caja.innerHTML='';
+  if (!r || r.listo===false || !(r.eventos||[]).length){
+    caja.innerHTML=`<div class="note">${t(r&&r.listo===false?'hist_nomsg':'hist_empty')}</div>`;
+    return;
+  }
+  hiPinta(caja, r.eventos, false);
+}
+
+/* ---------- posición, teleport y efectos (solo admin) ---------- */
+let PV_POS=null, EF_CAT=null;
+
+function cerrar(id){ $(id).classList.remove('open'); }
+
+async function efCatalogo(){
+  if (EF_CAT) return EF_CAT;
+  try{ const r=await api('/api/effects'); EF_CAT=r.efectos||[]; }catch(_){ EF_CAT=[]; }
+  return EF_CAT;
+}
+
+function coordTxt(p){
+  if (!p) return '—';
+  const b=p.bioma && (LANG==='en'?p.bioma.en:p.bioma.es);
+  const dim=DIM_NOM[p.dim]||p.dim||'';
+  return `<b>${Math.round(p.x)}</b> <b>${Math.round(p.y)}</b> <b>${Math.round(p.z)}</b>`+
+         `<span class="hi-sub"> · ${esc(dim)}${b?' · '+esc(b):''}</span>`+
+         (p.lejano?`<div class="efpel" style="font-size:.8rem">⚠ Esto está a millones de bloques — es un dato corrupto del mundo viejo, no un sitio real. Mandarlo ahí genera terreno basura.</div>`:'');
+}
+
+async function pvCargarPos(uuid){
+  const caja=$('pv-pos'); if(!caja) return;
+  $('pv-admin').classList.toggle('hidden', !(ME && ME.role==='admin'));
+  if (!(ME && ME.role==='admin')) return;
+  caja.innerHTML='…'; PV_POS=null;
+  let r=null;
+  try{ r=await api(`/api/player/${uuid}/pos`); }catch(_){}
+  if (!r || r.error){ caja.textContent=(r&&r.error)||'No pude leer la posición'; return; }
+  PV_POS=r;
+  const viva = r.fuente==='vivo';
+  let html = `<div class="posgrid"><div><span class="k">Ahora</span>${coordTxt(r.pos)}</div></div>`;
+  html += `<div class="hi-sub" style="margin-top:2px">${viva
+      ? 'en vivo, preguntado al servidor'
+      : (r.online ? 'no pude preguntarle al servidor; esto es del archivo'
+                  : 'está desconectado — última posición guardada')}</div>`;
+  if (r.muerte)
+    html += `<div class="posgrid" style="margin-top:10px"><div><span class="k">Última muerte</span>${coordTxt(r.muerte)}</div></div>`;
+  else
+    html += `<div class="hi-sub" style="margin-top:10px">Sin muerte registrada.</div>`;
+  caja.innerHTML=html;
+  const vivo = !!r.online;
+  $('pv-tp').disabled=!vivo; $('pv-ef').disabled=!vivo;
+  $('pv-tp').title = $('pv-ef').title = vivo ? '' : 'Solo funciona con el jugador conectado';
+}
+
+/* --- selector de efectos, compartido por los dos modales --- */
+function efPintaSelector(cont, conInterruptor){
+  if (!(EF_CAT||[]).length){
+    cont.innerHTML='<div class="note efdesc">Todavía no tengo la lista de efectos. '+
+      'Hay que correr <code>scripts/build-mensajes.py</code> en el servidor una vez.</div>';
+    return;
+  }
+  const opciones = (EF_CAT||[]).reduce((a,e)=>{ (a[e.tipo]=a[e.tipo]||[]).push(e); return a; }, {});
+  const grupo=(k,lab)=> (opciones[k]||[]).length
+    ? `<optgroup label="${lab}">`+opciones[k].map(e=>`<option value="${esc(e.id)}">${esc(LANG==='en'?e.en:e.es)}</option>`).join('')+`</optgroup>` : '';
+  cont.innerHTML =
+    (conInterruptor ? `<label class="hi-sub" style="display:block; margin:6px 0">
+        <input type="checkbox" class="ef-usar" onchange="efActivo(this)"> aplicar un efecto antes de moverlo</label>` : '') +
+    `<div class="efrow${conInterruptor?' ef-oculto hidden':''}">
+       <select class="sunk ef-id" style="flex:1; min-width:150px">
+         ${grupo('bueno', LANG==='en'?'Helpful':'Buenos')}
+         ${grupo('malo',  LANG==='en'?'Harmful':'Hacen daño')}
+         ${grupo('desconocido', LANG==='en'?'Not classified':'Sin clasificar')}
+       </select>
+       <input class="ef-seg" style="width:90px" inputmode="numeric" value="30" placeholder="seg">
+       <label class="hi-sub"><input type="checkbox" class="ef-inf"> ∞</label>
+       <input class="ef-niv" style="width:70px" inputmode="numeric" value="1" placeholder="Nv">
+       <label class="hi-sub"><input type="checkbox" class="ef-ocu"> sin partículas</label>
+     </div>
+     <div class="note ef-aviso${conInterruptor?' ef-oculto hidden':''}" style="margin-top:4px"></div>`;
+  const sel=cont.querySelector('.ef-id');
+  const aviso=cont.querySelector('.ef-aviso');
+  const revisar=()=>{
+    const e=(EF_CAT||[]).find(x=>x.id===sel.value);
+    if (!e){ aviso.textContent=''; return; }
+    if (e.tipo==='malo'){
+      aviso.className='note ef-aviso efpel';
+      aviso.textContent='⚠ Este hace daño. A nivel alto puede matarlo al instante.';
+    } else if (e.tipo==='desconocido'){
+      aviso.className='note ef-aviso efdesc';
+      aviso.textContent='No sé si este efecto hace daño — es nuevo o no lo tengo clasificado. Pruébalo con cuidado.';
+    } else { aviso.className='note ef-aviso'; aviso.textContent=''; }
+  };
+  sel.onchange=revisar; revisar();
+}
+function efActivo(chk){
+  const cont=chk.closest('#tp-efectos'); if(!cont) return;
+  cont.dataset.activo = chk.checked ? '1' : '0';
+  cont.querySelectorAll('.ef-oculto').forEach(el=>el.classList.toggle('hidden', !chk.checked));
+}
+function efLeer(cont){
+  const sel=cont.querySelector('.ef-id'); if(!sel || !sel.value) return null;
+  if(!cont.querySelector('.ef-seg')) return null;
+  const inf=cont.querySelector('.ef-inf').checked;
+  return {id:sel.value,
+          segundos: inf ? 'infinite' : (cont.querySelector('.ef-seg').value.trim()||'30'),
+          nivel: cont.querySelector('.ef-niv').value.trim()||'1',
+          ocultar: cont.querySelector('.ef-ocu').checked};
+}
+function efPeligroso(cont){
+  const sel=cont.querySelector('.ef-id'); if(!sel) return null;
+  const e=(EF_CAT||[]).find(x=>x.id===(sel&&sel.value));
+  return e && e.tipo==='malo' ? (LANG==='en'?e.en:e.es) : null;
+}
+
+/* --- teleport --- */
+let TP_TIPO='muerte';
+async function tpAbrir(){
+  if (!PV_POS) return;
+  await efCatalogo();
+  $('tp-quien').textContent=PV_POS.name;
+  $('tp-err').textContent='';
+  const dims=$('tp-dim');
+  dims.innerHTML=Object.keys(PV_POS.dims||DIM_NOM).map(k=>`<option value="${k}">${esc((PV_POS.dims||DIM_NOM)[k])}</option>`).join('');
+  $('tp-otro').innerHTML=(PV_POS.otros||[]).map(n=>`<option>${esc(n)}</option>`).join('')
+    || '<option value="">(no hay nadie más conectado)</option>';
+  efPintaSelector($('tp-efectos'), true);
+  TP_TIPO = PV_POS.muerte ? 'muerte' : 'coords';
+  tpTipos(); tpTipo(TP_TIPO);
+  $('tp-modal').classList.add('open');
+}
+function tpTipos(){
+  const op=[['muerte','Donde murió'],['jugador','Junto a otro jugador'],['coords','Coordenadas']];
+  $('tp-tipos').innerHTML=op.map(([k,l])=>
+    `<button class="btn small ghost${TP_TIPO===k?' on':''}"${k==='muerte'&&!PV_POS.muerte?' disabled':''}
+      onclick="tpTipo('${k}')">${l}</button>`).join('');
+}
+function tpTipo(k){
+  TP_TIPO=k; tpTipos();
+  $('tp-jug').classList.toggle('hidden', k!=='jugador');
+  $('tp-coords').classList.toggle('hidden', k==='jugador');
+  const p = k==='muerte' ? PV_POS.muerte : null;
+  if (p){
+    $('tp-x').value=Math.round(p.x); $('tp-y').value=Math.round(p.y); $('tp-z').value=Math.round(p.z);
+    $('tp-dim').value=p.dim||'minecraft:overworld';
+    const b=p.bioma&&(LANG==='en'?p.bioma.en:p.bioma.es);
+    $('tp-pista').textContent = b ? `Murió en ${b}.` : '';
+  } else if (k==='coords'){
+    $('tp-pista').textContent='Las coordenadas del juego (F3). Y es la altura.';
+  }
+}
+async function tpHacer(){
+  const err=$('tp-err'); err.textContent='';
+  const cuerpo={name:PV_POS.name, tipo:TP_TIPO};
+  if (TP_TIPO==='jugador'){
+    const otro=$('tp-otro').value;
+    if (!otro){ err.textContent='No hay nadie más conectado.'; return; }
+    cuerpo.jugador=otro;
+  } else {
+    cuerpo.x=$('tp-x').value.trim(); cuerpo.y=$('tp-y').value.trim(); cuerpo.z=$('tp-z').value.trim();
+    cuerpo.dim=$('tp-dim').value;
+    if (cuerpo.x===''||cuerpo.y===''||cuerpo.z===''){ err.textContent='Faltan coordenadas.'; return; }
+  }
+  const conEfecto = $('tp-efectos').dataset.activo==='1';
+  const ef = conEfecto ? efLeer($('tp-efectos')) : null;
+  if (ef) cuerpo.efectos=[ef];
+  const malo = conEfecto ? efPeligroso($('tp-efectos')) : null;
+  if (malo && !confirm(`${malo} hace daño. ¿Se lo aplico a ${PV_POS.name} igual?`)) return;
+  const dest = TP_TIPO==='jugador' ? `junto a ${cuerpo.jugador}`
+             : `${cuerpo.x}, ${cuerpo.y}, ${cuerpo.z}`;
+  const lejos = TP_TIPO!=='jugador' &&
+    (Math.abs(+cuerpo.x)>1000000 || Math.abs(+cuerpo.z)>1000000);
+  if (lejos && !confirm('Esas coordenadas están a millones de bloques del mundo real.\n'+
+      'Casi seguro son un dato corrupto, y mandar a alguien ahí genera terreno basura.\n\n¿Aun así?')) return;
+  if (!confirm(`¿Mover a ${PV_POS.name} a ${dest}?`)) return;
+  $('tp-ok').disabled=true;
+  const r=await api('/api/player/teleport', cuerpo).catch(()=>null);
+  $('tp-ok').disabled=false;
+  if (r && r.ok){ toast(`${PV_POS.name} movido`); cerrar('tp-modal'); pvCargarPos(PV_UUID); }
+  else err.textContent=(r&&r.error)||'No se pudo';
+}
+
+/* --- efectos sueltos --- */
+async function efAbrir(){
+  if (!PV_POS) return;
+  await efCatalogo();
+  $('ef-quien').textContent=PV_POS.name;
+  $('ef-err').textContent='';
+  efPintaSelector($('ef-efectos'));
+  $('ef-modal').classList.add('open');
+}
+async function efHacer(){
+  const err=$('ef-err'); err.textContent='';
+  const ef=efLeer($('ef-efectos'));
+  if (!ef){ err.textContent='Elige un efecto.'; return; }
+  const malo=efPeligroso($('ef-efectos'));
+  if (malo && !confirm(`${malo} hace daño. ¿Se lo aplico a ${PV_POS.name}?`)) return;
+  $('ef-ok').disabled=true;
+  const r=await api('/api/player/effects', {name:PV_POS.name, efectos:[ef]}).catch(()=>null);
+  $('ef-ok').disabled=false;
+  if (r && r.ok){ toast('Efecto aplicado'); cerrar('ef-modal'); }
+  else err.textContent=(r&&r.error)||'No se pudo';
+}
+async function efLimpiar(){
+  if (!PV_POS || !confirm(`¿Quitarle TODOS los efectos a ${PV_POS.name}?`)) return;
+  const r=await api('/api/player/effects', {name:PV_POS.name, limpiar:'todos'}).catch(()=>null);
+  if (r && r.ok){ toast('Efectos quitados'); cerrar('ef-modal'); }
+  else $('ef-err').textContent=(r&&r.error)||'No se pudo';
+}
 
 /* ---------- marcadores del mapa ---------- */
 /* El mapa va dentro de un <iframe>, así que sus mensajes de diagnóstico
