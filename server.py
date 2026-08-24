@@ -5,7 +5,7 @@ Single-file Flask backend. Auth: scrypt-hashed passwords, signed session cookies
 roles (admin/mod/viewer) + per-user permission toggles. Talks to the server via
 RCON (localhost), log tailing, stat files, and systemctl (sudo rule for restart).
 """
-import base64, hashlib, hmac, json, os, re, secrets, socket, struct, subprocess, threading, time
+import base64, gzip, hashlib, hmac, json, os, re, secrets, socket, struct, subprocess, threading, time
 from pathlib import Path
 from flask import Flask, jsonify, request, send_file, send_from_directory, abort
 
@@ -281,6 +281,36 @@ def stats_dir() -> Path:
             return cand
     return MC_DIR / "world/players/stats"
 
+# --- nivel de experiencia -------------------------------------------------
+# XpLevel es un TAG_Int llamado "XpLevel" dentro del .dat del jugador. Buscar
+# los bytes crudos (tipo 3 + longitud 7 + nombre) es ~100x mas rapido que
+# parsear el NBT completo, y la lista de jugadores se pide muy a menudo.
+_XP_TAG = b"\x03\x00\x07XpLevel"
+_xp_cache = {}   # uuid -> (mtime, nivel)
+
+def xp_level(dat: Path) -> int:
+    try:
+        mt = dat.stat().st_mtime
+    except OSError:
+        return 0
+    hit = _xp_cache.get(dat.name)
+    if hit and hit[0] == mt:
+        return hit[1]
+    lvl = 0
+    try:
+        raw = dat.read_bytes()
+        if raw[:2] == b"\x1f\x8b":
+            raw = gzip.decompress(raw)
+        i = raw.find(_XP_TAG)
+        if i >= 0:
+            lvl = int.from_bytes(raw[i + len(_XP_TAG):i + len(_XP_TAG) + 4], "big", signed=True)
+            if lvl < 0 or lvl > 100000:
+                lvl = 0
+    except Exception:
+        lvl = 0
+    _xp_cache[dat.name] = (mt, lvl)
+    return lvl
+
 def player_stats():
     names = usercache()
     online = set(online_players() or [])
@@ -322,6 +352,7 @@ def player_stats():
             "damage_taken": round(st.get("minecraft:damage_taken", 0) / 10, 0),
             "damage_dealt": round(st.get("minecraft:damage_dealt", 0) / 10, 0),
             "last_seen": last_seen,
+            "xp_level": xp_level(dat) if dat.exists() else 0,
         })
         if cat:
             try:

@@ -977,6 +977,7 @@ const I18N = {
   adv_title:'🏆 Logros', adv_all:'Todos', adv_none:'Los logros aún no están generados',
   adv_of:'{0} de {1}', adv_secret:'Secreto', adv_steps:'Te faltan {0} de {1}',
   adv_done_all:'¡Completo!', sort_adv:'Más logros conseguidos',
+  sort_xp:'Nivel de experiencia', sort_seen:'Conectado más recientemente', lvl_short:'Nv.',
   adv_over:'Overworld', adv_nether:'Nether', adv_end:'End', adv_todo:'No completados',
   pv_see_adv:'Logros', pv_see_stats:'Estadísticas',
   st_total:'Total', see_all:'Ver todo ({0}) ▾', see_less:'Ver menos ▴',
@@ -1016,6 +1017,7 @@ const I18N = {
   adv_title:'🏆 Advancements', adv_all:'All', adv_none:'Advancements have not been generated yet',
   adv_of:'{0} of {1}', adv_secret:'Secret', adv_steps:'{0} of {1} left',
   adv_done_all:'Complete!', sort_adv:'Most advancements',
+  sort_xp:'Experience level', sort_seen:'Most recently online', lvl_short:'Lv.',
   adv_over:'Overworld', adv_nether:'Nether', adv_end:'End', adv_todo:'Not completed',
   pv_see_adv:'Advancements', pv_see_stats:'Stats',
   st_total:'Total', see_all:'See all ({0}) ▾', see_less:'See less ▴',
@@ -1327,6 +1329,8 @@ const PSORTS = [
   ['deaths', p=>-p.deaths,        l=>l('sort_deaths')],
   ['pvp',    p=>-p.player_kills,  l=>l('sort_pvp')],
   ['adv',    p=>-(p.adv_done||0), l=>l('sort_adv')],
+  ['xp',     p=>-(p.xp_level||0), l=>l('sort_xp')],
+  ['seen',   p=>(p.online?-1e13:-(p.last_seen||0)), l=>l('sort_seen')],
 ];
 let PSORT = 'hours';
 try{ PSORT = localStorage.getItem('panel_psort') || 'hours'; }catch(_){}
@@ -1347,6 +1351,8 @@ function psortStat(p){
     case 'pvp': return `🏹 ${fmtN(p.player_kills)}`;
     case 'hours': return `⏱️ ${fmtN(p.play_hours)} h`;
     case 'adv': return p.adv_total ? `🏆 ${p.adv_done}/${p.adv_total} · ${Math.round(p.adv_pct)}%` : '🏆 —';
+    case 'xp': return `✨ ${t('lvl_short')} ${fmtN(p.xp_level||0)}`;
+    case 'seen': return p.online ? t('online_tag').replace(/[()]/g,'') : `🕒 ${ago(p.last_seen)}`;
     default: return p.online ? t('online_tag').replace(/[()]/g,'') : ago(p.last_seen);
   }
 }
