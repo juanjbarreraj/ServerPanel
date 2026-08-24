@@ -24,7 +24,7 @@ ICON_SRC = PANEL / "static/markers"
 ICON_DST = BLUEMAP / "web/assets/markers"
 OUT_JSON = PANEL / "data/structures.json"
 MANUAL_JSON = PANEL / "data/markers.json"       # marcadores puestos a mano desde el panel
-ICON_PX = 32                                     # tamaño del icono sobre el mapa
+ICON_PX = 28                                     # tamaño del icono sobre el mapa
 
 # Minecraft 26.2 guarda TODAS las dimensiones en world/dimensions/minecraft/<dim>/region
 # (ya no existen world/region, world/DIM-1 ni world/DIM1). Se prueba el layout nuevo
@@ -42,27 +42,37 @@ def region_dir(dim):
 
 DIMS = [(d, region_dir(d)) for d in ("overworld", "nether", "end")]
 
-# id del juego -> (icono, nombre bonito)
+# id del juego -> (icono, nombre en español, nombre en inglés, distancia máxima, oculto por defecto)
+#
+# Los nombres en español son los OFICIALES de la wiki en español de Minecraft
+# (es.minecraft.wiki), no traducciones propias.
+#
+# max_dist = a qué distancia de cámara deja de dibujarse el marcador. Es lo que
+# evita que al alejar el mapa se junten cientos de iconos: los hitos grandes se
+# ven de lejos, lo común solo de cerca. Menos iconos en pantalla = sin lag.
+#
+# oculto = la capa arranca apagada (las estructuras que salen a cientos).
 STRUCT_MAP = {
-    "village":          ("village", "Aldea"),
-    "trial_chambers":   ("trial_chambers", "Cámara de prueba"),
-    "ancient_city":     ("ancient_city", "Ciudad antigua"),
-    "stronghold":       ("stronghold", "Fortaleza (portal al End)"),
-    "monument":         ("monument", "Monumento oceánico"),
-    "mansion":          ("mansion", "Mansión del bosque"),
-    "pillager_outpost": ("outpost", "Puesto de saqueadores"),
-    "ruined_portal":    ("ruined_portal", "Portal en ruinas"),
-    "shipwreck":        ("shipwreck", "Naufragio"),
-    "desert_pyramid":   ("desert_temple", "Templo del desierto"),
-    "jungle_pyramid":   ("jungle_temple", "Templo de la jungla"),
-    "swamp_hut":        ("witch_hut", "Choza de bruja"),
-    "igloo":            ("igloo", "Iglú"),
-    "buried_treasure":  ("buried_treasure", "Tesoro enterrado"),
-    "mineshaft":        ("mineshaft", "Mina abandonada"),
-    "trail_ruins":      ("trail_ruins", "Ruinas del sendero"),
-    "fortress":         ("nether_fortress", "Fortaleza del Nether"),
-    "bastion_remnant":  ("bastion_remnant", "Bastión"),
-    "end_city":         ("end_city", "Ciudad del End"),
+    #                    icono              español                inglés                  max_dist  oculto  orden
+    "ancient_city":     ("ancient_city",    "Ciudad antigua",      "Ancient City",          100000, False, 10),
+    "mansion":          ("mansion",         "Mansión del bosque",  "Woodland Mansion",      100000, False, 11),
+    "monument":         ("monument",        "Monumento oceánico",  "Ocean Monument",        100000, False, 12),
+    "stronghold":       ("stronghold",      "Fortaleza",           "Stronghold",            100000, False, 13),
+    "end_city":         ("end_city",        "Ciudad del End",      "End City",              100000, False, 14),
+    "bastion_remnant":  ("bastion_remnant", "Bastión en ruinas",   "Bastion Remnant",       100000, False, 15),
+    "fortress":         ("nether_fortress", "Fortaleza del Nether","Nether Fortress",       100000, False, 16),
+    "trial_chambers":   ("trial_chambers",  "Cámaras de desafío",  "Trial Chambers",         20000, False, 17),
+    "village":          ("village",         "Aldea",               "Village",                20000, False, 20),
+    "pillager_outpost": ("outpost",         "Puesto de saqueadores","Pillager Outpost",      20000, False, 21),
+    "desert_pyramid":   ("desert_temple",   "Pirámide del desierto","Desert Pyramid",         8000, False, 30),
+    "jungle_pyramid":   ("jungle_temple",   "Templo de jungla",    "Jungle Temple",           8000, False, 31),
+    "swamp_hut":        ("witch_hut",       "Cabaña de pantano",   "Swamp Hut",               8000, False, 32),
+    "igloo":            ("igloo",           "Iglú",                "Igloo",                   8000, False, 33),
+    "trail_ruins":      ("trail_ruins",     "Sendero en ruinas",   "Trail Ruins",             8000, False, 34),
+    "shipwreck":        ("shipwreck",       "Naufragio",           "Shipwreck",               3000, True,  40),
+    "buried_treasure":  ("buried_treasure", "Tesoro enterrado",    "Buried Treasure",         3000, True,  41),
+    "ruined_portal":    ("ruined_portal",   "Portal en ruinas",    "Ruined Portal",           3000, True,  42),
+    "mineshaft":        ("mineshaft",       "Mina abandonada",     "Mineshaft",               3000, True,  43),
 }
 
 def struct_kind(sid):
@@ -171,28 +181,51 @@ END   = "# <<< CALIFREE MARKERS"
 def esc(s):
     return str(s).replace("\\", "\\\\").replace('"', '\\"')
 
-def poi(mid, label, x, y, z, icon):
+def poi(mid, label, x, y, z, icon, detalle, max_dist, listed=True):
     a = ICON_PX // 2
     return (f'    {mid}: {{ type: "poi", label: "{esc(label)}", '
             f'position: {{ x: {x}, y: {y}, z: {z} }}, '
-            f'icon: "assets/markers/{icon}.png", anchor: {{ x: {a}, y: {a} }} }}\n')
+            f'icon: "assets/markers/{icon}.png", anchor: {{ x: {a}, y: {a} }}, '
+            f'detail: "{esc(detalle)}", '
+            f'min-distance: 0, max-distance: {max_dist}, '
+            f'listed: {"true" if listed else "false"} }}\n')
+
+def detalle_html(es, en, x, y, z):
+    """Lo que sale al hacer clic: nombre en los dos idiomas y coordenadas exactas."""
+    return (f'<div style="font-size:14px"><b>{esc(es)}</b><br>'
+            f'<span style="opacity:.65">{esc(en)}</span><br>'
+            f'<span style="font-family:monospace">X {x} &nbsp; Y {y} &nbsp; Z {z}</span></div>')
 
 def build_block(structs, manual, dim):
+    """Una capa por tipo de estructura, para poder encender y apagar cada una."""
     out = [BEGIN + "\n", "marker-sets: {\n"]
-    out.append('  estructuras: {\n    label: "Estructuras"\n    toggleable: true\n'
-               '    default-hidden: false\n    sorting: 0\n    markers: {\n')
-    for i, s in enumerate(structs):
-        icon, pretty = STRUCT_MAP[s["kind"]]
-        out.append(poi(f"e{i}", pretty, s["x"], s["y"], s["z"], icon))
-    out.append("    }\n  }\n")
+    por_tipo = {}
+    for s in structs:
+        por_tipo.setdefault(s["kind"], []).append(s)
+    for kind in sorted(por_tipo, key=lambda k: STRUCT_MAP[k][5]):
+        icon, es, en, max_dist, oculto, orden = STRUCT_MAP[kind]
+        items = por_tipo[kind]
+        # con muchísimos marcadores, no llenamos también la lista lateral
+        listed = len(items) <= 60
+        out.append(f'  est_{kind}: {{\n    label: "{esc(es)} ({len(items)})"\n'
+                   f'    toggleable: true\n    default-hidden: {"true" if oculto else "false"}\n'
+                   f'    sorting: {orden}\n    markers: {{\n')
+        for i, s in enumerate(items):
+            out.append(poi(f"e_{kind}_{i}", es, s["x"], s["y"], s["z"], icon,
+                           detalle_html(es, en, s["x"], s["y"], s["z"]), max_dist, listed))
+        out.append("    }\n  }\n")
     mine = [m for m in manual if m.get("dim", "overworld") == dim]
     if mine:
         out.append('  lugares: {\n    label: "Lugares del server"\n    toggleable: true\n'
-                   '    default-hidden: false\n    sorting: 1\n    markers: {\n')
+                   '    default-hidden: false\n    sorting: 0\n    markers: {\n')
         for i, m in enumerate(mine):
-            out.append(poi(f"m{i}", m.get("name", "Lugar"),
-                           int(m["x"]), int(m.get("y", 64)), int(m["z"]),
-                           re.sub(r"[^a-z_]", "", m.get("icon", "landmark"))))
+            x, y, z = int(m["x"]), int(m.get("y", 64)), int(m["z"])
+            nombre = m.get("name", "Lugar")
+            det = (f'<div style="font-size:14px"><b>{esc(nombre)}</b><br>'
+                   f'<span style="font-family:monospace">X {x} &nbsp; Y {y} &nbsp; Z {z}</span></div>')
+            out.append(poi(f"m{i}", nombre, x, y, z,
+                           re.sub(r"[^a-z_]", "", m.get("icon", "landmark")),
+                           det, 100000, True))
         out.append("    }\n  }\n")
     out.append("}\n" + END + "\n")
     return "".join(out)
@@ -239,7 +272,8 @@ def main():
             continue
         write_config(conf, build_block(found.get(dim, []), manual, dim))
         print(f"  {conf.name}: {len(found.get(dim, []))} marcadores")
-    print("Listo. Los marcadores aparecen en el próximo render de BlueMap.")
+    print("Listo. Ahora, para que aparezcan en el mapa (tarda segundos, NO hace falta render):")
+    print("  cd ~/bluemap && java -Xmx1536M -jar bluemap-cli.jar --markers")
 
 if __name__ == "__main__":
     main()
