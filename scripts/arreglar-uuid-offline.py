@@ -24,6 +24,10 @@ toca ningún archivo.
 Uso:
     python3 ~/panel/scripts/arreglar-uuid-offline.py ZCP2007            # simulacro
     python3 ~/panel/scripts/arreglar-uuid-offline.py ZCP2007 --aplicar
+
+Si el jugador se cambió el nombre de la cuenta, el UUID offline ya no se puede
+deducir del nombre nuevo: hay que decirle de qué UUID salen los archivos.
+    python3 ~/panel/scripts/arreglar-uuid-offline.py NombreNuevo --desde 4c988640-...
 """
 import hashlib, json, shutil, sys, time
 from pathlib import Path
@@ -34,7 +38,14 @@ from server import MC_DIR, rcon_try, online_players
 
 VIVO = MC_DIR / "world/players"
 APLICAR = "--aplicar" in sys.argv
-NOMBRE = next((a for a in sys.argv[1:] if not a.startswith("--")), "ZCP2007")
+_libres = [a for a in sys.argv[1:] if not a.startswith("--")]
+DESDE = None
+for _i, _a in enumerate(sys.argv):
+    if _a == "--desde" and _i + 1 < len(sys.argv):
+        DESDE = sys.argv[_i + 1].lower()
+        if DESDE in _libres:
+            _libres.remove(DESDE)
+NOMBRE = _libres[0] if _libres else "ZCP2007"
 
 
 def uuid_offline(nombre):
@@ -79,9 +90,10 @@ def main():
           % (NOMBRE, "APLICANDO" if APLICAR else "SIMULACRO (no toca nada)"))
     print("=" * 68)
 
-    viejo = uuid_offline(NOMBRE)
+    viejo = DESDE or uuid_offline(NOMBRE)
     actuales = [e for e in wl if (e.get("name") or "").lower() == NOMBRE.lower()]
-    print("\n  UUID offline calculado : %s" % viejo)
+    print("\n  UUID de origen         : %s  (%s)"
+          % (viejo, "dado a mano" if DESDE else "calculado del nombre"))
     for e in actuales:
         print("  en la whitelist ahora  : %s  (%s)"
               % (e.get("uuid"), "offline" if es_offline(e.get("uuid", "")) else "premium"))
@@ -97,7 +109,8 @@ def main():
         print("     (ninguno)")
 
     otros = [e for e in wl if es_offline(e.get("uuid", ""))
-             and (e.get("name") or "").lower() != NOMBRE.lower()]
+             and (e.get("name") or "").lower() != NOMBRE.lower()
+             and (e.get("uuid") or "").lower() != viejo]
     if otros:
         print("\n  ⚠ OTRAS entradas de la whitelist con UUID offline (mismo problema):")
         for e in otros:
@@ -120,8 +133,11 @@ def main():
 
     marca = time.strftime("%Y%m%d-%H%M%S")
     shutil.copy2(wl_f, wl_f.with_suffix(".json.antes-" + marca))
-    escribir(wl_f, [e for e in wl if (e.get("name") or "").lower() != NOMBRE.lower()])
-    escribir(uc_f, [e for e in uc if (e.get("name") or "").lower() != NOMBRE.lower()])
+    def sobra(e):
+        return ((e.get("name") or "").lower() == NOMBRE.lower()
+                or (e.get("uuid") or "").lower() == viejo)
+    escribir(wl_f, [e for e in wl if not sobra(e)])
+    escribir(uc_f, [e for e in uc if not sobra(e)])
     print("\n  ✔ quitado de whitelist y usercache (respaldo: %s)"
           % wl_f.with_suffix(".json.antes-" + marca).name)
 

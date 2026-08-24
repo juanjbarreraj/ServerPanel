@@ -519,6 +519,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 #psort:hover{border-color:var(--slime)}
 #psort option{background:#12161d; color:#eceff3; font-weight:600}
 .statcol h3{margin-bottom:2px}
+.hico{width:22px; height:22px; image-rendering:pixelated; vertical-align:-5px; margin-right:8px}
 .statcol .sctotal{display:flex; justify-content:space-between; padding:7px 4px; border-bottom:2px solid rgba(255,255,255,.14);
   font-weight:bold; margin-bottom:4px}
 .strow{display:flex; align-items:center; gap:8px; padding:4.5px 4px; border-bottom:1px solid rgba(255,255,255,.05); font-size:.86rem}
@@ -759,7 +760,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- MODERATION -->
   <section id="tab-mod" class="hidden">
     <div class="card" id="joinreq-card" style="margin-bottom:14px">
-      <h3>Solicitudes de ingreso — tocando la puerta 🚪</h3>
+      <h3><img class="hico" src="/static/ui/s-puerta.png?v=11" alt="" onerror="this.outerHTML=''">Solicitudes de ingreso — tocando la puerta</h3>
       <div style="overflow-x:auto"><table id="jr-table">
         <thead><tr><th>Jugador</th><th class="right">Intentos</th><th>Último intento</th><th class="right"></th></tr></thead>
         <tbody></tbody></table></div>
@@ -949,7 +950,7 @@ let ME = null, BRAND = 'Serve Actual';
 let tickHist = [], memHist = [];
 let GEAR = null;   // current player card data
 const $ = id => document.getElementById(id);
-const ICONV = 9;   // sube este número cuando cambien los renders (revienta el caché)
+const ICONV = 11;   // sube este número cuando cambien los renders (revienta el caché)
 const ICON = id => `/icons/${id}.png?v=${ICONV}`;   // self-hosted, extracted from the official client
 
 /* ---------- i18n (todo lo público es bilingüe; la vista de mods queda en español) ---------- */
@@ -973,7 +974,7 @@ const I18N = {
   back_players:'← Todos los jugadores', inv_btn:'🎒 Inventario', hist_add:'➕ Subir skin antigua',
   sort_by:'Ordenar por', sort_alpha:'Alfabético (A-Z)', sort_hours:'Más horas jugadas', sort_mobs:'Más mobs matados',
   sort_placed:'Más bloques puestos', sort_deaths:'Más muertes', sort_pvp:'Más jugadores matados',
-  st_dist:'📏 Distancias (bloques)', st_mined:'⛏️ Bloques rotos', st_used:'🧰 Items usados', st_killed:'⚔️ Mobs matados',
+  st_dist:'Distancias (bloques)', st_mined:'Bloques rotos', st_used:'Items usados', st_killed:'Mobs matados',
   adv_title:'🏆 Logros', adv_all:'Todos', adv_none:'Los logros aún no están generados',
   adv_of:'{0} de {1}', adv_secret:'Secreto', adv_steps:'Te faltan {0} de {1}',
   adv_done_all:'¡Completo!', sort_adv:'Más logros conseguidos',
@@ -1013,7 +1014,7 @@ const I18N = {
   back_players:'← All players', inv_btn:'🎒 Inventory', hist_add:'➕ Upload old skin',
   sort_by:'Sort by', sort_alpha:'Alphabetical (A-Z)', sort_hours:'Most hours played', sort_mobs:'Most mobs killed',
   sort_placed:'Most blocks placed', sort_deaths:'Most deaths', sort_pvp:'Most players killed',
-  st_dist:'📏 Distance (blocks)', st_mined:'⛏️ Blocks broken', st_used:'🧰 Items used', st_killed:'⚔️ Entities killed',
+  st_dist:'Distance (blocks)', st_mined:'Blocks broken', st_used:'Items used', st_killed:'Entities killed',
   adv_title:'🏆 Advancements', adv_all:'All', adv_none:'Advancements have not been generated yet',
   adv_of:'{0} of {1}', adv_secret:'Secret', adv_steps:'{0} of {1} left',
   adv_done_all:'Complete!', sort_adv:'Most advancements',
@@ -1202,6 +1203,8 @@ function enterApp(){
 // Iconos propios, dibujados para que cada uno diga de qué va su pestaña
 // (una espada no significa "jugadores"). Viven en static/ui/ y se sirven tal cual.
 const UI = n => `/static/ui/${n}.png?v=${ICONV}`;
+// icono de cabecera de sección; si el png no está, cae al emoji de siempre
+const hIco = (n, emo) => `<img class="hico" src="${UI(n)}" alt="" onerror="this.outerHTML='${emo} '">`;
 const TABS = [
   ['dash',()=>t('tab_dash'),UI('inicio'),'🏠', () => hasPerm('view_dashboard')],
   ['players',()=>t('tab_players'),UI('jugadores'),'⚔️', () => hasPerm('view_players')],
@@ -1491,13 +1494,13 @@ function pvStats(s){
     [t('th_seen'), b.last_seen?ago(b.last_seen):'—'],
   ].map(([l,v])=>`<div class="card tile pvt"><div class="lab">${l}</div><div class="pvt-val">${v}</div></div>`).join('');
   const cols=$('pv-cols'); cols.innerHTML='';
-  cols.appendChild(statCol(t('st_dist'), s.distance.total, s.distance.rows.map(r=>({
-    icon:null, emo:DIST_ORDER_EMO[r.id]||'📏', name:t('dist_'+r.id), n:r.n})), 'dist'));
-  cols.appendChild(statCol(t('st_mined'), s.mined.total, s.mined.items.map(r=>({
+  cols.appendChild(statCol(hIco('s-dist','📏')+t('st_dist'), s.distance.total, s.distance.rows.map(r=>({
+    icon:UI('d-'+r.id), emo:DIST_ORDER_EMO[r.id]||'📏', name:t('dist_'+r.id), n:r.n})), 'dist'));
+  cols.appendChild(statCol(hIco('s-rotos','⛏️')+t('st_mined'), s.mined.total, s.mined.items.map(r=>({
     icon:statIcon(r.id), emo:'⬜', name:prettify(r.id), n:r.n})), 'mined'));
-  cols.appendChild(statCol(t('st_used'), s.used.total, s.used.items.map(r=>({
+  cols.appendChild(statCol(hIco('s-usados','🧰')+t('st_used'), s.used.total, s.used.items.map(r=>({
     icon:statIcon(r.id), emo:'🧰', name:prettify(r.id), n:r.n})), 'used'));
-  cols.appendChild(statCol(t('st_killed'), s.killed.total, s.killed.items.map(r=>({
+  cols.appendChild(statCol(hIco('s-matados','⚔️')+t('st_killed'), s.killed.total, s.killed.items.map(r=>({
     icon:`/icons/${r.id}_spawn_egg.png`, emo:MOB_EMO[r.id]||'🐾', name:prettify(r.id), n:r.n})), 'killed'));
 }
 /* ---------- logros ---------- */
