@@ -253,6 +253,22 @@ def frescura():
         est = "ok" if AHORA - mtime(cs[-1]) < 8 * 86400 else "mal"
         linea(est, "copia de seguridad del mundo",
               "· la última %s · hay %d guardadas" % (hace(mtime(cs[-1])), len(cs)))
+        # ¿se borran las viejas? Las copias son con diferencia lo que más ocupa,
+        # y una que no pode llena el disco en unos meses sin avisar.
+        peso = sum(tam(p) for p in cs)
+        dias = (mtime(cs[-1]) - mtime(cs[0])) / 86400
+        if len(cs) >= 3 and dias > len(cs) + 3:
+            linea("ok", "las copias viejas se borran solas",
+                  "· %d copias repartidas en %.0f días · %s en total" % (len(cs), dias, mb(peso)))
+        elif len(cs) > 20:
+            linea("ojo", "las copias NO parecen podarse",
+                  "· %d guardadas, %s · la más vieja %s" % (len(cs), mb(peso), hace(mtime(cs[0]))))
+            print("      mira si backup.sh borra las antiguas:")
+            print("        grep -nE 'rm |ls -t|tail -n' %s/backup.sh" % MC)
+        else:
+            ritmo = peso / max(1.0, dias) if dias > 0.5 else peso
+            linea("ok", "las copias ocupan %s" % mb(peso),
+                  "· la más vieja %s · crecen ~%s al día" % (hace(mtime(cs[0])), mb(ritmo)))
     else:
         linea("mal", "NO hay ninguna copia de seguridad del mundo")
 
