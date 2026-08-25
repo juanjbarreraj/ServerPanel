@@ -37,7 +37,14 @@ if [ -f "$LOG" ] && [ "$(stat -c%s "$LOG")" -gt 5000000 ]; then
   mv -f "$LOG" "$LOG.1"
 fi
 
-decir() { echo "[$(date '+%F %T')] $*" >> "$LOG"; }
+# Al log Y a la terminal. Corriéndolo a mano, un script que no imprime nada
+# durante veinte minutos parece colgado; y desde cron esto no molesta porque el
+# fichero de cron lleva MAILTO="".
+decir() {
+  local linea="[$(date '+%F %T')] $*"
+  echo "$linea" >> "$LOG"
+  echo "$linea"
+}
 
 ARRANQUE=$(date +%s)
 decir "───────── inicio ($*) ─────────"
