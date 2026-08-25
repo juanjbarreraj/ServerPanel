@@ -828,9 +828,10 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
       <div class="pgrid" id="mk-list" style="margin-top:4px"></div>
       <div id="mk-scan-row" class="hidden">
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:14px">
-          <button class="btn small ghost" onclick="mkScan()">🔎 Escanear estructuras y actualizar mapa</button>
+          <button class="btn small" onclick="mkMarcadores()"><img class="bico" src="/static/ui/s-posicion.png?v=14" alt="" onerror="this.outerHTML='📍 '">Actualizar los iconos</button>
+          <button class="btn small ghost" onclick="mkScan()"><img class="bico" src="/static/ui/mapa.png?v=14" alt="" onerror="this.outerHTML='🔎 '">Volver a dibujar el mapa entero</button>
         </div>
-        <div class="note">El escaneo busca aldeas, cámaras de prueba, ciudades antiguas y demás en lo que ya exploraron, y vuelve a renderizar el mapa (tarda un rato).</div>
+        <div class="note"><b>Los iconos</b> busca aldeas, cámaras de desafío, ciudades antiguas y demás en lo que ya exploraron y las pone en el mapa: tarda segundos, o unos minutos la primera vez. <b>Volver a dibujar</b> además repinta el terreno y tarda más de una hora — normalmente no hace falta, porque el mapa se actualiza solo cada noche.</div>
       </div>
     </div>
   </section>
@@ -986,7 +987,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <button class="btn small danger" onclick="sysPaper()"><img class="bico" src="/static/ui/s-paper.png?v=14" alt="" onerror="this.outerHTML='📄 '">Migrar a Paper</button>
         <a class="btn small ghost" href="/api/system/backup_extras"><img class="bico" src="/static/ui/copias.png?v=14" alt="" onerror="this.outerHTML='💾 '">Respaldo (fotos+cuentas)</a>
       </div>
-      <div class="note">Las copias del MUNDO viven en la pestaña Copias. La migración a Paper deja el server ~3 min fuera y habilita plugins.</div>
+      <div class="note">Las copias del MUNDO viven en la pestaña Copias, y lo del mapa (actualizar iconos o volver a dibujarlo) está abajo del todo en la pestaña Mapa. La migración a Paper deja el server ~3 min fuera y habilita plugins.</div>
     </div>
     <div class="card"><h3><img class="hico" src="/static/ui/consola.png?v=14" alt="" onerror="this.outerHTML='📜 '">Registro del sistema</h3>
       <div class="console" style="height:220px; color:#c3c2b7" id="sys-log">…</div></div>
@@ -2992,8 +2993,12 @@ async function mkAdd(){
     renderMarkers(r.markers);
   } else toast((r&&r.error)||'No se pudo añadir');
 }
+async function mkMarcadores(){
+  const r=await api('/api/system/map_markers',{}).catch(()=>null);
+  toast((r&&r.output)||'No se pudo arrancar');
+}
 async function mkScan(){
-  if(!confirm('Escanear el mundo y volver a renderizar el mapa. Tarda un rato y usa CPU con prioridad baja. ¿Seguir?')) return;
+  if(!confirm('Vuelve a dibujar el mapa entero. Tarda más de una hora (con prioridad baja, sin molestar al server).\n\nSi solo faltan los ICONOS de las estructuras, usa el otro botón: tarda segundos.\n\n¿Seguir igualmente?')) return;
   const r=await api('/api/system/scan_map',{}).catch(()=>null);
   toast((r&&r.output)||'No se pudo arrancar');
 }

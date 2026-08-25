@@ -2479,11 +2479,16 @@ def _syslog(line):
     with open(SYS_LOG, "a") as f:
         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {line}\n")
 
-def _sys_run_bg(job, cmd):
+def _sys_run_bg(job, cmd, timeout=1800):
+    # OJO con el timeout: subprocess.run MATA el proceso al agotarse. Con los 30
+    # minutos de siempre, el botón del mapa arrancaba un render que tarda 57-98
+    # min y se lo cargaba a media faena, dejando además el java suelto (solo se
+    # mata al hijo directo, que es el bash). Por eso los trabajos del mapa piden
+    # su propio plazo.
     def worker():
         _syslog(f"[{job}] iniciando: {' '.join(cmd)}")
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
             out = (r.stdout or "") + (r.stderr or "")
             for ln in out.splitlines()[-40:]:
                 _syslog(f"[{job}] {ln}")
@@ -2564,9 +2569,29 @@ def api_system_scan_map():
         return jsonify(ok=False, output="Falta scripts/render-mapa.sh en el server"), 400
     # el MISMO script que usa el cron de cada noche: un solo camino, un solo
     # candado, y el parche del bioma se reaplica siempre al terminar
-    ok = _sys_run_bg("mapa", ["bash", str(script), "--con-estructuras"])
+    ok = _sys_run_bg("mapa", ["bash", str(script)], timeout=6 * 3600)
     audit(u["name"], "escaneo de estructuras + render del mapa")
     return jsonify(ok=ok, output="Escaneando el mundo y actualizando el mapa — mira el registro"
+                   if ok else "Ya hay una actualización del mapa corriendo")
+
+@app.post("/api/system/map_markers")
+def api_system_map_markers():
+    """Solo los ICONOS: busca estructuras y las publica. No vuelve a dibujar nada.
+
+    Es lo que hace falta cuando el terreno ya está en el mapa pero le faltan los
+    marcadores. Tarda segundos o minutos, no la hora larga del render entero.
+    """
+    u = require()
+    if u["role"] not in ("admin", "mod") or not _csrf_ok():
+        abort(403)
+    script = PANEL_DIR / "scripts/marcadores.sh"
+    if not script.exists():
+        return jsonify(ok=False, output="Falta scripts/marcadores.sh en el server"), 400
+    # comparte el trabajo "mapa" con el render a propósito: los dos tocan los
+    # mismos ficheros de BlueMap y no deben solaparse
+    ok = _sys_run_bg("mapa", ["bash", str(script)], timeout=3 * 3600)
+    audit(u["name"], "actualizar los iconos del mapa")
+    return jsonify(ok=ok, output="Buscando estructuras y publicando los iconos — mira el registro"
                    if ok else "Ya hay una actualización del mapa corriendo")
 
 # ============================================================ feed del servidor
