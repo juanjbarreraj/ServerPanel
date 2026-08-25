@@ -131,16 +131,26 @@ def mapa():
         print("      o desde Sistema → 'Escanear estructuras y actualizar el mapa'.")
         activo = False
     else:
-        lineas = [l.rstrip() for l in cron.read_text().splitlines()
+        # 🔴 Esta comprobación estuvo MAL y dio un falso negativo en producción:
+        # buscaba las palabras "bluemap" o "java" en las líneas, y cuando el
+        # comando pasó a ser `render-mapa.sh` ninguna las contenía. El
+        # diagnóstico decía "el mapa NO se actualiza solo" mientras el propio
+        # render.log de arriba demostraba que el cron había disparado a las
+        # 09:00. Ahora no se adivina por el nombre del comando: una entrada de
+        # cron es cualquier línea que no sea comentario ni asignación de
+        # variable (SHELL=…, PATH=…, MAILTO=…).
+        lineas = [l.strip() for l in cron.read_text().splitlines()
                   if l.strip() and not l.strip().startswith("#")]
-        activo = any("bluemap" in l.lower() or "java" in l.lower() for l in lineas)
+        entradas = [l for l in lineas
+                    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", l)]
+        activo = bool(entradas)
         if activo:
             print("  ✔ tarea programada ACTIVA:")
-            for l in lineas:
+            for l in entradas:
                 print("      " + l)
         else:
-            print("  ✗ el fichero existe pero está TODO COMENTADO → el mapa no se")
-            print("    actualiza solo.")
+            print("  ✗ el fichero existe pero no tiene ninguna línea de horario")
+            print("    (solo comentarios o variables) → el mapa no se actualiza solo.")
 
     # ¿cuánto se ha movido el mundo desde el último render?
     mundo, cual_m, _ = 0, None, 0
@@ -148,12 +158,13 @@ def mapa():
         m, c, n = mas_nuevo(str(d / "*.mca"))
         if m > mundo:
             mundo, cual_m = m, c
-    tiles, cual_t, n_t = mas_nuevo(str(WEB / "maps/**/*.prbm*"), tope=40000)
+    TOPE = 40000
+    tiles, cual_t, n_t = mas_nuevo(str(WEB / "maps/**/*.prbm*"), tope=TOPE)
 
     print()
     print("  mundo   — región tocada más recientemente : %s" % hace(mundo))
-    print("  mapa    — tile renderizado más reciente   : %s   (%d tiles mirados)"
-          % (hace(tiles), n_t))
+    print("  mapa    — tile renderizado más reciente   : %s   (%d tiles mirados%s)"
+          % (hace(tiles), n_t, ", TOPE — es una muestra" if n_t >= TOPE else ""))
     if mundo and tiles:
         atraso = (mundo - tiles) / 3600
         if atraso <= 0:
