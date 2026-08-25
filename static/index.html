@@ -539,6 +539,8 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .statcol h3{margin-bottom:2px}
 .hico{width:22px; height:22px; image-rendering:pixelated; vertical-align:-5px; margin-right:8px}
 .bico{width:20px; height:20px; image-rendering:pixelated; flex:none}
+.pico{width:15px; height:15px; image-rendering:pixelated; vertical-align:-3px}
+.btn .bico{margin-right:2px}
 .btn:disabled{opacity:.42; filter:grayscale(.7); cursor:not-allowed}
 /* ---- historia del server ---- */
 .hilist{display:flex; flex-direction:column; gap:3px; margin-top:10px}
@@ -765,7 +767,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <div class="pv-right">
           <div class="grid tiles pv-tiles" id="pv-tiles"></div>
           <div class="card hidden" id="pv-admin" style="margin-bottom:14px">
-            <h3>📍 Posición y control</h3>
+            <h3><img class="hico" src="/static/ui/s-posicion.png?v=14" alt="" onerror="this.outerHTML='📍 '">Posición y control</h3>
             <div id="pv-pos" class="note" style="margin-top:0">…</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
               <button class="btn small" id="pv-tp" onclick="tpAbrir()">🧍 Teleport</button>
@@ -951,7 +953,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <section id="tab-sistema" class="hidden">
     <div class="grid two" style="margin-bottom:14px">
       <div class="card">
-        <h3>⚙️ Estado del sistema</h3>
+        <h3><img class="hico" src="/static/ui/sistema.png?v=14" alt="" onerror="this.outerHTML='⚙️ '">Estado del sistema</h3>
         <div class="kv" id="sys-kv">cargando…</div>
         <div class="formrow" style="margin-top:12px">
           <input id="sys-pin" placeholder="PIN público (4-32)" maxlength="32">
@@ -960,21 +962,21 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <div class="note">El PIN es la puerta de la vista pública. Cámbialo cuando quieras — las sesiones ya abiertas siguen vivas hasta 30 días.</div>
       </div>
       <div class="card">
-        <h3>🔐 Verificación en dos pasos (tu cuenta)</h3>
+        <h3><img class="hico" src="/static/ui/s-candado.png?v=14" alt="" onerror="this.outerHTML='🔐 '">Verificación en dos pasos (tu cuenta)</h3>
         <div id="sys-2fa">cargando…</div>
       </div>
     </div>
     <div class="card" style="margin-bottom:14px">
-      <h3>🧰 Operaciones</h3>
+      <h3><img class="hico" src="/static/ui/s-herramientas.png?v=14" alt="" onerror="this.outerHTML='🧰 '">Operaciones</h3>
       <div class="actions">
-        <button class="btn small" onclick="sysOp('regen_icons','¿Regenerar todos los íconos? (1-2 min)')">🎨 Regenerar íconos</button>
-        <button class="btn small warn" onclick="sysOp('restart_panel','¿Reiniciar el panel? (~10 seg fuera)')">♻️ Reiniciar panel</button>
-        <button class="btn small danger" onclick="sysPaper()">📄 Migrar a Paper</button>
-        <a class="btn small ghost" href="/api/system/backup_extras">💾 Respaldo (fotos+cuentas)</a>
+        <button class="btn small" onclick="sysOp('regen_icons','¿Regenerar todos los íconos? (1-2 min)')"><img class="bico" src="/static/ui/s-paleta.png?v=14" alt="" onerror="this.outerHTML='🎨 '">Regenerar íconos</button>
+        <button class="btn small warn" onclick="sysOp('restart_panel','¿Reiniciar el panel? (~10 seg fuera)')"><img class="bico" src="/static/ui/s-reiniciar.png?v=14" alt="" onerror="this.outerHTML='♻️ '">Reiniciar panel</button>
+        <button class="btn small danger" onclick="sysPaper()"><img class="bico" src="/static/ui/s-paper.png?v=14" alt="" onerror="this.outerHTML='📄 '">Migrar a Paper</button>
+        <a class="btn small ghost" href="/api/system/backup_extras"><img class="bico" src="/static/ui/copias.png?v=14" alt="" onerror="this.outerHTML='💾 '">Respaldo (fotos+cuentas)</a>
       </div>
       <div class="note">Las copias del MUNDO viven en la pestaña Copias. La migración a Paper deja el server ~3 min fuera y habilita plugins.</div>
     </div>
-    <div class="card"><h3>📜 Registro del sistema</h3>
+    <div class="card"><h3><img class="hico" src="/static/ui/consola.png?v=14" alt="" onerror="this.outerHTML='📜 '">Registro del sistema</h3>
       <div class="console" style="height:220px; color:#c3c2b7" id="sys-log">…</div></div>
   </section>
 </div>
@@ -1074,7 +1076,7 @@ let ME = null, BRAND = 'Serve Actual';
 let tickHist = [], memHist = [];
 let GEAR = null;   // current player card data
 const $ = id => document.getElementById(id);
-const ICONV = 12;   // sube este número cuando cambien los renders (revienta el caché)
+const ICONV = 14;   // sube este número cuando cambien los renders (revienta el caché)
 const ICON = id => `/icons/${id}.png?v=${ICONV}`;   // self-hosted, extracted from the official client
 
 /* ---------- i18n (todo lo público es bilingüe; la vista de mods queda en español) ---------- */
@@ -1494,16 +1496,24 @@ function psortChange(){
   try{ localStorage.setItem('panel_psort', PSORT); }catch(_){}
   renderPGrid();
 }
+/* Icono de la estadística activa en la tarjeta del jugador. A 15 px: el texto
+   de la fila es de 10,6 px y a 12 px el dibujo se vuelve papilla; a 18 px pesa
+   más que el número. Probado con una maqueta a tamaño real.
+   Cuatro salen de iconos que ya teníamos; los tres `s-…` que faltan caen al
+   emoji de siempre hasta que lleguen. */
+const pIco=(n,emo)=>`<img class="pico" src="${UI(n)}" alt="" onerror="this.outerHTML='${emo}'">`;
 function psortStat(p){
   switch(PSORT){
-    case 'mobs': return `⚔️ ${fmtN(p.mob_kills)}`;
-    case 'placed': return `🧱 ${fmtN(p.blocks_placed||0)}`;
-    case 'deaths': return `💀 ${fmtN(p.deaths)}`;
-    case 'pvp': return `🏹 ${fmtN(p.player_kills)}`;
-    case 'hours': return `⏱️ ${fmtN(p.play_hours)} h`;
-    case 'adv': return p.adv_total ? `🏆 ${p.adv_done}/${p.adv_total} · ${Math.round(p.adv_pct)}%` : '🏆 —';
-    case 'xp': return `✨ ${t('lvl_short')} ${fmtN(p.xp_level||0)}`;
-    case 'seen': return p.online ? t('online_tag').replace(/[()]/g,'') : `🕒 ${ago(p.last_seen)}`;
+    case 'mobs':   return `${pIco('s-matados','⚔️')} ${fmtN(p.mob_kills)}`;
+    case 'placed': return `${pIco('s-puestos','🧱')} ${fmtN(p.blocks_placed||0)}`;
+    case 'deaths': return `${pIco('muerte','💀')} ${fmtN(p.deaths)}`;
+    case 'pvp':    return `${pIco('s-pvp','🏹')} ${fmtN(p.player_kills)}`;
+    case 'hours':  return `${pIco('sesion','⏱️')} ${fmtN(p.play_hours)} h`;
+    case 'adv':    return `${pIco('logros','🏆')} ` +
+      (p.adv_total ? `${p.adv_done}/${p.adv_total} · ${Math.round(p.adv_pct)}%` : '—');
+    case 'xp':     return `${pIco('s-xp','✨')} ${t('lvl_short')} ${fmtN(p.xp_level||0)}`;
+    case 'seen':   return p.online ? t('online_tag').replace(/[()]/g,'')
+                                   : `${pIco('tick','🕒')} ${ago(p.last_seen)}`;
     default: return p.online ? t('online_tag').replace(/[()]/g,'') : ago(p.last_seen);
   }
 }
