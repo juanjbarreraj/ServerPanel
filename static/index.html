@@ -397,6 +397,13 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 @media(max-width:430px){.mcpanel{--cell:36px}}
 
 /* ============ plugins ============ */
+/* 24 px, un punto más que las cabeceras: el texto de esta zona va a 1 rem y el
+   recuadro es grande, así que el icono no aprieta. Y sobre todo, el cubito
+   verde que cae dentro de la tolva ocupa 4 de los 16 píxeles del dibujo: por
+   debajo de 24 se queda en una mota y se pierde la idea de «suéltalo aquí».
+   Medido sobre la zona real, no sobre una maqueta. */
+.dico{width:24px; height:24px; image-rendering:pixelated; vertical-align:-6px; margin-right:9px}
+.drop:hover .dico,.drop.over .dico{filter:brightness(1.15)}
 .drop{border:2px dashed rgba(255,255,255,.25); border-radius:6px; padding:26px; text-align:center; color:var(--ink3);
   background:var(--slotbg); box-shadow:inset 2px 2px 0 rgba(0,0,0,.4), inset -2px -2px 0 rgba(255,255,255,.06);
   transition:all .3s var(--spring); cursor:pointer}
@@ -430,7 +437,6 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .land-title .cursor{display:inline-block; width:.55em; height:1em; background:#6fd44e;
   vertical-align:-2px; margin-left:3px; animation:blink 1s steps(2) infinite}
 @keyframes blink{50%{opacity:0}}
-.land-sub{color:var(--ink3); font-size:.85rem; margin-top:-10px; opacity:0; transition:opacity .6s}
 .land-xp{width:min(340px,72vw); height:12px; border-radius:3px; background:#0e1410; position:relative;
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.7), inset -2px -2px 0 rgba(255,255,255,.08), 0 0 0 2px #000}
 .land-xp i{display:block; height:100%; width:0%;
@@ -651,13 +657,11 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <img class="land-cube" id="land-cube" src="/icons/grass_block.png?v=9"
          onerror="this.src='/static/ender_chest.png'">
     <div class="land-title"><span id="land-txt"></span><span class="cursor" id="land-cur"></span></div>
-    <div class="land-sub" id="land-sub">Server of Califree · 2020—∞</div>
     <div class="land-xp" id="land-xp"><i></i></div>
     <div id="land-pin">
       <div class="card pin-card">
         <h3 data-i18n="pin_title">🔒 PIN de acceso</h3>
-        <div class="note" style="margin:2px 0 12px" data-i18n="pin_note">Este panel es privado — pídele el PIN a alguien del server.</div>
-        <input id="pin-in" maxlength="32" autocomplete="off"
+        <input id="pin-in" maxlength="32" autocomplete="off" style="margin-top:14px"
                onkeydown="if(event.key==='Enter')sendPin()">
         <div class="err" id="pin-err"></div>
         <button class="btn wide" onclick="sendPin()" data-i18n="pin_btn">Entrar</button>
@@ -912,7 +916,8 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
     <div class="card">
       <h3>Plugins instalados</h3>
-      <div class="drop" id="drop">⬆️ Arrastra un plugin .jar aquí, o haz clic para elegirlo</div>
+      <div class="drop" id="drop"><img class="dico" src="/static/ui/s-tolva.png?v=14" alt=""
+        onerror="this.outerHTML='⬆️ '">Arrastra un plugin .jar aquí, o haz clic para elegirlo</div>
       <input type="file" id="plug-file" accept=".jar" class="hidden">
       <div style="overflow-x:auto; margin-top:12px"><table id="plug-table">
         <thead><tr><th>Plugin</th><th class="right">Tamaño</th><th class="right"></th></tr></thead><tbody></tbody></table></div>
@@ -1101,7 +1106,7 @@ let LANG = 'es';
 try{ LANG = localStorage.getItem('panel_lang') || 'es'; }catch(_){}
 const I18N = {
  es:{welcome:'Bienvenidos al Panel del servidor', mods:'Moderadores', pin_title:'🔒 PIN de acceso',
-  pin_note:'Este panel es privado — pídele el PIN a alguien del server.', pin_btn:'Entrar',
+  pin_btn:'Entrar',
   pin_wrong:'PIN incorrecto', pin_unset:'El PIN aún no está configurado — avísale al admin.',
   pin_rate:'Demasiados intentos — espera 5 minutos',
   tab_dash:'Inicio', tab_players:'Jugadores', tab_mem:'Memorias', tab_map:'Mapa',
@@ -1151,7 +1156,7 @@ const I18N = {
   skin_hist:'Skins guardadas por el panel', skin_none:'El archivo arranca hoy — cada día el panel guarda la skin de todos.',
   skin_namemc:'Ver historial completo en NameMC ↗', logout:'Salir', guest:'invitado'},
  en:{welcome:'Welcome to the Server Panel', mods:'Moderators', pin_title:'🔒 Access PIN',
-  pin_note:'This panel is private — ask someone from the server for the PIN.', pin_btn:'Enter',
+  pin_btn:'Enter',
   pin_wrong:'Wrong PIN', pin_unset:'The PIN is not configured yet — tell the admin.',
   pin_rate:'Too many attempts — wait 5 minutes',
   tab_dash:'Home', tab_players:'Players', tab_mem:'Memories', tab_map:'Map',
@@ -1242,7 +1247,6 @@ function landLoop(){
   const iv=setInterval(()=>{ w+=Math.random()*16+6; if(w>=100){w=100; clearInterval(iv);
       setTimeout(showPinGate, 250);} bar.style.width=w+'%'; }, 160);
   _landT.push(iv);
-  setTimeout(()=>{ $('land-sub').style.opacity=1; }, 1400);   // se queda "Server of Califree · 2020—∞"
 }
 function typeTitle(instant){
   window._landTyped=true;
