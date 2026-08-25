@@ -930,7 +930,10 @@ def api_advancements(uuid):
                       "en": l["labels"].get(c, {}).get("en", c),
                       "d": hechos.get(c)}
                      for c in l["criteria"]]
-            pasos.sort(key=lambda p: (p["d"] is None, (p["es"] or "").lower()))
+            # ordenados por el nombre en INGLÉS, que es el que se enseña ahora:
+            # ordenar por el español dejaba la lista en un orden que no cuadraba
+            # con nada de lo que se ve en pantalla.
+            pasos.sort(key=lambda p: (p["d"] is None, (p["en"] or "").lower()))
         salida.append({
             "id": l["id"], "tab": l["tab"], "dim": l.get("dim", "overworld"),
             "icon": l["icon"], "frame": l["frame"],

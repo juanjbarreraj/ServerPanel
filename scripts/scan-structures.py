@@ -154,24 +154,79 @@ def structures_in_chunk(root, cx, cz):
         found.append({"kind": kind, "id": sid, "x": int(x), "y": int(y), "z": int(z)})
     return found
 
-def scan():
-    all_found = {}
+# ------------------------------------------------------- caché por región
+# Leer las ~340 regiones enteras tarda demasiado para hacerlo cada noche, y por
+# eso antes solo se escaneaba una vez por semana: el terreno que exploraban los
+# jugadores se dibujaba, pero se quedaba SIN iconos de estructuras hasta el
+# siguiente escaneo.
+#
+# La solución: guardar lo encontrado en cada fichero .mca junto con su firma
+# (fecha de modificación + tamaño). En la siguiente pasada solo se releen los
+# ficheros que han cambiado, que son justo los chunks nuevos. Así el escaneo
+# cabe en el trabajo de todas las noches.
+CACHE_JSON = PANEL / "data/structures-cache.json"
+CACHE_V = 2
+FRESCA = 120        # segundos
+
+def _cache_cargar():
+    try:
+        d = json.loads(CACHE_JSON.read_text())
+        if d.get("v") == CACHE_V and isinstance(d.get("dims"), dict):
+            return d["dims"]
+    except Exception:
+        pass
+    return {}
+
+def _cache_guardar(dims):
+    CACHE_JSON.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CACHE_JSON.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"v": CACHE_V, "dims": dims}))
+    tmp.replace(CACHE_JSON)        # atómico: nunca queda una caché a medias
+
+def scan(completo=False):
+    cache = {} if completo else _cache_cargar()
+    all_found, nueva = {}, {}
+    ahora_ts = time.time()
     for dim, rdir in DIMS:
         if not rdir.is_dir():
             continue
-        items, files = [], sorted(rdir.glob("r.*.mca"))
-        for f in files:
+        antes, actual = cache.get(dim, {}), {}
+        leidas = reusadas = 0
+        for f in sorted(rdir.glob("r.*.mca")):
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            firma = [int(st.st_mtime), st.st_size]
+            guardado = antes.get(f.name)
+            if guardado and guardado.get("f") == firma:
+                actual[f.name] = guardado
+                reusadas += 1
+                continue
+            items = []
             for cx, cz, root in read_region(f):
                 items.extend(structures_in_chunk(root, cx, cz))
+            # Si el servidor acaba de tocar el fichero puede que lo hayamos leído
+            # a medio escribir. Se usa lo leído, pero se guarda con una firma
+            # imposible para que la próxima vez se relea sí o sí.
+            if ahora_ts - st.st_mtime < FRESCA:
+                firma = [0, 0]
+            actual[f.name] = {"f": firma, "i": items}
+            leidas += 1
+
         # dedupe por tipo+coordenada redondeada
         seen, uniq = set(), []
-        for it in items:
-            k = (it["kind"], it["x"] // 16, it["z"] // 16)
-            if k in seen:
-                continue
-            seen.add(k); uniq.append(it)
+        for datos in actual.values():
+            for it in datos["i"]:
+                k = (it["kind"], it["x"] // 16, it["z"] // 16)
+                if k in seen:
+                    continue
+                seen.add(k); uniq.append(it)
         all_found[dim] = uniq
-        print(f"  {dim}: {len(files)} regiones → {len(uniq)} estructuras")
+        nueva[dim] = actual
+        print("  %-9s %4d regiones (%d releídas, %d de caché) → %s estructuras"
+              % (dim + ":", len(actual), leidas, reusadas, format(len(uniq), ",")))
+    _cache_guardar(nueva)
     return all_found
 
 # ---------------------------------------------------------------- marcadores
@@ -270,9 +325,13 @@ def copy_icons():
 
 def main():
     dry = "--dry" in sys.argv
-    # --rapido reutiliza el escaneo anterior (data/structures.json) en vez de releer
-    # las 319 regiones. Sirve para retocar el aspecto de los marcadores en segundos.
+    # --rapido reutiliza el escaneo anterior (data/structures.json) sin mirar
+    # siquiera las regiones. Sirve para retocar el aspecto de los marcadores en
+    # segundos, no para enterarse de terreno nuevo.
     rapido = "--rapido" in sys.argv
+    # --completo tira la caché por región y relee el mundo entero. Solo hace
+    # falta si algo se ve raro; lo normal es el incremental.
+    completo = "--completo" in sys.argv
     if rapido and OUT_JSON.exists():
         found = json.loads(OUT_JSON.read_text())
         print("Reutilizando el escaneo guardado (%s estructuras)"
@@ -280,9 +339,9 @@ def main():
     else:
         if rapido:
             print("(no hay escaneo guardado todavía, toca escanear)")
-        print("Escaneando el mundo…")
+        print("Escaneando el mundo…" + (" (completo, sin caché)" if completo else ""))
         t0 = time.time()
-        found = scan()
+        found = scan(completo=completo)
         print(f"  ({time.time()-t0:.1f}s)")
     try:
         manual = json.loads(MANUAL_JSON.read_text())
@@ -300,8 +359,12 @@ def main():
             continue
         write_config(conf, build_block(found.get(dim, []), manual, dim))
         print(f"  {conf.name}: {len(found.get(dim, []))} marcadores")
-    print("Listo. Ahora, para que aparezcan en el mapa (tarda segundos, NO hace falta render):")
+    # Esto SOLO reescribe las configs de BlueMap. Para que los iconos lleguen de
+    # verdad al mapa hace falta el paso --markers, que render-mapa.sh ya da solo
+    # todas las noches. Corriendo este script a mano, hay que darlo aquí:
+    print("Listo. Para que aparezcan en el mapa (tarda segundos, NO hace falta render):")
     print("  cd ~/bluemap && java -Xmx1536M -jar bluemap-cli.jar --markers")
+    print("(el render de cada noche ya lo hace por su cuenta)")
 
 if __name__ == "__main__":
     main()

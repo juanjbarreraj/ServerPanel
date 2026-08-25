@@ -150,7 +150,12 @@ header.top img.icon:hover{transform:scale(1.15) rotate(-4deg)}
 .lapiz{width:15px; height:15px; image-rendering:pixelated; vertical-align:-2px; display:inline-block}
 
 /* ============ hotbar tabs ============ */
-nav.tabs{display:flex; gap:5px; margin:0 0 22px; padding:7px; border-radius:7px; width:fit-content; max-width:100%;
+/* `margin-inline:auto` y NO `justify-content:center`: la barra puede desbordar y
+   hacer scroll horizontal en móvil, y centrar por flex cortaría las primeras
+   pestañas dejándolas fuera de alcance. Centrando la caja entera, cuando cabe
+   queda en medio y cuando no cabe llega a `max-width:100%` y el scroll funciona
+   igual que siempre. */
+nav.tabs{display:flex; gap:5px; margin:0 auto 22px; padding:7px; border-radius:7px; width:fit-content; max-width:100%;
   overflow-x:auto; scrollbar-width:none;
   background:linear-gradient(180deg, rgba(30,34,40,.6), rgba(14,17,21,.68));
   border:2px solid rgba(0,0,0,.7);
@@ -1675,8 +1680,15 @@ const ADV_TABS=[['all','adv_all'],['overworld','adv_over'],['nether','adv_nether
                 ['end','adv_end'],['todo','adv_todo']];
 const FRAME_ORD={task:0, goal:1, challenge:2};      // verde, azul, morado
 let ADV=null, ADV_TAB='all', ADV_OPEN=null, PV_VIEW='stats';
-function advTitle(l){ return (l.title&&(l.title[LANG]||l.title.en))||l.id; }
-function advDesc(l){ return (l.desc&&(l.desc[LANG]||l.desc.en))||''; }
+/* Los logros van SIEMPRE en inglés, en los dos idiomas del panel.
+   Motivo: la consola del servidor es en_us pase lo que pase, así que la Historia
+   ya decía «Tazzk93 consiguió Stone Age». Con la ficha traduciendo a «Edad de
+   piedra», el mismo logro tenía dos nombres dentro del mismo panel y no había
+   forma de relacionarlos. El nombre en inglés es además el que sale en el juego
+   y el que se busca en la wiki. `.es` queda solo de respaldo por si el catálogo
+   viniera sin inglés. */
+function advTitle(l){ return (l.title&&(l.title.en||l.title.es))||l.id; }
+function advDesc(l){ return (l.desc&&(l.desc.en||l.desc.es))||''; }
 function advFiltra(k){
   if(k==='all') return ADV.logros;
   if(k==='todo') return ADV.logros.filter(l=>!l.done);
@@ -1748,7 +1760,7 @@ function advSteps(l){
   return `<div class="advsteps">
     <div class="sh">${esc(advTitle(l))} — ${cab}</div>
     ${l.steps.map(s=>`<div class="advstep ${s.d?'ok':''}">
-      <span>${s.d?'✔':'·'}</span><span>${esc(s[LANG]||s.en||s.id)}</span>
+      <span>${s.d?'✔':'·'}</span><span>${esc(s.en||s.es||s.id)}</span>
       ${s.d?`<span class="sd">${esc(String(s.d).slice(0,10))}</span>`:''}</div>`).join('')}
   </div>`;
 }
