@@ -138,10 +138,21 @@ def user_payload(u):
             "must_change": u.get("must_change", False),
             "can_markers": has_perm(u, "markers_add")}
 
+# Mientras alguien siga con la contraseña que le entregaron (must_change) solo
+# puede MIRAR y cambiarla. Antes esto lo forzaba únicamente el navegador —un
+# modal que no se deja cerrar—, así que bastaba con saltarse la interfaz para
+# banear, expulsar o subir cosas sin haber puesto nunca una contraseña propia.
+# Las peticiones de lectura (GET) se dejan pasar para que la pantalla de detrás
+# no se rompa mientras el modal está abierto.
+SIN_CONTRASENA_OK = {"/api/password", "/api/logout"}
+
 def require(perm=None):
     u = current_user()
     if u is None:
         abort(401)
+    if (u.get("must_change") and request.method != "GET"
+            and request.path not in SIN_CONTRASENA_OK):
+        abort(403)
     if perm and not has_perm(u, perm):
         abort(403)
     return u
@@ -263,15 +274,51 @@ def tick_ms():
     _last_tick.update(t=time.time(), val=val)
     return val
 
+# Un nombre de Minecraft solo puede ser esto. Sirve de filtro de seguridad.
+NOMBRE_MC = re.compile(r"^[A-Za-z0-9_]{1,16}$")
+_aviso_list = {"t": 0}
+_online_cache = {"t": 0, "val": None}
+ONLINE_TTL = 4.0     # s
+
 def online_players():
+    """Con caché corta: /api/status lo pide cada 10 s POR PESTAÑA abierta, y
+    cada llamada es un comando RCON que corre en el hilo principal del juego.
+    Con la caché, diez personas mirando el panel cuestan lo mismo que una."""
+    if time.time() - _online_cache["t"] < ONLINE_TTL:
+        return _online_cache["val"]
+    val = _online_players_rcon()
+    _online_cache.update(t=time.time(), val=val)
+    return val
+
+def _online_players_rcon():
+    """Los conectados, o None si no se puede hablar con el servidor.
+
+    Vanilla responde:
+        "There are 3 of a max of 20 players online: Ana, Beto, Caro"
+        "There are 0 of a max of 20 players online:"
+
+    🔴 Todo lo que salga de aquí se valida contra NOMBRE_MC. Sin ese filtro,
+    cualquier respuesta que no encajara con lo esperado se colaba como si fuera
+    un jugador: se llegó a ver el mensaje entero ("There are 0 of a max of 20
+    players online:") como una ficha en "Conectados ahora", y de paso subía el
+    contador de gente conectada. Un dato que no puede ser un nombre no debe
+    salir del parser."""
     ok, out = rcon_try("list")
     if not ok:
         return None
-    m = re.search(r"players online:?\s*(.*)$", out.strip(), re.IGNORECASE | re.DOTALL)
-    names = []
-    if m and m.group(1).strip():
-        names = [n.strip() for n in m.group(1).split(",") if n.strip()]
-    return names
+    txt = re.sub(r"§.", "", out or "").strip()
+    # si el propio mensaje dice que hay 0, no hay nada más que mirar
+    cuenta = re.search(r"\b(\d+)\s+of a max of\b", txt, re.IGNORECASE)
+    if cuenta and cuenta.group(1) == "0":
+        return []
+    m = re.search(r"players online:?\s*(.*)$", txt, re.IGNORECASE | re.DOTALL)
+    crudos = [n.strip() for n in (m.group(1) if m else "").split(",") if n.strip()]
+    nombres = [n for n in crudos if NOMBRE_MC.match(n)]
+    # si había algo y NADA parecía un nombre, dejar rastro para poder verlo
+    if crudos and not nombres and time.time() - _aviso_list["t"] > 300:
+        _aviso_list["t"] = time.time()
+        audit("sistema", "no entendí la respuesta de /list: " + txt[:160])
+    return nombres
 
 _nombres_cache = {"claves": None, "data": {}}
 
@@ -2509,12 +2556,12 @@ def api_system_scan_map():
     u = require()
     if u["role"] not in ("admin", "mod") or not _csrf_ok():
         abort(403)
-    script = PANEL_DIR / "scripts/scan-structures.py"
+    script = PANEL_DIR / "scripts/render-mapa.sh"
     if not script.exists():
-        return jsonify(ok=False, output="Falta scripts/scan-structures.py en el server"), 400
-    ok = _sys_run_bg("mapa", ["bash", "-c",
-        f"python3 {script} && cd ~/bluemap && nice -n 19 ionice -c3 "
-        f"java -Xmx1536M -jar bluemap-cli.jar -r"])
+        return jsonify(ok=False, output="Falta scripts/render-mapa.sh en el server"), 400
+    # el MISMO script que usa el cron de cada noche: un solo camino, un solo
+    # candado, y el parche del bioma se reaplica siempre al terminar
+    ok = _sys_run_bg("mapa", ["bash", str(script), "--con-estructuras"])
     audit(u["name"], "escaneo de estructuras + render del mapa")
     return jsonify(ok=ok, output="Escaneando el mundo y actualizando el mapa — mira el registro"
                    if ok else "Ya hay una actualización del mapa corriendo")
