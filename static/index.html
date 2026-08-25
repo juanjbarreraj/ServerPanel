@@ -470,7 +470,10 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 #mk-list .pcardm .c{white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block}
 #mk-list .pcardm button{margin-left:auto; flex:none}
 .pv-tiles{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
-.pcardm.player img{width:40px; height:40px}
+/* :not(.pico) — la cara del jugador, NO el iconito de la estadística. Sin esto
+   `.pcardm.player img` (0,2,1) le ganaba a `.pico` (0,1,0) y el iconito salía
+   a 40 px, del mismo tamaño que la cara. */
+.pcardm.player img:not(.pico){width:40px; height:40px}
 .pcardm.player .arrow{width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,.10);
   display:flex; align-items:center; justify-content:center; font-weight:bold; color:var(--ink2); flex:none}
 .pv-layout{display:grid; grid-template-columns:320px 1fr; gap:16px; align-items:start}
@@ -539,7 +542,11 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .statcol h3{margin-bottom:2px}
 .hico{width:22px; height:22px; image-rendering:pixelated; vertical-align:-5px; margin-right:8px}
 .bico{width:20px; height:20px; image-rendering:pixelated; flex:none}
-.pico{width:15px; height:15px; image-rendering:pixelated; vertical-align:-3px}
+/* 12 px: el texto de esa línea es de 10,6 px. Estos PNG van a sangre (el dibujo
+   toca el borde del cuadro), así que pesan más que el emoji al que sustituyen,
+   que se dibuja metido dentro de su caja. Medido contra la tarjeta real de
+   223 px, no contra una maqueta estrecha. */
+.pico{width:12px; height:12px; image-rendering:pixelated; vertical-align:-2px}
 .btn .bico{margin-right:2px}
 .btn:disabled{opacity:.42; filter:grayscale(.7); cursor:not-allowed}
 /* ---- historia del server ---- */
@@ -580,7 +587,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   transition:transform .25s var(--spring)}
 .pcardm:hover{animation:jelly .55s var(--spring); box-shadow:inset 2px 2px 0 rgba(0,0,0,.5),
   inset -2px -2px 0 rgba(255,255,255,.09), 0 0 0 2px rgba(138,235,103,.5)}
-.pcardm img{width:44px; height:44px; image-rendering:pixelated; border-radius:4px}
+.pcardm img:not(.pico){width:44px; height:44px; image-rendering:pixelated; border-radius:4px}
 .pcardm b{font-size:.82rem} .pcardm .c{font-size:.66rem; color:var(--ink3)}
 
 /* ============ memorias del server ============ */
