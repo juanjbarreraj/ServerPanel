@@ -81,8 +81,60 @@ def save_users(users: dict):
         os.chmod(tmp, 0o600)
         tmp.replace(USERS_F)
 
+def _rotar(path: Path, limite_mb=5):
+    """Si el fichero pasa del límite, lo aparta a .1 y empieza uno nuevo.
+
+    Sin esto, audit.log crece para siempre: el panel está en internet y cada
+    intento de entrar (los buenos y los de los robots que rastrean puertos)
+    escribe una línea. Se guarda UNA generación anterior, así que el techo son
+    ~2x el límite y nunca hay que acordarse de vaciar nada.
+    """
+    try:
+        if path.exists() and path.stat().st_size > limite_mb * 1024 * 1024:
+            path.replace(path.with_suffix(path.suffix + ".1"))
+    except Exception:
+        pass
+
+# ---------------------------------------------------------------- salud
+# Los hilos de fondo (feed, skins) llevaban un `except Exception: pass` pelado.
+# Si el feed empezaba a fallar, la Historia se congelaba y NADA lo decía: ni un
+# aviso, ni una línea en el registro, y /api/feed seguía contestando que todo
+# iba bien con eventos viejos. Estando el server solo semanas, eso es justo el
+# fallo que no te enteras de que tienes.
+#
+# Cada automatismo apunta aquí cuándo corrió por última vez y si fue bien. La
+# pestaña Sistema lo enseña, así que se ve de un vistazo si algo lleva parado.
+_salud_estado = {}
+def _salud(que, ok=True, nota=""):
+    antes = _salud_estado.get(que)
+    _salud_estado[que] = {"ok": bool(ok), "t": time.time(), "nota": (nota or "")[:200]}
+    if antes is None or antes.get("ok") != bool(ok):
+        try:
+            _syslog(f"[salud] {que}: " + ("vuelve a ir bien" if ok else f"FALLA — {nota}"))
+        except Exception:
+            pass
+
+def _limpiar_papelera(carpeta: Path, dias=90, maximo=100):
+    """Las papeleras de fotos y plugins guardaban lo borrado PARA SIEMPRE.
+
+    Borrar una foto de 12 MB no liberaba ni un byte: solo la movía a
+    `_removed/`. Se mantiene la red de seguridad, pero con fecha de caducidad.
+    """
+    try:
+        if not carpeta.is_dir():
+            return
+        fs = sorted((p for p in carpeta.iterdir() if p.is_file()),
+                    key=lambda p: p.stat().st_mtime, reverse=True)
+        limite = time.time() - dias * 86400
+        for i, p in enumerate(fs):
+            if i >= maximo or p.stat().st_mtime < limite:
+                p.unlink(missing_ok=True)
+    except Exception:
+        pass
+
 def audit(user: str, action: str):
     line = f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {user}: {action}\n"
+    _rotar(AUDIT_F)
     with open(AUDIT_F, "a") as f:
         f.write(line)
 
@@ -161,8 +213,19 @@ def require(perm=None):
 _attempts = {}
 def rate_limited(ip: str) -> bool:
     now = time.time()
+    # Limpieza general: antes solo se podaba la IP que volvía a llamar, así que
+    # cada IP distinta que tocara el login dejaba una entrada para siempre. En
+    # un panel abierto a internet eso es memoria que solo sube. Al pasar de 500
+    # IPs se barren de golpe las que ya no tienen intentos vivos.
+    if len(_attempts) > 500:
+        for k in [k for k, v in _attempts.items()
+                  if not v or now - max(v) >= 300]:
+            _attempts.pop(k, None)
     lst = [t for t in _attempts.get(ip, []) if now - t < 300]
-    _attempts[ip] = lst
+    if lst:
+        _attempts[ip] = lst
+    else:
+        _attempts.pop(ip, None)      # sin intentos vivos, no ocupa sitio
     return len(lst) >= 8
 
 # ------------------------------------------------------------------ rcon
@@ -232,11 +295,40 @@ def service_state() -> str:
     except Exception:
         return "unknown"
 
+# La versión de Minecraft estaba escrita a mano ("26.2") y por tanto quedaba
+# mentirosa en cuanto el server se actualizara. Se saca del nombre del jar, que
+# es la única fuente que no se puede olvidar de cambiar.
+_ver_cache = {"t": 0, "val": None}
+def mc_version() -> str:
+    if time.time() - _ver_cache["t"] < 600 and _ver_cache["val"]:
+        return _ver_cache["val"]
+    v = None
+    try:
+        jars = sorted(MC_DIR.glob("versions/*/server-*.jar")) or \
+               sorted(MC_DIR.glob("paper-*.jar"))
+        for j in reversed(jars):
+            m = re.search(r"(?:server-|paper-)([\d.]+[\w.-]*?)(?:-\d+)?\.jar$", j.name)
+            if m:
+                v = m.group(1).rstrip("-")
+                break
+        if not v:
+            # respaldo: el nombre de la carpeta de versión
+            dirs = sorted(p.name for p in (MC_DIR / "versions").glob("*") if p.is_dir())
+            v = dirs[-1] if dirs else None
+    except Exception:
+        v = None
+    _ver_cache.update(t=time.time(), val=v or "?")
+    return _ver_cache["val"]
+
 def proc_metrics() -> dict:
     # memory of java process + system cpu
     mem_used_mb = None
     try:
-        pids = subprocess.run(["pgrep", "-f", "server.jar"], capture_output=True, text=True).stdout.split()
+        # con timeout: era el único subprocess del fichero sin él, y lo llama
+        # /api/status, que cada pestaña abierta pide cada 10 s. Un pgrep colgado
+        # dejaba ese hilo bloqueado para siempre, sin excepción que capturar.
+        pids = subprocess.run(["pgrep", "-f", "server.jar"], capture_output=True,
+                              text=True, timeout=5).stdout.split()
         if pids:
             rss = 0
             for pid in pids:
@@ -585,7 +677,7 @@ def api_status():
         "online": players or [],
         "max_players": int(props.get("max-players", 0) or 0),
         "motd": props.get("motd", "").replace("\\n", " "),
-        "version": "26.2",
+        "version": mc_version(),
         "view_distance": props.get("view-distance"),
         "simulation_distance": props.get("simulation-distance"),
         "difficulty": props.get("difficulty"),
@@ -1476,6 +1568,16 @@ def api_player_remove(uuid):
     shutil_backup = str(path) + f".bak-{int(time.time())}"
     import shutil as _sh
     _sh.copy2(path, shutil_backup)
+    # Estas copias viven DENTRO de world/, así que además de ocupar disco se
+    # cuelan en cada copia de seguridad del mundo. Se guardan las 3 últimas de
+    # cada jugador y las demás fuera.
+    try:
+        previas = sorted(path.parent.glob(path.name + ".bak-*"),
+                         key=lambda p: p.stat().st_mtime, reverse=True)
+        for viejo in previas[3:]:
+            viejo.unlink(missing_ok=True)
+    except Exception:
+        pass
     _n.save(path, nm, root, gz=True)
     _n.load(path)  # verify it still parses
     audit(u["name"], f"removed item (offline) from {pname} {where}[{slot}]" + (f" inside[{nested}]" if nested is not None else ""))
@@ -1552,6 +1654,7 @@ def api_plugins_delete():
     trash = PLUGIN_DIR / "_removed"
     trash.mkdir(exist_ok=True)
     src.rename(trash / f"{int(time.time())}-{name}")
+    _limpiar_papelera(trash, dias=90, maximo=20)      # los jar pesan hasta 40 MB
     audit(u["name"], f"removed plugin {name}")
     return jsonify(ok=True, output=f"{name} quitado — se aplica al reiniciar")
 
@@ -1621,7 +1724,17 @@ def api_icon(iid):
     if not iid.endswith(".png"):
         abort(404)
     base = iid[:-4]
+    # Dos cosas que se arreglan aquí:
+    #  · la ruta /icons/ no pide contraseña, así que cualquiera podía llenar
+    #    este diccionario con nombres inventados. Al pasar de 4000 se vacía.
+    #  · los FALLOS se recordaban para siempre. Después de regenerar los iconos,
+    #    los que antes daban 404 seguían dando 404 hasta reiniciar el panel.
+    #    Ahora un fallo se recuerda solo 10 minutos.
+    if len(_icon_cache) > 4000:
+        _icon_cache.clear()
     hit = _icon_cache.get(base)
+    if isinstance(hit, tuple):                    # fallo recordado: (\"\", cuándo)
+        hit = "" if time.time() - hit[1] < 600 else None
     if hit is None:
         hit = ""
         r = ICONS_DIR / "render" / (base + ".png")   # render 3D del juego: prioridad
@@ -1636,7 +1749,7 @@ def api_icon(iid):
                         break
                 if hit:
                     break
-        _icon_cache[base] = hit
+        _icon_cache[base] = hit if hit else ("", time.time())
     if not hit:
         abort(404)
     return send_file(hit, max_age=604800)
@@ -1886,6 +1999,29 @@ JOIN_PATTERNS = [
     re.compile(r"Disconnecting .*?name=([A-Za-z0-9_]{2,16}).*?You are not white-?listed"),
 ]
 
+JOINREQ_MAX = 300         # cuántos nombres se guardan como mucho
+JOINREQ_DIAS = 60         # y durante cuánto, si nadie los ha tocado
+
+def _podar_joinreq(store, ahora):
+    """Deja el fichero con un tamaño de verdad.
+
+    El servidor está en internet y los robots que rastrean puertos intentan
+    entrar con nombres inventados: cada uno se quedaba aquí guardado PARA
+    SIEMPRE, y el fichero entero se lee y se reescribe cada vez que alguien abre
+    Moderación. Se conservan los pendientes recientes (que es lo que hay que
+    mirar) y se tiran los viejos y los ya resueltos.
+    """
+    limite = ahora - JOINREQ_DIAS * 86400
+    vivos = {n: e for n, e in store.items()
+             if e.get("status") == "pending" or e.get("last", 0) > limite}
+    if len(vivos) <= JOINREQ_MAX:
+        return vivos
+    # si aun así son demasiados, se quedan los más recientes
+    orden = sorted(vivos.items(),
+                   key=lambda kv: (kv[1].get("status") == "pending",
+                                   kv[1].get("last", 0)), reverse=True)
+    return dict(orden[:JOINREQ_MAX])
+
 def _scan_join_attempts():
     with _join_lock:
         store = json.loads(JOINREQ_F.read_text()) if JOINREQ_F.exists() else {}
@@ -1921,6 +2057,7 @@ def _scan_join_attempts():
             e["last"] = now
             if e["status"] == "dismissed":
                 e["status"] = "pending"
+        store = _podar_joinreq(store, now)
         JOINREQ_F.write_text(json.dumps(store))
         JOINSTATE_F.write_text(json.dumps(state))
         return store
@@ -2191,6 +2328,7 @@ def api_memories_delete():
     src = mdir / fname
     if src.exists():
         src.rename(trash / f"{int(time.time())}-{target}-{fname}")
+    _limpiar_papelera(trash, dias=60, maximo=150)     # fotos de hasta 15 MB
     tb = mthumbs / (Path(fname).stem + ".jpg")
     if tb.exists():
         tb.unlink()
@@ -2438,35 +2576,54 @@ def _skin_snapshot_loop():
             today = time.strftime("%Y-%m-%d")
             done = mark.read_text().strip() if mark.exists() else ""
             if done != today:
+                fallos = 0
                 for e in whitelist():
                     uid = (e.get("uuid") or "").lower()
                     if UUID_RE.match(uid):
-                        _skin_refresh(uid, force=True)
+                        # Cada jugador va en su propio try: antes, si Mojang
+                        # fallaba con UNO, la excepción salía del bucle, la marca
+                        # del día no se escribía y se repetía la vuelta entera
+                        # CADA HORA, sin que nadie se enterara.
+                        try:
+                            _skin_refresh(uid, force=True)
+                        except Exception:
+                            fallos += 1
                         time.sleep(2)
                 SKINS_DIR.mkdir(parents=True, exist_ok=True)
                 mark.write_text(today)
-        except Exception:
-            pass
+                _salud("skins", ok=True,
+                       nota=("%d skins no se pudieron leer" % fallos) if fallos else "")
+        except Exception as ex:
+            _salud("skins", ok=False, nota=str(ex)[:120])
         time.sleep(3600)
 
 threading.Thread(target=_skin_snapshot_loop, daemon=True).start()
 
 # ------------------------------------------------------------------ librería 3D (se auto-descarga en el servidor)
 def _fetch_libs():
+    """Baja la librería del muñeco 3D. Se reintenta unas cuantas veces.
+
+    Antes se probaba UNA vez al arrancar y ya. Al reiniciar la máquina, el panel
+    suele levantar antes de que haya red: la descarga fallaba, el visor 3D se
+    quedaba muerto en silencio y solo volvía reiniciando el panel a mano.
+    """
     import urllib.request
     dest = PANEL_DIR / "static" / "skinview3d.js"
-    if dest.exists() and dest.stat().st_size > 100_000:
-        return
-    for url in ("https://unpkg.com/skinview3d@3.4.1/bundles/skinview3d.bundle.js",
-                "https://cdn.jsdelivr.net/npm/skinview3d@3.4.1/bundles/skinview3d.bundle.js"):
-        try:
-            with urllib.request.urlopen(url, timeout=20) as r:
-                data = r.read()
-            if len(data) > 100_000:
-                dest.write_bytes(data)
-                return
-        except Exception:
-            continue
+    for intento in range(6):                       # ~0, 1, 2, 5, 10 y 20 minutos
+        if dest.exists() and dest.stat().st_size > 100_000:
+            return
+        for url in ("https://unpkg.com/skinview3d@3.4.1/bundles/skinview3d.bundle.js",
+                    "https://cdn.jsdelivr.net/npm/skinview3d@3.4.1/bundles/skinview3d.bundle.js"):
+            try:
+                with urllib.request.urlopen(url, timeout=20) as r:
+                    data = r.read()
+                if len(data) > 100_000:
+                    dest.write_bytes(data)
+                    return
+            except Exception:
+                continue
+        time.sleep([60, 60, 180, 300, 600, 600][intento])
+    _salud("libreria3d", ok=False, nota="no pude bajar skinview3d.js")
 
 threading.Thread(target=_fetch_libs, daemon=True).start()
 
@@ -2476,6 +2633,7 @@ _sys_lock = threading.Lock()
 _sys_busy = {}
 
 def _syslog(line):
+    _rotar(SYS_LOG, 2)
     with open(SYS_LOG, "a") as f:
         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {line}\n")
 
@@ -2498,10 +2656,19 @@ def _sys_run_bg(job, cmd, timeout=1800):
         finally:
             _sys_busy.pop(job, None)
     with _sys_lock:
-        if job in _sys_busy:
+        empezo = _sys_busy.get(job)
+        # Si el hilo murió sin pasar por su `finally` (o el arranque falló), la
+        # marca se quedaba puesta y ese trabajo NO se podía volver a lanzar
+        # hasta reiniciar el panel. Pasado su plazo más un margen, se suelta.
+        if empezo and time.time() - empezo < timeout + 300:
             return False
         _sys_busy[job] = time.time()
-    threading.Thread(target=worker, daemon=True).start()
+    try:
+        threading.Thread(target=worker, daemon=True).start()
+    except Exception:
+        with _sys_lock:
+            _sys_busy.pop(job, None)
+        raise
     return True
 
 def _require_admin():
@@ -2525,8 +2692,56 @@ def api_system_status():
     return jsonify(busy=list(_sys_busy.keys()), log=lines,
                    pin_set=bool(s.get("public_pin")),
                    engine=engine_kind(),
+                   version=mc_version(),
                    skinlib=(PANEL_DIR / "static" / "skinview3d.js").exists(),
-                   totp_on=bool(users.get(u["name"], {}).get("totp")))
+                   totp_on=bool(users.get(u["name"], {}).get("totp")),
+                   automatismos=_automatismos())
+
+def _automatismos():
+    """Estado de todo lo que se actualiza SOLO, para verlo de un vistazo.
+
+    La idea es que, con el server desatendido semanas, baste con abrir Sistema
+    para saber si algo lleva parado. Cada entrada trae cuándo funcionó por
+    última vez y cuánto puede tardar como mucho antes de considerarse dormido.
+    """
+    ahora = time.time()
+    def _mtime(p):
+        try:
+            return p.stat().st_mtime
+        except Exception:
+            return 0
+
+    salidas = []
+    def añadir(clave, nombre, ultimo, margen, nota=""):
+        salidas.append({"id": clave, "nombre": nombre,
+                        "ultimo": ultimo or 0,
+                        "edad": (ahora - ultimo) if ultimo else None,
+                        "ok": bool(ultimo) and (ahora - ultimo) < margen,
+                        "margen": margen, "nota": nota})
+
+    f = _salud_estado.get("feed", {})
+    añadir("feed", "Historia (lee el log cada 20 s)",
+           f.get("t"), 300, "" if f.get("ok", True) else f.get("nota", ""))
+
+    añadir("mapa", "Mapa de BlueMap (cada noche)",
+           _mtime(Path.home() / "bluemap/render.log"), 36 * 3600)
+    añadir("estructuras", "Iconos de estructuras (cada noche)",
+           _mtime(DATA_DIR / "structures-cache.json"), 36 * 3600)
+
+    sk = _salud_estado.get("skins", {})
+    añadir("skins", "Fotos de las skins (una al día)",
+           _mtime(SKINS_DIR / "last_snapshot.txt") or sk.get("t"), 50 * 3600,
+           "" if sk.get("ok", True) else sk.get("nota", ""))
+
+    cop = None
+    try:
+        cs = sorted((MC_DIR / "backups").glob("world-*.tar.gz"),
+                    key=lambda p: p.stat().st_mtime)
+        cop = cs[-1].stat().st_mtime if cs else 0
+    except Exception:
+        cop = 0
+    añadir("copias", "Copia de seguridad del mundo", cop, 8 * 86400)
+    return salidas
 
 @app.post("/api/system/set_pin")
 def api_system_set_pin():
@@ -3144,11 +3359,19 @@ def _feed_loop():
         threading.Thread(target=feed_relleno, daemon=True).start()
     except Exception:
         pass
+    seguidos = 0
     while True:
         try:
             feed_scan()
-        except Exception:
-            pass
+            seguidos = 0
+            _salud("feed", ok=True)
+        except Exception as ex:
+            # Antes esto era un `pass` mudo. Si el feed empezaba a fallar, la
+            # Historia se congelaba y no había ni una pista de por qué.
+            seguidos += 1
+            _salud("feed", ok=False, nota=f"{type(ex).__name__}: {ex}")
+            if seguidos in (1, 5, 30) or seguidos % 180 == 0:
+                _syslog(f"[feed] fallo #{seguidos}: {type(ex).__name__}: {ex}")
         time.sleep(20)
 
 threading.Thread(target=_feed_loop, daemon=True).start()
@@ -3484,6 +3707,16 @@ def api_system_backup_extras():
     if u["role"] != "admin":
         abort(403)
     import tarfile
+    # Cada clic dejaba un .tar.gz nuevo en /tmp con TODO data/ y memories/
+    # dentro, y nadie los borraba nunca. Con álbumes de fotos de por medio eso
+    # llena el disco de la caja a base de descargas. Se barren los de más de
+    # una hora antes de crear el siguiente.
+    try:
+        for viejo in Path("/tmp").glob("panel-extras-*.tar.gz"):
+            if time.time() - viejo.stat().st_mtime > 3600:
+                viejo.unlink()
+    except Exception:
+        pass
     out = Path(f"/tmp/panel-extras-{int(time.time())}.tar.gz")
     with tarfile.open(out, "w:gz") as tar:
         tar.add(DATA_DIR, arcname="data")

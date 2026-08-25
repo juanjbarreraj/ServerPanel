@@ -34,6 +34,13 @@ if ! flock -n 9; then
   exit 0
 fi
 
+# El registro es compartido con render-mapa.sh, que lo rota a los 5 MB. Este
+# script también escribe en él, así que rota igual: si no, corriéndolo a menudo
+# el fichero podía crecer entre renders sin que nadie lo mirara.
+if [ -f "$LOG" ] && [ "$(stat -c%s "$LOG")" -gt 5000000 ]; then
+  mv -f "$LOG" "$LOG.1"
+fi
+
 decir() {
   local linea="[$(date '+%F %T')] $*"
   echo "$linea" >> "$LOG"

@@ -980,6 +980,10 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
       </div>
     </div>
     <div class="card" style="margin-bottom:14px">
+      <h3><img class="hico" src="/static/ui/s-reiniciar.png?v=14" alt="" onerror="this.outerHTML='🔄 '">Lo que se actualiza solo</h3>
+      <div id="sys-auto" class="note">cargando…</div>
+    </div>
+    <div class="card" style="margin-bottom:14px">
       <h3><img class="hico" src="/static/ui/s-herramientas.png?v=14" alt="" onerror="this.outerHTML='🧰 '">Operaciones</h3>
       <div class="actions">
         <button class="btn small" onclick="sysOp('regen_icons','¿Regenerar todos los íconos? (1-2 min)')"><img class="bico" src="/static/ui/s-paleta.png?v=14" alt="" onerror="this.outerHTML='🎨 '">Regenerar íconos</button>
@@ -2466,7 +2470,9 @@ async function loadSistema(){
     `PIN público: <b>${r.pin_set?'configurado ✓':'⚠️ SIN CONFIGURAR'}</b> · `+
     `Motor: <b>${r.engine==='paper'?'Paper (plugins ✓)':'Vanilla'}</b> · `+
     `Librería 3D: <b>${r.skinlib?'lista ✓':'descargando…'}</b> · `+
+    `Versión: <b>${esc(r.version||'?')}</b> · `+
     `Tareas activas: <b>${r.busy.length?r.busy.join(', '):'ninguna'}</b>`;
+  sysAuto(r.automatismos||[]);
   $('sys-log').textContent = (r.log||[]).join('\n') || 'Nada todavía';
   const w=$('sys-2fa');
   if (r.totp_on){
@@ -2477,6 +2483,29 @@ async function loadSistema(){
     w.innerHTML=`<div class="note" style="margin-top:0">Tu cuenta es la llave maestra del server — actívalo.</div>
       <button class="btn small" style="margin-top:10px" onclick="sys2faStart()">Activar 2FA</button>`;
   }
+}
+/* Semáforo de los automatismos: verde = corrió hace poco, rojo = lleva
+   dormido más de lo que debería. Con el server desatendido, esto es lo que
+   evita enterarse tarde de que algo dejó de actualizarse. */
+function sysAuto(lista){
+  const caja=$('sys-auto'); if(!caja) return;
+  if(!lista.length){ caja.textContent='—'; return; }
+  const cuando=s=>{
+    if(s===null||s===undefined) return 'nunca';
+    if(s<90) return 'ahora mismo';
+    if(s<3600) return 'hace '+Math.round(s/60)+' min';
+    if(s<172800) return 'hace '+Math.round(s/3600)+' h';
+    return 'hace '+Math.round(s/86400)+' días';
+  };
+  caja.innerHTML = lista.map(a=>{
+    const col = a.ok ? 'var(--good)' : 'var(--crit)';
+    const nota = a.nota ? ` — <span style="color:var(--crit)">${esc(a.nota)}</span>` : '';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0">
+      <span class="dot" style="background:${col};margin:0"></span>
+      <span style="flex:1;min-width:0">${esc(a.nombre)}</span>
+      <span style="color:${a.ok?'var(--ink3)':'var(--crit)'};white-space:nowrap">${cuando(a.edad)}</span>
+      </div>${nota?`<div style="padding-left:18px">${nota}</div>`:''}`;
+  }).join('');
 }
 async function sys2faStart(){
   const r=await api('/api/2fa/setup',{});

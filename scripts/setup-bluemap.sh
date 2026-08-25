@@ -69,8 +69,17 @@ CADDY
 sudo systemctl reload caddy
 
 echo "== 4/6 · Re-render automático cada noche (09:00 UTC, tras el backup) =="
+# OJO: una sola línea que llame a render-mapa.sh, NUNCA los comandos sueltos.
+# La versión antigua de este fichero escribía scan + `-r` + parche a mano, y le
+# faltaban dos cosas que costaron caro:
+#   · `--markers`, sin el cual las estructuras nuevas se escanean pero NO se ven
+#   · el candado flock, sin el cual el cron podía chocar con el botón del panel
+# render-mapa.sh hace las dos. Volver a correr este instalador ya no rompe nada.
 sudo tee /etc/cron.d/bluemap-render >/dev/null <<'CRON'
-0 9 * * * ubuntu python3 /home/ubuntu/panel/scripts/scan-structures.py >> /home/ubuntu/bluemap/render.log 2>&1; cd /home/ubuntu/bluemap && nice -n 19 ionice -c3 java -Xmx1536M -jar bluemap-cli.jar -r >> render.log 2>&1; bash /home/ubuntu/panel/scripts/parche-bluemap.sh >> /home/ubuntu/bluemap/render.log 2>&1
+MAILTO=""
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0 9 * * * ubuntu /bin/bash /home/ubuntu/panel/scripts/render-mapa.sh
 CRON
 
 echo "== 5/6 · Render inicial (en segundo plano, tarda HORAS la primera vez) =="
