@@ -24,7 +24,11 @@ ICON_SRC = PANEL / "static/markers"
 ICON_DST = BLUEMAP / "web/assets/markers"
 OUT_JSON = PANEL / "data/structures.json"
 MANUAL_JSON = PANEL / "data/markers.json"       # marcadores puestos a mano desde el panel
-ICON_PX = 28                                     # tamaño del icono sobre el mapa
+# Tamaño con el que se VEN los marcadores sobre el mapa. Los ficheros de
+# static/markers/ son de 64 px nativos y ahora se copian tal cual, sin reducir:
+# BlueMap dibuja el icono a su tamaño natural, así que el tamaño de pantalla lo
+# fija el CSS de static/biomas.js (`.mk-hd`). Ver copy_icons() para el porqué.
+ICON_PX = 32
 
 # Minecraft 26.2 guarda TODAS las dimensiones en world/dimensions/minecraft/<dim>/region
 # (ya no existen world/region, world/DIM-1 ni world/DIM1). Se prueba el layout nuevo
@@ -238,9 +242,13 @@ def esc(s):
 
 def poi(mid, label, x, y, z, icon, detalle, max_dist, listed=True):
     a = ICON_PX // 2
+    # `classes` está documentado en BlueMap y es lo que nos da un asidero fiable
+    # para el CSS: static/biomas.js usa `.mk-hd` para enseñar los iconos de 64 px
+    # a 32 y que se vean nítidos en pantallas retina.
     return (f'    {mid}: {{ type: "poi", label: "{esc(label)}", '
             f'position: {{ x: {x}, y: {y}, z: {z} }}, '
             f'icon: "assets/markers/{icon}.png", anchor: {{ x: {a}, y: {a} }}, '
+            f'classes: ["mk-hd"], '
             f'detail: "{esc(detalle)}", '
             f'min-distance: 0, max-distance: {max_dist}, '
             f'listed: {"true" if listed else "false"} }}\n')
@@ -310,18 +318,30 @@ def write_config(conf_path, block):
     conf_path.write_text(txt.rstrip() + "\n\n" + block)
 
 def copy_icons():
+    """Copia los iconos TAL CUAL, sin reducirlos.
+
+    Antes se reducían de 64 a 28 px con LANCZOS y se veían borrosos. Dos motivos
+    encadenados:
+
+      1. LANCZOS reduciendo 64→28 (ni siquiera es una división entera) emborrona
+         los bordes duros del dibujo antes de que salga del servidor;
+      2. en una pantalla retina, esos 28 px se pintan sobre 56 puntos físicos, o
+         sea que el navegador AMPLÍA al doble una imagen ya machacada.
+
+    Sirviendo los 64 px nativos y dejando que el CSS los enseñe a 32, la retina
+    pinta 64 puntos físicos desde una imagen de 64: uno por uno, sin inventarse
+    nada. En una pantalla normal el navegador reduce 64→32, que es una división
+    exacta y sale limpia.
+    """
     if not ICON_SRC.is_dir():
         print("  (sin iconos en", ICON_SRC, ")"); return
     ICON_DST.mkdir(parents=True, exist_ok=True)
-    try:
-        from PIL import Image
-        for p in ICON_SRC.glob("*.png"):
-            Image.open(p).resize((ICON_PX, ICON_PX), Image.LANCZOS).save(ICON_DST / p.name)
-    except Exception:
-        import shutil
-        for p in ICON_SRC.glob("*.png"):
-            shutil.copy(p, ICON_DST / p.name)
-    print(f"  iconos → {ICON_DST}")
+    import shutil
+    n = 0
+    for p in ICON_SRC.glob("*.png"):
+        shutil.copy2(p, ICON_DST / p.name)
+        n += 1
+    print(f"  {n} iconos a resolución nativa → {ICON_DST}")
 
 def main():
     dry = "--dry" in sys.argv

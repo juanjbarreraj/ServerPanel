@@ -129,7 +129,34 @@ h1.brand{font-size:1rem; letter-spacing:.06em; margin-bottom:6px; line-height:1.
 
 /* ============ shell ============ */
 #app{display:none; max-width:1200px; margin:0 auto; padding:18px 18px 70px}
-header.top{position:sticky; top:12px; z-index:30; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+/* ============ barra de arriba pegajosa ============
+   El encabezado y las pestañas van juntos en #topbar y se quedan arriba al
+   bajar. Al bajar se ENCOGEN (no se esconden: todas las pestañas siguen ahí) y
+   al subir vuelven a su tamaño. La clase .compacto la pone y la quita el JS.
+
+   Va en el envoltorio y no en el <header>, que era el que llevaba el sticky:
+   así las pestañas viajan con él en vez de irse por arriba. */
+#topbar{position:sticky; top:0; z-index:40; padding-top:12px; margin:-12px -4px 0; padding-inline:4px;
+  background:linear-gradient(180deg, rgba(10,13,17,.92) 62%, rgba(10,13,17,0));
+  transition:padding-top .25s ease}
+#topbar.compacto{padding-top:6px}
+
+/* Lo que se encoge. Todo con transición para que no dé un salto. */
+#topbar.compacto header.top{padding:6px 14px; margin-bottom:8px; gap:10px}
+#topbar.compacto header.top img.icon{width:34px; height:34px}
+#topbar.compacto .t .sub{max-height:0; opacity:0; margin:0; overflow:hidden}  /* el motd, que es lo prescindible */
+#topbar.compacto nav.tabs{padding:4px; margin-bottom:12px}
+#topbar.compacto .tabslot{width:52px; padding:4px 3px 3px}
+#topbar.compacto .tabslot .tico img{width:22px; height:22px}
+#topbar.compacto .tlab{font-size:.5rem}
+header.top,nav.tabs,.tabslot,.tabslot .tico img,.tlab,.t .sub{
+  transition:padding .25s ease, margin .25s ease, width .25s ease, height .25s ease,
+             font-size .25s ease, max-height .25s ease, opacity .2s ease, gap .25s ease}
+@media(prefers-reduced-motion:reduce){
+  #topbar,#topbar *{transition:none !important}
+}
+
+header.top{z-index:30; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
   padding:12px 18px; margin-bottom:16px; border-radius:7px;
   background:linear-gradient(180deg, rgba(38,44,52,.66), rgba(18,22,27,.72));
   border:2px solid rgba(0,0,0,.66);
@@ -185,7 +212,9 @@ section{animation:fadeUp .45s var(--spring)}
 
 /* ============ tiles & grids ============ */
 .grid{display:grid; gap:14px}
-.tiles{grid-template-columns:repeat(auto-fit,minmax(185px,1fr))}
+/* 150 en vez de 185: con 185 las cuatro tarjetas caían a UNA columna por
+   debajo de 420 px y ocupaban cuatro pantallazos. Con 150 siguen en dos. */
+.tiles{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
 .tile{display:flex; align-items:center; gap:14px}
 .tile .ti{width:44px; height:44px; flex:none; padding:8px; image-rendering:pixelated;
   background:var(--slotbg); border-radius:5px;
@@ -229,12 +258,12 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   box-shadow:0 0 0 2px rgba(0,0,0,.55)}
 
 /* ============ console ============ */
-.console{background:rgba(4,6,8,.78); border-radius:5px; height:420px;
+.console{background:rgba(4,6,8,.78); border-radius:5px; height:min(420px, 55vh);
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.6), inset -2px -2px 0 rgba(255,255,255,.06);
   overflow-y:auto; padding:14px; font-family:"SF Mono",Menlo,Consolas,monospace; font-size:.78rem;
   line-height:1.55; color:#b8e0a8; white-space:pre-wrap; word-break:break-all}
 .cmdrow{display:flex; gap:8px; margin-top:12px}
-.cmdrow input{flex:1; padding:11px 13px; background:rgba(5,7,9,.72); border:2px solid rgba(0,0,0,.7);
+.cmdrow input{flex:1; min-width:0; padding:11px 13px; background:rgba(5,7,9,.72); border:2px solid rgba(0,0,0,.7);
   border-radius:4px; color:var(--ink); font-family:"SF Mono",Menlo,monospace;
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.07)}
 .cmdrow input:focus{outline:none; box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), 0 0 0 2px var(--slime)}
@@ -356,7 +385,12 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .mcpanel .pc-head .u{color:#6a6a6a}
 .mcpanel .pc-head .n{color:#1d1d1d}
 .mcpanel .xplab{color:#2f7d24}
-.mcpanel .slotgrid{gap:0; grid-template-columns:repeat(9,var(--cell)); justify-content:start}
+/* minmax(0,1fr) en vez de 9 celdas fijas: con un tamaño fijo, las 9 columnas
+   pedían 396 px dentro de un panel de 348 y la última quedaba FUERA de la
+   pantalla. Así encogen con el panel y siempre se ven las nueve. El máximo
+   las deja como estaban cuando hay sitio. */
+.mcpanel .slotgrid{gap:0; grid-template-columns:repeat(9,minmax(0,1fr)); justify-content:stretch}
+.mcpanel .slot{max-width:var(--cell)}
 .mcpanel .slot{width:var(--cell); height:var(--cell); aspect-ratio:auto; background:#8B8B8B; border:0; border-radius:0;
   box-shadow:inset 2px 2px 0 #373737, inset -2px -2px 0 #FFFFFF}
 .mcpanel .slot.has:hover{transform:scale(1.15);
@@ -381,7 +415,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .mcbody img{height:92%; image-rendering:auto; filter:drop-shadow(0 0 6px rgba(255,255,255,.15))}
 .pc-side{flex:1; min-width:220px}
 @font-face{font-family:'MCFont'; src:url('/static/mcfont.ttf'); font-display:swap}
-.mctip{position:fixed; z-index:99; pointer-events:none; display:none; max-width:340px;
+.mctip{position:fixed; z-index:99; pointer-events:none; display:none; max-width:min(340px, calc(100vw - 24px));
   background:rgba(16,0,16,.96); color:#fff; padding:8px 12px;
   font-family:'MCFont','Press Start 2P',monospace; font-size:13px; font-weight:400;
   border:2px solid #2D0A63; outline:2px solid rgba(80,0,255,.4); border-radius:3px; line-height:1.5;
@@ -394,7 +428,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   -webkit-mask:var(--mk) center/contain no-repeat; mask:var(--mk) center/contain no-repeat;
   image-rendering:pixelated}
 @keyframes glintmove{from{background-position:0 0} to{background-position:128px -128px}}
-@media(max-width:430px){.mcpanel{--cell:36px}}
+@media(max-width:520px){.mcpanel{--cell:40px}}
 
 /* ============ plugins ============ */
 /* 24 px, un punto más que las cabeceras: el texto de esta zona va a 1 rem y el
@@ -478,7 +512,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 #pgrid{grid-template-columns:repeat(auto-fill,minmax(185px,1fr))}
 #mk-list{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
 #mk-list .pcardm b{white-space:nowrap}
-#mk-list .pcardm .c{white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block}
+#mk-list .pcardm .c{white-space:normal; overflow-wrap:anywhere; display:block}
 #mk-list .pcardm button{margin-left:auto; flex:none}
 .pv-tiles{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
 /* :not(.pico) — la cara del jugador, NO el iconito de la estadística. Sin esto
@@ -617,7 +651,10 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .frame:hover .photo img{transform:scale(1.06)}
 .frame .cap{margin-top:8px; background:rgba(16,0,16,.92); border:2px solid #2D0A63; border-radius:3px;
   padding:6px 9px; font-size:.78rem; font-weight:700; color:#fff; overflow:hidden; white-space:nowrap; text-overflow:ellipsis}
-.frame .cap .by{display:block; color:#c8a4ff; font-weight:500; font-size:.66rem; margin-top:2px}
+/* Los puntos suspensivos del padre no llegaban aquí porque .by es un bloque:
+   se cortaba a mitad de palabra y se perdían quién la subió y la fecha. */
+.frame .cap .by{display:block; color:#c8a4ff; font-weight:500; font-size:.66rem; margin-top:2px;
+  overflow:hidden; white-space:nowrap; text-overflow:ellipsis}
 .frame.add{display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:220px;
   color:#e8d6b8; text-align:center; gap:8px}
 .frame.add .plus{font-size:2.2rem; width:64px; height:64px; display:flex; align-items:center; justify-content:center;
@@ -640,6 +677,62 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .vnav.prev{left:14px} .vnav.next{right:14px}
 @media(max-width:640px){.memgrid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px}
   .frame.add{min-height:160px}}
+/* ================================================================
+   MÓVIL Y TABLET
+   Todo lo de aquí sale de medir el panel real a 1024/820/768/600/430/390/360,
+   pestaña por pestaña, no de suponer. Cada regla arregla algo que se midió.
+   ================================================================ */
+
+/* --- tablet: el encabezado se partía en dos filas y comía pantalla --- */
+@media(max-width:900px){
+  #app{padding:14px 13px 60px}
+  header.top{padding:10px 13px; gap:11px}
+  header.top img.icon{width:44px; height:44px}
+  #topbar.compacto header.top img.icon{width:30px; height:30px}
+  .t h1{font-size:.68rem}
+  .t .sub{font-size:.74rem}
+  .userchip{order:9; width:100%; text-align:center; font-size:.78rem}
+  /* compacta en pantalla pequeña: el saludo se va, que ocupa una fila entera
+     y no dice nada que no sepas. Vuelve en cuanto subes. */
+  #topbar.compacto .userchip{display:none}
+}
+
+/* --- pestañas: en el móvil NO caben las 11 en una fila (medido: pedían 768 px
+       dentro de 320). Antes se desplazaban a un lado y 5 quedaban escondidas
+       sin ninguna pista. Ahora se reparten en dos filas y se ven todas. --- */
+@media(max-width:860px){
+  nav.tabs{flex-wrap:wrap; justify-content:center; overflow-x:visible; width:auto; padding:6px}
+  .tabslot{width:58px; padding:6px 3px 4px}
+  .tabslot .tico{height:24px} .tabslot .tico img{width:24px; height:24px}
+  .tlab{font-size:.52rem}
+  /* compacta en el móvil = solo iconos: dos filas de 34 px en vez de 56 */
+  #topbar.compacto .tabslot{width:44px; padding:5px 3px}
+  #topbar.compacto .tlab{display:none}
+  #topbar.compacto .tabslot .tico img{width:22px; height:22px}
+}
+
+/* --- zonas de toque: .btn.small medía 32 px de alto en TODO el panel, por
+       debajo de los 40 que hacen falta para acertar con el dedo --- */
+@media(max-width:600px){
+  .btn.small{padding:11px 15px; font-size:.78rem}
+  .iconbtn{min-width:40px; min-height:40px; display:inline-flex;
+    align-items:center; justify-content:center}
+  .formrow input,.formrow select,.efrow input,.efrow select{padding:12px 13px}
+  select#psort,.sunk select,select.sunk{min-height:42px}
+  .card{padding:16px 14px}
+  h3{font-size:.72rem}
+  /* las flechas del visor de fotos tapaban ~15 px de la imagen por cada lado;
+     abajo no estorban */
+  .vnav{top:auto; bottom:16px; transform:none; width:54px; height:46px}
+  .vnav:hover{transform:scale(1.08)}
+}
+
+/* --- móvil estrecho --- */
+@media(max-width:400px){
+  #app{padding:12px 10px 56px}
+  .tabslot{width:48px}
+  .memgrid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
+}
 </style>
 </head>
 <body>
@@ -697,6 +790,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 
 <!-- APP -->
 <div id="app">
+ <div id="topbar">
   <header class="top">
     <img class="icon" id="hdr-logo" src="/static/favicon-192.png" alt="Califree" onerror="this.style.display='none'">
     <div class="t">
@@ -714,6 +808,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   </header>
 
   <nav class="tabs" id="tabs"></nav>
+ </div>
 
   <!-- DASHBOARD -->
   <section id="tab-dash">
@@ -755,9 +850,9 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <div class="card" id="pgrid-card">
       <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; justify-content:space-between">
         <h3 style="margin:0" data-i18n="players_book">Libro de jugadores</h3>
-        <div style="display:flex; align-items:center; gap:8px">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0">
           <span class="lab" data-i18n="sort_by">Ordenar por</span>
-          <select id="psort" class="sunk" onchange="psortChange()"></select>
+          <select id="psort" class="sunk" style="max-width:100%" onchange="psortChange()"></select>
         </div>
       </div>
       <div class="pgrid" id="pgrid"></div>
@@ -809,7 +904,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- MAPA -->
   <section id="tab-map" class="hidden">
     <div class="card" style="padding:10px">
-      <iframe id="map-frame" title="Mapa del mundo" style="width:100%; height:calc(100vh - 250px); min-height:480px; border:0; border-radius:8px; background:#04060a"></iframe>
+      <iframe id="map-frame" title="Mapa del mundo" style="width:100%; height:calc(100vh - 250px); min-height:min(480px, 70vh); border:0; border-radius:8px; background:#04060a"></iframe>
       <div class="note" style="margin:8px 4px 2px" data-i18n="map_note">El mundo real en 3D — arrastra para girar, rueda para acercar. Se actualiza cada noche con lo que construyeron en el día.</div>
     </div>
     <div class="card hidden" id="map-mk" style="margin-top:14px">
@@ -945,7 +1040,8 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- MEMORIAS DEL SERVER -->
   <section id="tab-memories" class="hidden">
     <div class="card">
-      <h3 data-i18n="mem_title">🖼️ Memorias del server</h3>
+      <h3><img class="hico" src="/static/ui/s-camara.png?v=14" alt=""
+        onerror="this.outerHTML='🖼️ '"><span data-i18n="mem_title">Memorias del server</span></h3>
       <div class="memtabs" style="margin-top:12px">
         <button class="btn small" id="memtab-g" onclick="memMode('g')"><img class="bico"
           src="/static/ui/m-globales.png?v=1" alt="" onerror="this.outerHTML='🌍'"><span data-i18n="mem_global">Globales</span></button>
@@ -1148,7 +1244,7 @@ const I18N = {
   th_player:'Jugador', th_hours:'Horas', th_deaths:'Muertes', th_mobs:'Mobs', th_pvp:'PvP',
   th_km:'Km caminados', th_seen:'Última vez', online_tag:'(en línea)',
   now:'ahora mismo', min_ago:'hace {0} min', h_ago:'hace {0} h', d_ago:'hace {0} días',
-  mem_title:'🖼️ Memorias del server', mem_global:'Globales', mem_indiv:'Individuales',
+  mem_title:'Memorias del server', mem_global:'Globales', mem_indiv:'Individuales',
   mem_note:'El álbum del server — mira y comparte los mejores momentos.',
   mem_up:'Subir una foto nueva', mem_up_to:'Subir a la carpeta de {0}', mem_desc:'Descripción (obligatoria):',
   mem_by:'subida por', mem_back:'← Todas las carpetas', mem_photos:'foto(s)', mem_none:'Aún no hay fotos aquí',
@@ -1198,7 +1294,7 @@ const I18N = {
   th_player:'Player', th_hours:'Hours', th_deaths:'Deaths', th_mobs:'Mobs', th_pvp:'PvP',
   th_km:'Km walked', th_seen:'Last seen', online_tag:'(online)',
   now:'just now', min_ago:'{0} min ago', h_ago:'{0} h ago', d_ago:'{0} days ago',
-  mem_title:'🖼️ Server Memories', mem_global:'Global', mem_indiv:'Individual',
+  mem_title:'Server Memories', mem_global:'Global', mem_indiv:'Individual',
   mem_note:'The server album — browse and share the best moments.',
   mem_up:'Upload a new photo', mem_up_to:"Upload to {0}'s folder", mem_desc:'Description (required):',
   mem_by:'uploaded by', mem_back:'← All folders', mem_photos:'photo(s)', mem_none:'No photos here yet',
@@ -1403,6 +1499,33 @@ function buildTabs(){
     nav.appendChild(b);
   }
 }
+/* ---------- la barra de arriba se encoge al bajar y vuelve al subir ---------- */
+(function(){
+  let ultimo = 0, pendiente = false, bloqueado = 0;
+  function mirar(){
+    pendiente = false;
+    const b = document.getElementById('topbar');
+    if (!b) return;
+    const y = Math.max(0, window.scrollY), ahora = Date.now();
+    // Al encogerse la barra, la página entera se acorta y el navegador puede
+    // mover el scroll por su cuenta. Sin esta pausa, ese movimiento se lee como
+    // "el usuario ha subido" y la barra se pone a parpadear sola.
+    if (ahora < bloqueado){ ultimo = y; return; }
+    const compacta = b.classList.contains('compacto');
+    if (y < 70){
+      if (compacta){ b.classList.remove('compacto'); bloqueado = ahora + 350; }
+    } else if (!compacta && y > ultimo + 8){
+      b.classList.add('compacto'); bloqueado = ahora + 350;
+    } else if (compacta && y < ultimo - 8){       // basta con subir un poquito
+      b.classList.remove('compacto'); bloqueado = ahora + 350;
+    }
+    ultimo = y;
+  }
+  addEventListener('scroll', function(){
+    if (!pendiente){ pendiente = true; requestAnimationFrame(mirar); }
+  }, {passive:true});
+})();
+
 function show(id){
   for (const [t] of TABS){
     const sec=$('tab-'+t), btn=$('tabbtn-'+t);
@@ -2941,7 +3064,7 @@ async function efLimpiar(){
 /* El mapa va dentro de un <iframe>, así que sus mensajes de diagnóstico
    ([bioma] …) no salen en esta consola. El iframe los reenvía con postMessage
    y aquí se vuelven a imprimir, para poder depurar sin abrir /map/ aparte. */
-const MAP_SRC='/map/?v=6';   // sube el número igual que VER en parche-bluemap.sh
+const MAP_SRC='/map/?v=7';   // sube el número igual que VER en parche-bluemap.sh
 addEventListener('message', e=>{
   if (e.origin!==location.origin) return;
   const d=e.data;

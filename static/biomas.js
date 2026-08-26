@@ -91,7 +91,18 @@
       /* marcadores escondidos salvo en la vista plana (la clase la pone
          vigilarVista); el popup y los jugadores nunca se esconden */
       'body.bm-solo-plano [id^="bm-marker-"]:not([class*="popup"])' +
-      ':not([class*="player"]){display:none !important}';
+      ':not([class*="player"]){display:none !important}' +
+
+      /* ---- iconos nítidos ----
+         BlueMap dibuja el icono a su TAMAÑO NATURAL y no lo escala. Antes se
+         servían a 28 px, así que en una pantalla retina el navegador los
+         ampliaba al doble y se veían borrosos. Ahora se sirven los 64 px
+         nativos y se enseñan a 32: la retina pinta 64 puntos desde 64 píxeles,
+         uno por uno.
+         Dos reglas porque `classes` puede caer en el <img> o en un envoltorio
+         que lo contiene; con las dos, funciona en los dos casos. */
+      '.mk-hd,.mk-hd img{width:32px !important;height:32px !important}' +
+      '[id^="bm-marker-"] img{image-rendering:auto}';
     (document.head || document.documentElement).appendChild(css);
     log("estilos puestos (popup por encima de los marcadores)");
   }

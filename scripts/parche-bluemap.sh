@@ -21,7 +21,7 @@
 #  Corre EN EL SERVER:  bash ~/panel/scripts/parche-bluemap.sh
 # ============================================================
 set -e
-VER=6
+VER=7
 WEBDIR="/var/www/bluemap-web"
 INDEX="$WEBDIR/index.html"
 AJUSTES="$WEBDIR/settings.json"
