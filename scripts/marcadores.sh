@@ -53,19 +53,34 @@ case " $* " in *" --a-fondo "*) ARGS="--completo" ;; esac
 ARRANQUE=$(date +%s)
 decir "───────── iconos: inicio ─────────"
 
-decir "1/2 buscando estructuras${ARGS:+ (a fondo, sin caché)}…"
+decir "1/3 buscando estructuras${ARGS:+ (a fondo, sin caché)}…"
 if ! nice -n 19 ionice -c3 python3 "$PANEL/scripts/scan-structures.py" $ARGS 2>&1 | tee -a "$LOG"; then
   decir "⚠ el escaneo falló; no sigo"
   exit 1
 fi
 
-decir "2/2 publicando los marcadores en el mapa…"
+decir "2/3 publicando los marcadores en el mapa…"
 if nice -n 19 ionice -c3 java -Xmx1536M -jar bluemap-cli.jar --markers >> "$LOG" 2>&1; then
   decir "marcadores publicados"
 else
   CODIGO=$?
   decir "⚠ no pude publicar los marcadores (código $CODIGO)"
   exit "$CODIGO"
+fi
+
+# ---- 3/3 reaplicar el parche del mapa ----------------------------------------
+# ESTO FALTABA. El parche es el que inyecta la etiqueta de /static/biomas.js en
+# la página de BlueMap, con su ?v=N. Ahí vive el CSS que enseña los iconos de
+# 64 px a 32 y que hace nítidos los marcadores; sin reaplicarlo, la página del
+# mapa sigue pidiendo la versión vieja del fichero y los iconos salen al doble.
+#
+# Es exactamente el mismo despiste que ya tuvo el botón «Actualizar el mapa» en
+# su día: se arregló en render-mapa.sh y se repitió aquí al escribir el script.
+if [ -f "$PANEL/scripts/parche-bluemap.sh" ]; then
+  decir "3/3 reaplicando el parche del mapa…"
+  bash "$PANEL/scripts/parche-bluemap.sh" >> "$LOG" 2>&1 \
+    && decir "parche reaplicado" \
+    || decir "⚠ no pude reaplicar el parche del mapa"
 fi
 
 MINUTOS=$(( ($(date +%s) - ARRANQUE) / 60 ))
