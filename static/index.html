@@ -174,8 +174,24 @@ header.top img.icon:hover{transform:scale(1.15) rotate(-4deg)}
 .userchip b{color:var(--ink)}
 .iconbtn{background:transparent; border:0; font-size:.95rem; padding:4px 6px; border-radius:6px; transition:transform .3s var(--spring)}
 .iconbtn:hover{transform:scale(1.3) rotate(-8deg); background:rgba(255,255,255,.08)}
-.lapiz{width:15px; height:15px; image-rendering:pixelated; vertical-align:-2px; display:inline-block}
+.lapiz{width:15px; height:15px; image-rendering:auto; vertical-align:-2px; display:inline-block}
 
+/* ============ nitidez de los iconos ============
+   TODOS los ficheros de iconos del panel son de 64 px (static/ui/ y los que
+   genera get-icons.py, con CANVAS=64) y se enseñan entre 12 y 34 px. Eso es
+   siempre una REDUCCIÓN, y `image-rendering:pixelated` reduciendo tira filas
+   enteras de píxeles: unos detalles desaparecen y otros salen al doble de
+   grosor. Por eso se veían raros.
+
+   En el móvil casi no se notaba: con 3x de densidad, 22 px son 66 puntos
+   físicos, prácticamente los 64 del fichero, así que no hay casi nada que
+   tirar. En un PC sí.
+
+   La regla, entonces:
+     · REDUCIENDO (todos los iconos)      -> image-rendering:auto
+     · AMPLIANDO  (la cara del jugador,
+       44 px de lienzo, y .pc-head)       -> image-rendering:pixelated
+   ============================================== */
 /* ============ hotbar tabs ============ */
 /* `margin-inline:auto` y NO `justify-content:center`: la barra puede desbordar y
    hacer scroll horizontal en móvil, y centrar por flex cortaría las primeras
@@ -197,7 +213,7 @@ nav.tabs::-webkit-scrollbar{display:none}
 .tabslot:hover{transform:translateY(-3px); color:var(--ink)}
 .tabslot .tico{height:28px; display:flex; align-items:center; justify-content:center; font-size:22px;
   filter:drop-shadow(2px 2px 0 rgba(0,0,0,.55)); transition:transform .3s var(--spring)}
-.tabslot .tico img{width:28px; height:28px; image-rendering:pixelated}
+.tabslot .tico img{width:28px; height:28px; image-rendering:auto}
 .tabslot:hover .tico{transform:scale(1.18) rotate(-4deg)}
 .tabslot .tlab{font-size:.6rem; font-weight:800; letter-spacing:.02em; text-shadow:1px 1px 0 rgba(0,0,0,.8); white-space:nowrap}
 .tabslot.on{color:#fff; background:linear-gradient(180deg, rgba(111,212,78,.16), rgba(15,18,22,.6));
@@ -216,7 +232,7 @@ section{animation:fadeUp .45s var(--spring)}
    debajo de 420 px y ocupaban cuatro pantallazos. Con 150 siguen en dos. */
 .tiles{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
 .tile{display:flex; align-items:center; gap:14px}
-.tile .ti{width:44px; height:44px; flex:none; padding:8px; image-rendering:pixelated;
+.tile .ti{width:44px; height:44px; flex:none; padding:8px; image-rendering:auto;
   background:var(--slotbg); border-radius:5px;
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.55), inset -2px -2px 0 rgba(255,255,255,.10)}
 .tile .ti-e{width:44px; height:44px; flex:none; display:flex; align-items:center; justify-content:center;
@@ -305,7 +321,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.07)}
 .mkpick>button:hover{background:rgba(255,255,255,.06)}
 .mkpick>button .car{margin-left:auto; opacity:.6; font-size:.75rem}
-.mkpick img{width:22px; height:22px; image-rendering:pixelated; flex:none}
+.mkpick img{width:22px; height:22px; image-rendering:auto; flex:none}
 .mkpick-menu{position:absolute; z-index:60; top:calc(100% + 4px); left:0; min-width:100%;
   max-height:262px; overflow-y:auto; padding:5px; border:2px solid rgba(0,0,0,.7); border-radius:5px;
   background:#12181d; box-shadow:0 10px 26px rgba(0,0,0,.55)}
@@ -364,7 +380,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .slot.has{cursor:pointer}
 .slot.has:hover{transform:scale(1.14) rotate(-2deg); z-index:2;
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.1), 0 0 0 2px var(--slime)}
-.slot img{width:78%; height:78%; object-fit:contain; image-rendering:pixelated}
+.slot img{width:78%; height:78%; object-fit:contain; image-rendering:auto}
 .slot .cnt{position:absolute; right:3px; bottom:1px; font-size:.72rem; font-weight:800; color:#fff;
   text-shadow:1px 1px 0 #000, -1px 1px 0 #000}
 .slot .fb{font-size:.5rem; text-align:center; color:var(--ink3); padding:2px; line-height:1.2; word-break:break-word}
@@ -403,7 +419,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .midcol{display:flex; flex-direction:column; align-items:center; gap:5px}
 .ebtn{width:54px; height:54px; padding:0; cursor:pointer; border:0;
   transition:transform .3s var(--spring)}
-.ebtn img{width:74%; height:74%; image-rendering:pixelated}
+.ebtn img{width:74%; height:74%; image-rendering:auto}
 .ebtn:hover{transform:scale(1.12)}
 .mcpanel .elab{font-size:.6rem; font-weight:800; color:#404040; text-align:center; line-height:1.3}
 .elab{font-size:.6rem; font-weight:800; color:var(--ink3); text-align:center; line-height:1.3}
@@ -436,7 +452,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
    verde que cae dentro de la tolva ocupa 4 de los 16 píxeles del dibujo: por
    debajo de 24 se queda en una mota y se pierde la idea de «suéltalo aquí».
    Medido sobre la zona real, no sobre una maqueta. */
-.dico{width:24px; height:24px; image-rendering:pixelated; vertical-align:-6px; margin-right:9px}
+.dico{width:24px; height:24px; image-rendering:auto; vertical-align:-6px; margin-right:9px}
 .drop:hover .dico,.drop.over .dico{filter:brightness(1.15)}
 .drop{border:2px dashed rgba(255,255,255,.25); border-radius:6px; padding:26px; text-align:center; color:var(--ink3);
   background:var(--slotbg); box-shadow:inset 2px 2px 0 rgba(0,0,0,.4), inset -2px -2px 0 rgba(255,255,255,.06);
@@ -536,7 +552,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .pv-cols .statcol{break-inside:avoid; -webkit-column-break-inside:avoid; margin:0 0 16px; width:100%}
 
 /* ---------- logros ---------- */
-.pvswitch img{width:22px;height:22px;image-rendering:pixelated;vertical-align:-5px;margin-right:8px}
+.pvswitch img{width:22px;height:22px;image-rendering:auto;vertical-align:-5px;margin-right:8px}
 .pvswitch{width:100%; justify-content:center; margin:0 0 16px; padding:12px 16px; font-size:.95rem}
 #pv-advcard{margin-bottom:16px}
 .advhead{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:10px}
@@ -560,7 +576,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .adv.f-challenge{border-left-color:#a54fc6}
 .adv.done.f-goal{border-left-color:#4aa3ff}
 .adv.done.f-challenge{border-left-color:#c46dff}
-.adv img{width:30px; height:30px; flex:0 0 30px; image-rendering:pixelated; margin-top:1px;
+.adv img{width:30px; height:30px; flex:0 0 30px; image-rendering:auto; margin-top:1px;
   filter:grayscale(1) brightness(.55)}
 .adv.done img{filter:none}
 .adv .an{font-weight:700; font-size:.86rem; line-height:1.25}
@@ -585,13 +601,13 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 #psort:hover{border-color:var(--slime)}
 #psort option{background:#12161d; color:#eceff3; font-weight:600}
 .statcol h3{margin-bottom:2px}
-.hico{width:22px; height:22px; image-rendering:pixelated; vertical-align:-5px; margin-right:8px}
-.bico{width:20px; height:20px; image-rendering:pixelated; flex:none}
+.hico{width:22px; height:22px; image-rendering:auto; vertical-align:-5px; margin-right:8px}
+.bico{width:20px; height:20px; image-rendering:auto; flex:none}
 /* 12 px: el texto de esa línea es de 10,6 px. Estos PNG van a sangre (el dibujo
    toca el borde del cuadro), así que pesan más que el emoji al que sustituyen,
    que se dibuja metido dentro de su caja. Medido contra la tarjeta real de
    223 px, no contra una maqueta estrecha. */
-.pico{width:12px; height:12px; image-rendering:pixelated; vertical-align:-2px}
+.pico{width:12px; height:12px; image-rendering:auto; vertical-align:-2px}
 .btn .bico{margin-right:2px}
 .btn:disabled{opacity:.42; filter:grayscale(.7); cursor:not-allowed}
 /* ---- historia del server ---- */
@@ -599,7 +615,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .hirow{display:flex; align-items:flex-start; gap:10px; padding:8px 10px; border-radius:8px;
   background:rgba(255,255,255,.025); border:1px solid rgba(255,255,255,.05)}
 .hirow.muerte{border-color:rgba(214,90,74,.28); background:rgba(214,90,74,.07)}
-.hi-ic{width:20px; height:20px; flex:none; image-rendering:pixelated; margin-top:2px}
+.hi-ic{width:20px; height:20px; flex:none; image-rendering:auto; margin-top:2px}
 .hi-em{font-size:16px; width:20px; flex:none; text-align:center; margin-top:1px}
 .hi-tx{flex:1; min-width:0; line-height:1.45; overflow-wrap:anywhere}
 .hi-sub{color:var(--ink3); font-size:.8rem}
@@ -620,7 +636,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .statcol .sctotal{display:flex; justify-content:space-between; padding:7px 4px; border-bottom:2px solid rgba(255,255,255,.14);
   font-weight:bold; margin-bottom:4px}
 .strow{display:flex; align-items:center; gap:8px; padding:4.5px 4px; border-bottom:1px solid rgba(255,255,255,.05); font-size:.86rem}
-.strow img{width:22px; height:22px; image-rendering:pixelated; flex:none}
+.strow img{width:22px; height:22px; image-rendering:auto; flex:none}
 .strow .se{width:22px; text-align:center; flex:none}
 .strow .sn{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .strow .sv{color:var(--ink2); font-variant-numeric:tabular-nums}
@@ -753,7 +769,8 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <div class="land-xp" id="land-xp"><i></i></div>
     <div id="land-pin">
       <div class="card pin-card">
-        <h3 data-i18n="pin_title">🔒 PIN de acceso</h3>
+        <h3><img class="hico" src="/static/ui/s-candado.png?v=14" alt=""
+          onerror="this.outerHTML='🔒 '"><span data-i18n="pin_title">PIN de acceso</span></h3>
         <input id="pin-in" maxlength="32" autocomplete="off" style="margin-top:14px"
                onkeydown="if(event.key==='Enter')sendPin()">
         <div class="err" id="pin-err"></div>
@@ -1201,7 +1218,7 @@ const ICON = id => `/icons/${id}.png?v=${ICONV}`;   // self-hosted, extracted fr
 let LANG = 'es';
 try{ LANG = localStorage.getItem('panel_lang') || 'es'; }catch(_){}
 const I18N = {
- es:{welcome:'Bienvenidos al Panel del servidor', mods:'Moderadores', pin_title:'🔒 PIN de acceso',
+ es:{welcome:'Bienvenidos al Panel del servidor', mods:'Moderadores', pin_title:'PIN de acceso',
   pin_btn:'Entrar',
   pin_wrong:'PIN incorrecto', pin_unset:'El PIN aún no está configurado — avísale al admin.',
   pin_rate:'Demasiados intentos — espera 5 minutos',
@@ -1251,7 +1268,7 @@ const I18N = {
   close:'Cerrar', del:'Borrar', view_skin:'🧍 Ver skin en 3D', skin_walk:'▶ Caminar', skin_stop:'⏸ Quieto',
   skin_hist:'Skins guardadas por el panel', skin_none:'El archivo arranca hoy — cada día el panel guarda la skin de todos.',
   skin_namemc:'Ver historial completo en NameMC ↗', logout:'Salir', guest:'invitado'},
- en:{welcome:'Welcome to the Server Panel', mods:'Moderators', pin_title:'🔒 Access PIN',
+ en:{welcome:'Welcome to the Server Panel', mods:'Moderators', pin_title:'Access PIN',
   pin_btn:'Enter',
   pin_wrong:'Wrong PIN', pin_unset:'The PIN is not configured yet — tell the admin.',
   pin_rate:'Too many attempts — wait 5 minutes',
@@ -2128,7 +2145,7 @@ async function openPlayer(uuid, name, online){
 }
 function openEnder(){
   if (!GEAR) return;
-  $('ct-body').innerHTML = `<h3 style="margin-bottom:12px"><img src="/icons/ender_chest.png?v=9" onerror="this.src='/static/ender_chest.png'" style="width:22px;height:22px;image-rendering:pixelated;vertical-align:-5px"> Cofre de Ender — ${esc(GEAR.name)}</h3>
+  $('ct-body').innerHTML = `<h3 style="margin-bottom:12px"><img src="/icons/ender_chest.png?v=9" onerror="this.src='/static/ender_chest.png'" style="width:22px;height:22px;image-rendering:auto;vertical-align:-5px"> Cofre de Ender — ${esc(GEAR.name)}</h3>
     <div class="slotgrid" id="ct-grid"></div>
     <div class="mrow"><button class="btn ghost" onclick="$('ct-modal').classList.remove('open')">Cerrar</button></div>`;
   const arr=new Array(27).fill(null);
