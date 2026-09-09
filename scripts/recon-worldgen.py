@@ -25,7 +25,7 @@ No toca nada: solo lee. Ni siquiera necesita el servidor parado.
 Correr EN EL SERVIDOR:
     python3 ~/panel/scripts/recon-worldgen.py
 """
-import json, os, re, sys, urllib.request, zipfile
+import json, os, re, subprocess, sys, time, urllib.request, zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -242,76 +242,44 @@ def parsear_mappings(texto):
     return clases
 
 
-def mirar_nombres(version):
-    titulo("3 · ¿existen las clases que hacen falta, y cómo se llaman?")
-    if not version:
-        print("  ⚠ sin versión no puedo pedir las equivalencias")
+def mirar_nombres(jar):
+    """Con el jar sin ofuscar, las clases se buscan directamente dentro.
+
+    Antes esto bajaba el fichero de equivalencias de Mojang. Ya no hace falta —
+    y de hecho Mojang ha dejado de publicarlo, justamente porque los nombres
+    reales vienen en el jar.
+    """
+    titulo("3 · ¿están en el jar las clases que hace falta usar?")
+    if not jar:
+        print("  ⚠ sin jar no puedo mirar")
         return
     try:
-        man = json.loads(bajar(MANIFIESTO))
-        url = next((v["url"] for v in man["versions"] if v["id"] == version), None)
-        if not url:
-            print("  ⚠ Mojang no lista la versión %s" % version)
-            return
-        vjson = json.loads(bajar(url))
-        desc = vjson.get("downloads", {})
-        print("  descargas que publica Mojang para la %s:" % version)
-        for k in sorted(desc):
-            print("      %-22s %s" % (k, (desc[k].get("url") or "")[:96]))
-        print("  (claves del JSON de versión: %s)" % ", ".join(sorted(vjson.keys()))[:200])
-        # la clave se ha llamado de varias formas; se prueban todas
-        m = None
-        for clave in ("server_mappings", "server_mappings_official", "mappings_server",
-                      "server_map", "serverMappings"):
-            if desc.get(clave):
-                m = desc[clave]
-                print("  ✔ encontradas en «%s»" % clave)
-                break
-        if not m:
-            print()
-            print("  ✘ Ninguna de esas claves está. Si arriba no aparece nada que suene a")
-            print("    «mappings», Mojang ha dejado de publicarlas para esta versión y el")
-            print("    plan de los biomas hay que replantearlo.")
-            return
-        print("  equivalencias:         %.1f MB, bajando…" % (m.get("size", 0) / 2**20))
-        texto = bajar(m["url"], timeout=300).decode("utf-8", "replace")
+        with zipfile.ZipFile(jar) as z:
+            dentro = set(z.namelist())
     except Exception as e:
-        print("  ⚠ no pude bajarlas: %s" % e)
+        print("  ⚠ no pude abrirlo: %s" % e)
         return
-
-    clases = parsear_mappings(texto)
-    print("  clases en el fichero:  %d" % len(clases))
     faltan = []
-    print()
     for c in CLASES:
-        if c in clases:
-            print("  ✔ %-64s → %s" % (c.split("net.minecraft.")[-1], clases[c][0]))
-        else:
-            faltan.append(c)
-            print("  ✘ %-64s   NO EXISTE" % c.split("net.minecraft.")[-1])
-
-    print()
-    print("  Métodos que hacen falta (nombre oficial → revuelto):")
-    for c, ms in METODOS.items():
-        if c not in clases:
-            continue
+        ruta = c.replace(".", "/") + ".class"
         corto = c.split("net.minecraft.")[-1]
-        for nombre in ms:
-            firmas = clases[c][1].get(nombre)
-            if not firmas:
-                print("    ✘ %s.%s  NO ESTÁ" % (corto, nombre))
-                faltan.append("%s.%s" % (c, nombre))
-                continue
-            for firma, obf in firmas:
-                print("    ✔ %s.%s%s  →  %s" % (corto, nombre, firma, obf))
-
+        if ruta in dentro:
+            print("  ✔ %s" % corto)
+        else:
+            # puede haberse movido de paquete: se busca por el nombre suelto
+            hoja = c.rsplit(".", 1)[-1] + ".class"
+            otros = [n for n in dentro if n.endswith("/" + hoja)]
+            if otros:
+                print("  ~ %-58s se mudó a  %s" % (corto, otros[0][:-6]))
+            else:
+                print("  ✘ %-58s NO ESTÁ" % corto)
+                faltan.append(c)
     print()
     if faltan:
-        print("  ⚠ FALTAN %d cosas. Pégame esta salida entera: con los nombres que sí" % len(faltan))
-        print("    están puedo buscar cómo se llaman ahora las que no.")
+        print("  ⚠ faltan %d. Puede que en la 26.2 se llamen de otra forma;" % len(faltan))
+        print("    con las que sí están puedo buscar el equivalente.")
     else:
-        print("  ✅ Está todo. Con estos nombres puedo escribir el programa de biomas")
-        print("     sabiendo lo que hago, en vez de adivinando.")
+        print("  ✅ Están todas. Puedo escribir el Java compilando contra este jar.")
 
 
 def mirar_conjuntos(jar):
@@ -379,18 +347,79 @@ def mirar_mundo():
     for f in sorted(w.glob("*")):
         if f.is_file():
             print("      world/%-30s %d bytes" % (f.name, f.stat().st_size))
+    # TODOS los ficheros, no solo los de extensión conocida: la semilla podría
+    # estar en algo sin extensión y mi filtro anterior lo habría escondido.
     for f in sorted((w / "dimensions").rglob("*")) if (w / "dimensions").is_dir() else []:
-        if f.is_file() and f.suffix in (".dat", ".json", ".nbt", ".txt"):
-            print("      %-36s %d bytes" % (str(f.relative_to(w)), f.stat().st_size))
+        if f.is_file() and f.suffix not in (".mca", ".mcc", ".mcr"):
+            print("      %-46s %d bytes" % (str(f.relative_to(w)), f.stat().st_size))
+    print()
+    print("  level.dat entero (son 459 bytes, cabe):")
+    try:
+        _, raiz, _ = nbt.load(str(w / "level.dat"))
+        def volcar(items, sangria=6):
+            for k, t in items:
+                kk = k.decode("utf-8", "replace")
+                if t.t == nbt.TAG_COMPOUND and isinstance(t.v, list):
+                    print("%s%s:" % (" " * sangria, kk))
+                    volcar(t.v, sangria + 2)
+                else:
+                    v = t.v.decode("utf-8", "replace") if isinstance(t.v, bytes) else t.v
+                    print("%s%s = %r" % (" " * sangria, kk, v)[:150])
+        volcar(raiz.v)
+    except Exception as e:
+        print("      no pude volcarlo: %s" % e)
+
+
+def semilla_por_consola():
+    """Le pregunta la semilla al servidor con /seed y la lee del registro.
+
+    Es lo más fiable: da igual dónde haya escondido Mojang el dato, el servidor
+    siempre sabe cuál es la suya. No para nada ni molesta a quien esté jugando.
+    """
+    titulo("6 · la semilla, preguntándosela al servidor")
+    log = MC / "logs" / "latest.log"
+    if not log.exists():
+        print("  ⚠ no encuentro %s" % log)
+        return None
+    antes = log.stat().st_size
+    try:
+        r = subprocess.run(["screen", "-p", "0", "-S", os.environ.get("MC_SCREEN", "mc"),
+                            "-X", "eval", 'stuff "seed\015"'],
+                           capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            print("  ⚠ la consola no responde (¿está parado el servidor?)")
+            return None
+    except Exception as e:
+        print("  ⚠ no pude hablar con la consola: %s" % e)
+        return None
+    for _ in range(20):
+        time.sleep(0.5)
+        try:
+            with open(log, "rb") as f:
+                f.seek(antes)
+                nuevo = f.read().decode("utf-8", "replace")
+        except Exception:
+            break
+        m = re.search(r"Seed:\s*\[?(-?\d+)\]?", nuevo)
+        if m:
+            print("  semilla del servidor:  %s" % m.group(1))
+            print()
+            print("  Compárala con la del overworld que me diste: 1244994422874902852")
+            print("  Si NO coinciden, el terreno nuevo se generará con otra semilla")
+            print("  distinta a la del terreno que ya tienes.")
+            return int(m.group(1))
+    print("  ⚠ mandé /seed pero no vi la respuesta en el registro")
+    return None
 
 
 def main():
     print("Reconocimiento del generador de mundos — no toca nada, solo lee.")
     version, jar, libs = mirar_disco()
     leer_semilla()
-    mirar_nombres(version)
+    mirar_nombres(jar)
     mirar_conjuntos(jar)
     mirar_mundo()
+    semilla_por_consola()
     titulo("listo")
     print("Pega TODA esta salida en el chat.")
     return 0
