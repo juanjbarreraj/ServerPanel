@@ -164,6 +164,32 @@ with sync_playwright() as pw:
     else:
         afirmar(False, "había un icono en pantalla donde hacer clic")
 
+    print("── el punto de aparición y los chunks de slime ──")
+    ap = pag.evaluate("() => M2.est.aparicion")
+    afirmar(ap is not None, "el panel sabe dónde aparece la gente %s" % ap)
+    if ap:
+        pag.evaluate("(a) => { M2.cx=a[0]; M2.cz=a[2]; M2.esc=1/4; M2.verSlime=true;"
+                     " m2Pinta(); m2Capas(); m2PideEstructuras(); m2PideSlime(); }", ap)
+        pag.wait_for_function("() => M2.slime && M2.slime.datos.length>0", timeout=30000)
+        pag.wait_for_timeout(900)
+        n = pag.evaluate("() => { let s=0; for (const v of M2.slime.datos) s+=v; "
+                         "return {slime:s, total:M2.slime.datos.length}; }")
+        afirmar(0.05 < n["slime"]/n["total"] < 0.16,
+                "uno de cada diez chunks es de slime (%d de %d)" % (n["slime"], n["total"]))
+        verde = pag.evaluate("""() => {
+          const c=document.getElementById('m2-ico');
+          const d=c.getContext('2d',{willReadFrequently:true}).getImageData(0,0,c.width,c.height).data;
+          let n=0; for (let i=0;i<d.length;i+=4*7) if (d[i+3]>10 && d[i+1]>d[i]+30) n++;
+          return n;
+        }""")
+        afirmar(verde > 50, "los chunks de slime se ven pintados de verde (%d)" % verde)
+        afirmar(pag.locator("#m2cap-slime").count() == 1, "sale la casilla de slime")
+        afirmar(pag.locator("#m2cap-aparicion").count() == 1, "sale la casilla de aparición")
+        pag.locator("#m2cap-slime").click()
+        pag.wait_for_timeout(400)
+        apagado = pag.evaluate("() => M2.verSlime")
+        afirmar(apagado is False, "la casilla apaga los chunks de slime")
+
     print("── que no se rompa nada ──")
     afirmar(not errores, "sin errores de JavaScript" + (" — %s" % errores[:3] if errores else ""))
 

@@ -237,17 +237,22 @@ class Servicio:
             self._paleta = bytes(fuera)
         return self._paleta
 
+    @staticmethod
+    def _y(y):
+        """`suelo` = a ras de suelo, la altura del terreno en ese punto.
+
+        Es lo que hace falta para las estructuras de superficie: el juego las
+        sube hasta el suelo y mira el bioma AHÍ, no a una altura fija.
+        """
+        return "" if y is None else ("&y=suelo" if y == "suelo" else "&y=%d" % int(y))
+
     def bioma(self, x, z, y=None):
-        r = "/bioma?x=%d&z=%d" % (int(x), int(z))
-        if y is not None:
-            r += "&y=%d" % int(y)
-        return json.loads(self._pedir(r, espera=10))
+        return json.loads(self._pedir("/bioma?x=%d&z=%d%s"
+                                      % (int(x), int(z), self._y(y)), espera=10))
 
     def cuadro(self, x, z, n, paso, y=None):
-        r = "/cuadro?x=%d&z=%d&n=%d&paso=%d" % (int(x), int(z), int(n), int(paso))
-        if y is not None:
-            r += "&y=%d" % int(y)
-        return self._pedir(r)
+        return self._pedir("/cuadro?x=%d&z=%d&n=%d&paso=%d%s"
+                           % (int(x), int(z), int(n), int(paso), self._y(y)))
 
     def puntos(self, pares, y=None):
         """Muchos sitios de golpe → una lista de nombres de bioma."""
@@ -256,10 +261,21 @@ class Servicio:
         # La consulta va en la URL, así que se trocea para no pasarse de largo.
         for i in range(0, len(pares), 400):
             trozo = pares[i:i + 400]
-            r = "/puntos?p=" + ";".join("%d,%d" % (int(a), int(b)) for a, b in trozo)
-            if y is not None:
-                r += "&y=%d" % int(y)
+            r = ("/puntos?p=" + ";".join("%d,%d" % (int(a), int(b)) for a, b in trozo)
+                 + self._y(y))
             fuera.extend(ley.get(b, "?") for b in self._pedir(r))
+        return fuera
+
+
+    def alturas(self, pares):
+        """La altura del suelo en muchos sitios de golpe."""
+        import struct
+        fuera = []
+        for i in range(0, len(pares), 400):
+            trozo = pares[i:i + 400]
+            crudo = self._pedir("/alturas?p="
+                                + ";".join("%d,%d" % (int(a), int(b)) for a, b in trozo))
+            fuera.extend(struct.unpack(">%di" % len(trozo), crudo))
         return fuera
 
 

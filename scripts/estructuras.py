@@ -288,10 +288,21 @@ def _resolver_etiqueta(z, dentro, nombre, visto=None):
 def _altura_de(d):
     """A qué altura mira Minecraft el bioma de esa estructura.
 
-    Los biomas son tridimensionales. Una ciudad antigua se coloca a y=-27 y su
-    bioma (deep_dark) SOLO existe allí abajo: si se preguntase en la superficie
-    no se confirmaría ni una sola y el mapa se quedaría sin ciudades antiguas.
+    Los biomas son tridimensionales, así que esto NO es un detalle: preguntar a
+    la altura equivocada descarta estructuras que sí están.
+
+    Una ciudad antigua se coloca a y=-27 y su bioma (deep_dark) solo existe allí
+    abajo; preguntando en la superficie no saldría ninguna.
+
+    Y al revés, y es el fallo que tuvo esto durante un día: las aldeas llevan
+    `start_height: 0`, pero ese 0 es un marcador de posición — llevan también
+    `project_start_to_heightmap`, que significa «y ahora súbela hasta el suelo».
+    El juego mira el bioma DESPUÉS de subirla. Tomándose el 0 al pie de la
+    letra se preguntaba a y=0, donde muchas veces hay una cueva, y se perdían
+    8 de cada 23 aldeas. Medido contra un servidor de verdad.
     """
+    if d.get("project_start_to_heightmap"):
+        return Y_SUPERFICIE
     h = d.get("start_height")
     if isinstance(h, dict):
         if "absolute" in h:
@@ -301,6 +312,18 @@ def _altura_de(d):
         if lo is not None and hi is not None:
             return int((lo + hi) // 2)
     return Y_SUPERFICIE
+
+
+def _desplazamiento(d):
+    """En qué punto DEL CHUNK mira el juego el bioma, respecto al centro.
+
+    Las de tipo `jigsaw` —aldeas, puestos de saqueadores, ciudades antiguas,
+    cámaras de desafío— arrancan en la ESQUINA del chunk. Las demás, en el
+    centro. Como los biomas cambian cada 4 bloques, esos 8 bloques de
+    diferencia deciden en los bordes: medido contra un servidor de verdad, con
+    la esquina las aldeas fantasma bajan de 5 a 2.
+    """
+    return (-8, -8) if d.get("type") == "minecraft:jigsaw" else (0, 0)
 
 
 ESTRUCTURAS = {}
@@ -330,7 +353,9 @@ def leer_estructuras(jar):
                           for x in b if isinstance(x, str)}
             else:
                 biomas = set()
-            fuera[n.rsplit("/", 1)[-1][:-5]] = {"biomas": biomas, "y": _altura_de(d)}
+            dx, dz = _desplazamiento(d)
+            fuera[n.rsplit("/", 1)[-1][:-5]] = {"biomas": biomas, "y": _altura_de(d),
+                                                "dx": dx, "dz": dz}
         for dim in ("overworld", "nether", "end"):
             BIOMAS_DIMENSION[dim] = _resolver_etiqueta(z, dentro, "is_" + dim)
     return fuera
@@ -384,45 +409,50 @@ def confirmar(srv, semilla, x0, z0, x1, z1, conjuntos=None, progreso=None):
                 for c in conjuntos if c in CONJUNTOS
                 for x, z in candidatas_en(semilla, c, x0, z0, x1, z1)]
 
-    # Agrupadas por altura: todas las de superficie en una tanda, las
-    # subterráneas en la suya. Así son dos o tres viajes y no cien mil.
-    por_altura = {}
+    # Agrupadas por «dónde hay que preguntar»: altura y desplazamiento dentro
+    # del chunk. Las de superficie caen todas en el mismo grupo, las
+    # subterráneas en el suyo, y así son dos o tres viajes en vez de cien mil.
+    def receta(m):
+        i = ESTRUCTURAS.get(m) or {}
+        return (i.get("y", Y_SUPERFICIE), i.get("dx", 0), i.get("dz", 0))
+
+    grupos = {}
+    candidatas = {}
     for c in conjuntos:
         if c not in CONJUNTOS:
             continue
-        miembros = CONJUNTOS[c][3] or [c]
-        alturas = {ESTRUCTURAS.get(m, {}).get("y", Y_SUPERFICIE) for m in miembros}
-        for x, z in candidatas_en(semilla, c, x0, z0, x1, z1):
-            for y in alturas:
-                por_altura.setdefault(y, []).append((c, x, z))
+        cs = candidatas_en(semilla, c, x0, z0, x1, z1)
+        candidatas[c] = cs
+        for r in {receta(m) for m in (CONJUNTOS[c][3] or [c])}:
+            for x, z in cs:
+                grupos.setdefault(r, []).append((x, z))
 
-    fuera = []
-    hechas, total = 0, sum(len(v) for v in por_altura.values())
-    biomas_de = {}                          # (y, x, z) → bioma
-    for y, lista in por_altura.items():
+    hechas, total = 0, sum(len(v) for v in grupos.values())
+    biomas_de = {}                          # (receta, x, z) → bioma
+    for r, lista in grupos.items():
+        y, dx, dz = r
         for i in range(0, len(lista), 2000):
             trozo = lista[i:i + 2000]
-            nombres = srv.puntos([(x, z) for _, x, z in trozo], y=y)
-            for (c, x, z), b in zip(trozo, nombres):
-                biomas_de[(y, x, z)] = b
+            nombres = srv.puntos([(x + dx, z + dz) for x, z in trozo], y=y)
+            for (x, z), b in zip(trozo, nombres):
+                biomas_de[(r, x, z)] = b
             hechas += len(trozo)
             if progreso:
                 progreso(hechas, total)
 
-    vistas = set()
-    for y, lista in por_altura.items():
-        for c, x, z in lista:
-            if (c, x, z) in vistas:
-                continue
+    fuera = []
+    for c in conjuntos:
+        if c not in CONJUNTOS:
+            continue
+        for x, z in candidatas[c]:
             for m in (CONJUNTOS[c][3] or [c]):
                 info = ESTRUCTURAS.get(m)
                 if not info:
                     continue
-                b = biomas_de.get((info["y"], x, z))
+                b = biomas_de.get((receta(m), x, z))
                 if b and b in info["biomas"]:
                     fuera.append({"conjunto": c, "tipo": m, "x": x, "z": z,
                                   "bioma": b, "seguro": True})
-                    vistas.add((c, x, z))
                     break
     return fuera
 

@@ -3396,6 +3396,61 @@ def _m2_estructuras(x0, z0, x1, z1):
     return fuera
 
 
+def punto_de_aparicion():
+    """Dónde aparece la gente al entrar, leído del mundo.
+
+    No se calcula: se lee, porque el mundo ya lo tiene decidido y escrito. En la
+    26.x se mudó de `Data.SpawnX/Y/Z` a `Data.spawn.pos`, así que se miran las
+    dos formas — el panel tiene que seguir funcionando con mundos viejos que se
+    suban desde la pestaña de Mundo.
+    """
+    import nbt as _nbt
+    for ruta in (MC_DIR / "world" / "level.dat",):
+        try:
+            _n, raiz, _g = _nbt.load(str(ruta))
+            d = _nbt.cget(raiz.v, "Data")
+            if d is None:
+                continue
+            sp = _nbt.cget(d.v, "spawn")
+            if sp is not None:
+                pos = _nbt.cget(sp.v, "pos")
+                if pos is not None and len(pos.v) >= 3:
+                    return [int(pos.v[0]), int(pos.v[1]), int(pos.v[2])]
+            xs = [_nbt.cget(d.v, k) for k in ("SpawnX", "SpawnY", "SpawnZ")]
+            if all(v is not None for v in xs):
+                return [int(v.v) for v in xs]
+        except Exception:
+            continue
+    return None
+
+
+@app.get("/api/mapa2/slime")
+def api_m2_slime():
+    """Qué chunks son de slime en un rectángulo. Un byte por chunk.
+
+    La cuenta la hace Minecraft con su propia función; aquí solo se reenvía.
+    """
+    require("mapa_semilla")
+
+    def num(k, d):
+        try:
+            return int(float(request.args.get(k, d)))
+        except (TypeError, ValueError):
+            return d
+
+    cx, cz = num("cx", 0), num("cz", 0)
+    n = max(1, min(512, num("n", 64)))
+    b, _ = _m2_mods()
+    try:
+        crudo = _m2_srv()._pedir("/slime?cx=%d&cz=%d&n=%d" % (cx, cz, n))
+    except Exception:
+        return jsonify(error="sin servicio"), 503
+    from flask import Response
+    r = Response(bytes(crudo), mimetype="application/octet-stream")
+    r.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return r
+
+
 @app.get("/api/mapa2/estado")
 def api_m2_estado():
     """Todo lo que la pestaña necesita para dibujarse: colores, tipos, estado."""
@@ -3440,7 +3495,8 @@ def api_m2_estado():
         tipos.append({"k": k, "icono": icono, "es": es, "en": en,
                       "oculto": oculto, "paso": paso.get(k, 512)})
     return jsonify(ok=True, semilla=str(salud["semilla"]), y=salud.get("y"),
-                   niveles=b.NIVELES, tam=b.TAM, leyenda=leyenda, tipos=tipos)
+                   niveles=b.NIVELES, tam=b.TAM, leyenda=leyenda, tipos=tipos,
+                   aparicion=punto_de_aparicion())
 
 
 # signed=True o Flask no acepta coordenadas negativas y media mitad del

@@ -2954,6 +2954,8 @@ const M2 = {
   apagados:new Set(),       // los que el usuario apagó
   forzados:new Set(),       // los que pidió ver aunque el mapa esté muy abierto
   estructuras:[], cuenta:{}, recorte:null,
+  slime:null,               // {cx, cz, n, datos} del trozo pedido
+  verSlime:false, verAparicion:true,
   porColor:new Map(),       // "r,g,b" → bioma, para decir el bioma sin pedir nada
   pintando:false, listo:false, tEstr:0, aviso:'',
 };
@@ -3020,6 +3022,8 @@ async function m2Cargar(){
     const b=d.leyenda[k], c=b.c;
     M2.porColor.set(parseInt(c.slice(1),16), b);
   }
+  const ia=new Image(); ia.src=MK_ICON('spawn'); M2.iconos.set('__aparicion', ia);
+  ia.onload=()=>m2Iconos();
   for (const t of d.tipos){
     if (t.oculto) M2.apagados.add(t.k);
     const im=new Image(); im.src = MK_ICON(t.icono);
@@ -3031,14 +3035,17 @@ async function m2Cargar(){
     if (typeof g.cx==='number'){ M2.cx=g.cx; M2.cz=g.cz; M2.esc=g.esc||M2.esc; }
     if (Array.isArray(g.off)) M2.apagados = new Set(g.off);
     if (Array.isArray(g.on)) M2.forzados = new Set(g.on);
+    if (typeof g.slime==='boolean') M2.verSlime = g.slime;
+    if (typeof g.apar==='boolean') M2.verAparicion = g.apar;
   }catch(_){}
-  m2Capas(); m2Enganchar(); m2Medir(); m2Pinta(); m2PideEstructuras();
+  m2Capas(); m2Enganchar(); m2Medir(); m2Pinta(); m2PideEstructuras(); m2PideSlime();
 }
 
 function m2Guardar(){
   try{ localStorage.setItem('panel_m2', JSON.stringify(
     {cx:Math.round(M2.cx), cz:Math.round(M2.cz), esc:M2.esc,
-     off:[...M2.apagados], on:[...M2.forzados]})); }catch(_){}
+     off:[...M2.apagados], on:[...M2.forzados],
+     slime:M2.verSlime, apar:M2.verAparicion})); }catch(_){}
 }
 
 /* ---------- tamaño del lienzo ---------- */
@@ -3139,12 +3146,57 @@ function m2Limpiar(){
   }
 }
 
+/* ---------- los chunks de slime ---------- */
+/* Uno de cada diez chunks deja aparecer slimes bajo tierra, y cuáles depende
+   solo de la semilla. La cuenta la hace la función del propio Minecraft, así
+   que no hay nada que se pueda haber copiado mal.
+
+   Solo se dibujan de cerca: un chunk son 16 bloques, y con el mapa abierto
+   serían rayas de un píxel que no dirían nada. */
+const M2_SLIME_DESDE = 1/8;      // píxeles por bloque mínimos para dibujarlos
+
+let m2TimerSlime=null;
+function m2PideSlime(){
+  clearTimeout(m2TimerSlime);
+  if (!M2.verSlime || M2.esc < M2_SLIME_DESDE){ M2.slime=null; return; }
+  m2TimerSlime = setTimeout(async ()=>{
+    const cx=Math.floor(m2dex(0)/16)-2, cz=Math.floor(m2dez(0)/16)-2;
+    const lado=Math.min(512, Math.max(Math.ceil(M2.w/M2.esc/16), Math.ceil(M2.h/M2.esc/16))+5);
+    const clave=cx+'/'+cz+'/'+lado;
+    if (M2.slime && M2.slime.clave===clave) return;
+    try{
+      const r=await fetch(`/api/mapa2/slime?cx=${cx}&cz=${cz}&n=${lado}`);
+      if (!r.ok) return;
+      M2.slime={clave, cx, cz, n:lado, datos:new Uint8Array(await r.arrayBuffer())};
+      m2Iconos();
+    }catch(_){}
+  }, 250);
+}
+
+function m2DibujaSlime(g){
+  const s=M2.slime;
+  if (!s || !M2.verSlime || M2.esc < M2_SLIME_DESDE) return;
+  const lado=16*M2.esc;
+  g.fillStyle='rgba(90, 220, 90, .30)';
+  for (let j=0;j<s.n;j++){
+    const y=m2az((s.cz+j)*16);
+    if (y<-lado || y>M2.h) continue;
+    for (let i=0;i<s.n;i++){
+      if (!s.datos[j*s.n+i]) continue;
+      const x=m2ax((s.cx+i)*16);
+      if (x<-lado || x>M2.w) continue;
+      g.fillRect(x, y, lado, lado);
+    }
+  }
+}
+
 /* ---------- los iconos ---------- */
 function m2Iconos(){
   if (!M2.listo) return;
   const c=$('m2-ico'), g=c.getContext('2d'), d=M2.dpr;
   g.setTransform(d,0,0,d,0,0);
   g.clearRect(0,0,M2.w,M2.h);
+  m2DibujaSlime(g);
   const t = Math.max(14, Math.min(26, 15 + Math.log2(M2.esc*64)*2)) || 18;
   let dibujados=0;
   M2.enPantalla=[];
@@ -3164,6 +3216,22 @@ function m2Iconos(){
       g.lineWidth=1.5; g.strokeStyle='rgba(0,0,0,.65)'; g.stroke();
     }
     M2.enPantalla.push([k,x,z,px,py]);
+  }
+  // El punto de aparición: dónde cae la gente al entrar. No se calcula, se lee
+  // del mundo, así que es exacto aunque lo hayan movido con /setworldspawn.
+  const ap=M2.est.aparicion;
+  if (ap && M2.verAparicion){
+    const px=m2ax(ap[0]), py=m2az(ap[2]);
+    if (px>-20 && py>-20 && px<M2.w+20 && py<M2.h+20){
+      const im=M2.iconos.get('__aparicion');
+      if (im && im.complete && im.naturalWidth) g.drawImage(im, px-11, py-11, 22, 22);
+      else {
+        g.beginPath(); g.arc(px,py,7,0,6.284);
+        g.fillStyle='#ff5b5b'; g.fill();
+        g.lineWidth=2; g.strokeStyle='#fff'; g.stroke();
+      }
+      M2.enPantalla.push(['__aparicion', ap[0], ap[2], px, py]);
+    }
   }
   const falta = M2.recorte ? 'Acércate para ver las estructuras'
               : (dibujados > M2_MAX_ICONOS ? 'Hay más de los que caben — acércate' : M2.aviso);
@@ -3198,6 +3266,29 @@ function m2PideEstructuras(){
 function m2Capas(){
   const w=$('m2-capas'); if (!w || !M2.est) return;
   w.innerHTML='';
+  // Estas dos no son estructuras, así que van aparte y siempre delante.
+  const extra=(id, activo, etq, icono, nota)=>{
+    const b=document.createElement('button');
+    b.className='m2-cap'+(activo?' on':''); b.id='m2cap-'+id;
+    if (nota) b.title=nota;
+    if (icono){ const im=document.createElement('img'); im.src=icono; im.alt='';
+      im.onerror=()=>{ im.style.visibility='hidden'; }; b.appendChild(im); }
+    b.appendChild(document.createTextNode(etq));
+    return b;
+  };
+  if (M2.est.aparicion){
+    const b=extra('aparicion', M2.verAparicion, 'Punto de aparición', MK_ICON('spawn'));
+    b.onclick=()=>{ M2.verAparicion=!M2.verAparicion; m2Guardar(); m2Capas(); m2Iconos(); };
+    w.appendChild(b);
+  }
+  {
+    const lejos = M2.esc < M2_SLIME_DESDE;
+    const b=extra('slime', M2.verSlime && !lejos, 'Chunks de slime', MK_ICON('slime'),
+                  lejos ? 'Acércate: un chunk son 16 bloques' : '');
+    if (lejos && M2.verSlime) b.className+=' lejos';
+    b.onclick=()=>{ M2.verSlime=!M2.verSlime; m2Guardar(); m2Capas(); m2PideSlime(); m2Iconos(); };
+    w.appendChild(b);
+  }
   for (const t of M2.est.tipos){
     const n=M2.cuenta[t.k]||0;
     if (!n && M2.apagados.has(t.k)) continue;      // ni existe aquí ni la quiere ver
@@ -3261,7 +3352,7 @@ function m2Enganchar(){
     if (punteros.size<2) pinza=0;
     if (punteros.size===0){
       arrastrando=false; caja.classList.remove('arrastrando');
-      m2Guardar(); m2PideEstructuras();
+      m2Guardar(); m2PideEstructuras(); m2PideSlime();
       if (movido < 5){
         const r=caja.getBoundingClientRect();
         m2Clic(ev.clientX-r.left, ev.clientY-r.top);
@@ -3295,7 +3386,7 @@ function m2Escalar(f, px, pz){
   const wx=(px-M2.w/2)/antes + M2.cx, wz=(pz-M2.h/2)/antes + M2.cz;
   M2.cx = wx - (px-M2.w/2)/M2.esc;
   M2.cz = wz - (pz-M2.h/2)/M2.esc;
-  m2Pinta(); m2Guardar(); m2PideEstructuras(); m2Capas();
+  m2Pinta(); m2Guardar(); m2PideEstructuras(); m2PideSlime(); m2Capas();
 }
 function m2Zoom(f){ m2Escalar(f, M2.w/2, M2.h/2); }
 
@@ -3305,7 +3396,7 @@ function m2Ir(){
   M2.cx=parseInt(v[0]); M2.cz=parseInt(v[v.length-1]);
   if (M2.esc < 1/32) M2.esc = 1/16;
   $('m2-ir').value='';
-  m2Pinta(); m2Guardar(); m2PideEstructuras();
+  m2Pinta(); m2Guardar(); m2PideEstructuras(); m2PideSlime();
 }
 
 /* ---------- decir qué hay debajo del ratón ---------- */
@@ -3331,7 +3422,8 @@ function m2Clic(px,py){
   const globo=$('m2-globo');
   for (const [k,x,z,ix,iy] of (M2.enPantalla||[])){
     if (Math.abs(ix-px)<13 && Math.abs(iy-py)<13){
-      const t=M2.est.tipos.find(t=>t.k===k) || {es:k,en:k};
+      const t=(k==='__aparicion') ? {es:'Punto de aparición', en:'World spawn'}
+              : (M2.est.tipos.find(t=>t.k===k) || {es:k,en:k});
       globo.innerHTML = `<b>${esc(LANG==='en'?t.en:t.es)}</b><span class="c">X ${x}&nbsp;&nbsp;Z ${z}</span>`;
       globo.style.left=ix+'px'; globo.style.top=iy+'px';
       globo.classList.remove('hidden');

@@ -37,8 +37,12 @@ import net.minecraft.server.Bootstrap;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
 import net.minecraft.world.level.biome.MultiNoiseBiomeSourceParameterLists;
+import net.minecraft.world.level.LevelHeightAccessor;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
 import net.minecraft.world.level.levelgen.RandomState;
+import net.minecraft.world.level.levelgen.WorldgenRandom;
 
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -63,6 +67,11 @@ public class Biomas {
 
     private final MultiNoiseBiomeSource fuente;
     private final Climate.Sampler muestreador;
+    private final NoiseBasedChunkGenerator terreno;
+    private final RandomState estado;
+    private final HolderLookup.Provider registros;
+    private final long semilla;
+    private static final LevelHeightAccessor ALTO = LevelHeightAccessor.create(-64, 384);
 
     // La leyenda es FIJA, no se va llenando sobre la marcha.
     //
@@ -76,6 +85,8 @@ public class Biomas {
     private static final Map<String, Integer> ID_POR_NOMBRE = new HashMap<>();
 
     public Biomas(HolderLookup.Provider registros, long semilla) {
+        this.registros = registros;
+        this.semilla = semilla;
         HolderGetter<net.minecraft.world.level.biome.MultiNoiseBiomeSourceParameterList> presets =
                 registros.lookupOrThrow(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST);
         this.fuente = MultiNoiseBiomeSource.createFromPreset(
@@ -83,9 +94,32 @@ public class Biomas {
 
         // Aquí entra la semilla: RandomState es lo que la convierte en los
         // ruidos concretos de este mundo.
-        RandomState estado = RandomState.create(
+        this.estado = RandomState.create(
                 registros, NoiseGeneratorSettings.OVERWORLD, semilla);
         this.muestreador = estado.sampler();
+
+        // El mismo generador de terreno que usa el juego. Hace falta porque las
+        // estructuras de superficie NO se comprueban a una altura fija: el
+        // juego las sube hasta el suelo y mira el bioma AHÍ. Y el bioma de un
+        // sitio cambia con la altura.
+        this.terreno = new NoiseBasedChunkGenerator(
+                this.fuente, registros.lookupOrThrow(Registries.NOISE_SETTINGS)
+                                      .getOrThrow(NoiseGeneratorSettings.OVERWORLD));
+    }
+
+    /** ¿Es un chunk de slimes?
+     *
+     * La cuenta es famosa y anda copiada por medio internet, pero copiarla es
+     * pedir un fallo tonto: lleva desbordamientos de enteros a propósito y un
+     * XOR en el sitio justo. Aquí se llama a la función del propio Minecraft, y
+     * entonces no hay nada que equivocar. */
+    public boolean slime(int cx, int cz) {
+        return WorldgenRandom.seedSlimeChunk(cx, cz, semilla, 987234911L).nextInt(10) == 0;
+    }
+
+    /** A qué altura está el suelo, sin generar el chunk. */
+    public int alturaEn(int x, int z) {
+        return terreno.getBaseHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, ALTO, estado);
     }
 
     static synchronized void numerarBiomas(HolderLookup.Provider registros) {
@@ -134,15 +168,39 @@ public class Biomas {
     static final class Equipo {
         final List<Biomas> obreros = new ArrayList<>();
         final ExecutorService pool;
+        final HolderLookup.Provider registros;
+        final long semilla;
 
         Equipo(HolderLookup.Provider registros, long semilla, int n) {
+            this.registros = registros;
+            this.semilla = semilla;
             for (int i = 0; i < n; i++) obreros.add(new Biomas(registros, semilla));
             this.pool = Executors.newFixedThreadPool(n);
+            // El primero se reserva para las preguntas sueltas; los demás
+            // dibujan azulejos.
+            libres.offer(obreros.get(0));
         }
+
+        // Los obreros se prestan de uno en uno. Antes /bioma y /puntos usaban
+        // siempre el número 0, que es el mismo que dibuja azulejos: dos hilos
+        // dentro del mismo generador es una carrera de datos esperando a
+        // ocurrir, y el fallo sería «casi bien, con puntos sueltos mal».
+        private final java.util.concurrent.BlockingQueue<Biomas> libres =
+                new java.util.concurrent.LinkedBlockingQueue<>();
 
         int hilos() { return obreros.size(); }
 
         Biomas uno() { return obreros.get(0); }
+
+        Biomas prestar() {
+            Biomas b = libres.poll();
+            if (b != null) return b;
+            // Ninguno libre: uno nuevo antes que compartir. Cuesta ~0,6 s y
+            // pasa como mucho un puñado de veces.
+            return new Biomas(this.registros, this.semilla);
+        }
+
+        void devolver(Biomas b) { libres.offer(b); }
 
         byte[] cuadro(int x0, int z0, int n, int paso, int y) {
             byte[] fuera = new byte[n * n];
@@ -327,8 +385,13 @@ public class Biomas {
         srv.createContext("/bioma", ex -> {
             Map<String, String> p = parametros(ex);
             int x = entero(p, "x", 0), z = entero(p, "z", 0);
-            int y = entero(p, "y", Y_SUPERFICIE);
-            String n = eq.uno().nombreEn(x, y, z);
+            Biomas b = eq.prestar();
+            String n;
+            int y;
+            try {
+                y = "suelo".equals(p.get("y")) ? b.alturaEn(x, z) : entero(p, "y", Y_SUPERFICIE);
+                n = b.nombreEn(x, y, z);
+            } finally { eq.devolver(b); }
             responder(ex, 200, "application/json",
                     ("{\"x\":" + x + ",\"z\":" + z + ",\"y\":" + y
                             + ",\"bioma\":\"" + n + "\",\"id\":" + indice(n) + "}")
@@ -339,22 +402,70 @@ public class Biomas {
         // candidata cae en un bioma donde de verdad puede generarse. Pedirlos
         // uno a uno serían miles de peticiones.
         //  ?p=x,z;x,z;x,z…   →  un byte por punto
+        //
+        // y=suelo pregunta A LA ALTURA DEL TERRENO en cada punto, que es lo que
+        // hace el juego con las estructuras de superficie: las sube hasta el
+        // suelo y mira el bioma ahí. Preguntar a una altura fija se equivoca en
+        // las montañas y en los bordes de bioma.
         srv.createContext("/puntos", ex -> {
             Map<String, String> p = parametros(ex);
+            boolean suelo = "suelo".equals(p.get("y"));
             int y = entero(p, "y", Y_SUPERFICIE);
             String lista = p.getOrDefault("p", "");
             String[] partes = lista.isEmpty() ? new String[0] : lista.split(";");
             byte[] fuera = new byte[partes.length];
-            for (int i = 0; i < partes.length; i++) {
-                int c = partes[i].indexOf(',');
-                if (c <= 0) continue;
-                try {
-                    int x = Integer.parseInt(partes[i].substring(0, c));
-                    int z = Integer.parseInt(partes[i].substring(c + 1));
-                    fuera[i] = (byte) indice(eq.uno().nombreEn(x, y, z));
-                } catch (NumberFormatException e) { fuera[i] = (byte) 255; }
-            }
+            Biomas b = eq.prestar();
+            try {
+                for (int i = 0; i < partes.length; i++) {
+                    int c = partes[i].indexOf(',');
+                    if (c <= 0) continue;
+                    try {
+                        int x = Integer.parseInt(partes[i].substring(0, c));
+                        int z = Integer.parseInt(partes[i].substring(c + 1));
+                        int yy = suelo ? b.alturaEn(x, z) : y;
+                        fuera[i] = (byte) indice(b.nombreEn(x, yy, z));
+                    } catch (NumberFormatException e) { fuera[i] = (byte) 255; }
+                }
+            } finally { eq.devolver(b); }
             responder(ex, 200, "application/octet-stream", fuera);
+        });
+
+        // Los chunks de slime de un rectángulo: ?cx=&cz=&n=  →  un byte por chunk
+        srv.createContext("/slime", ex -> {
+            Map<String, String> p = parametros(ex);
+            int cx = entero(p, "cx", 0), cz = entero(p, "cz", 0);
+            int n = Math.min(512, Math.max(1, entero(p, "n", 64)));
+            byte[] fuera = new byte[n * n];
+            Biomas b = eq.prestar();
+            try {
+                for (int j = 0; j < n; j++)
+                    for (int i = 0; i < n; i++)
+                        fuera[j * n + i] = (byte) (b.slime(cx + i, cz + j) ? 1 : 0);
+            } finally { eq.devolver(b); }
+            responder(ex, 200, "application/octet-stream", fuera);
+        });
+
+        // La altura del terreno en varios puntos: ?p=x,z;x,z…  →  4 bytes por punto
+        srv.createContext("/alturas", ex -> {
+            Map<String, String> p = parametros(ex);
+            String lista = p.getOrDefault("p", "");
+            String[] partes = lista.isEmpty() ? new String[0] : lista.split(";");
+            java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocate(partes.length * 4);
+            Biomas b = eq.prestar();
+            try {
+                for (String parte : partes) {
+                    int c = parte.indexOf(',');
+                    int h = 0;
+                    if (c > 0) {
+                        try {
+                            h = b.alturaEn(Integer.parseInt(parte.substring(0, c)),
+                                           Integer.parseInt(parte.substring(c + 1)));
+                        } catch (NumberFormatException e) { h = 0; }
+                    }
+                    buf.putInt(h);
+                }
+            } finally { eq.devolver(b); }
+            responder(ex, 200, "application/octet-stream", buf.array());
         });
 
         // Un cuadro de n×n muestras. Devuelve un byte por punto: el número del
