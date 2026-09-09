@@ -45,8 +45,27 @@ echo "── 1 · el compilador de Java ─────────────�
 if command -v javac >/dev/null 2>&1 || ls /usr/lib/jvm/*/bin/javac >/dev/null 2>&1; then
   echo "  ya estaba"
 else
-  apt-get update -qq
-  apt-get install -y -qq default-jdk-headless
+  # Ubuntu instala solo las actualizaciones de seguridad, y mientras lo hace
+  # tiene apt cogido. Correr esto justo en ese momento fallaba con «Could not
+  # get lock» y se acababa el guion a medias. Con DPkg::Lock::Timeout apt
+  # ESPERA su turno en vez de rendirse: son un par de minutos, y desatendido no
+  # hay nadie para volver a lanzarlo.
+  ESPERA="-o DPkg::Lock::Timeout=600"
+  if fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1; then
+    echo "  Ubuntu está instalando sus propias actualizaciones. Espero a que"
+    echo "  termine (hasta 10 minutos) — no hace falta que hagas nada."
+  fi
+  if ! apt-get $ESPERA update -qq; then
+    echo "  ⚠ no pude refrescar la lista de paquetes; pruebo a instalar igual"
+  fi
+  if ! apt-get $ESPERA install -y -qq default-jdk-headless; then
+    echo
+    echo "  ✘ No se pudo instalar el compilador."
+    echo "    Casi siempre es que apt seguía ocupado. Mira si aún lo está:"
+    echo "        ps -eo pid,comm | grep -E 'apt|dpkg|unattended'"
+    echo "    y cuando no salga nada, vuelve a correr este mismo comando."
+    exit 1
+  fi
   echo "  instalado: $(javac -version 2>&1)"
 fi
 
