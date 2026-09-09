@@ -111,6 +111,32 @@ def mirar_disco():
     if vers:
         version = re.search(r"server-(.+)\.jar$", vers[-1].name).group(1)
     print("  versión detectada:     %s" % (version or "?"))
+
+    # ¿Sigue ofuscado? Si Mojang dejó de publicar equivalencias porque ya no
+    # ofusca, el plan de los biomas se vuelve MUCHO más fácil, no imposible.
+    if vers:
+        try:
+            with zipfile.ZipFile(vers[-1]) as z:
+                clases = [n for n in z.namelist() if n.endswith(".class")]
+            legibles = [c for c in clases if c.startswith("net/minecraft/")]
+            print("  clases en el jar:      %d  (%d con nombre legible net/minecraft/…)"
+                  % (len(clases), len(legibles)))
+            print("  muestra:")
+            for c in sorted(clases)[:6]:
+                print("      %s" % c)
+            if legibles:
+                print("  muestra de net/minecraft/:")
+                for c in sorted(legibles)[:6]:
+                    print("      %s" % c)
+            pct = 100.0 * len(legibles) / max(1, len(clases))
+            if pct > 50:
+                print("  ✅ EL JAR NO ESTÁ OFUSCADO (%.0f%% con nombre real): no hacen falta"
+                      % pct)
+                print("     equivalencias. El plan de los biomas se simplifica muchísimo.")
+            else:
+                print("  ⚠ el jar SÍ está ofuscado (solo %.0f%% legible)" % pct)
+        except Exception as e:
+            print("  ⚠ no pude mirar dentro del jar: %s" % e)
     return version, (vers[-1] if vers else None), len(libs)
 
 
@@ -320,12 +346,51 @@ def mirar_conjuntos(jar):
     print("     sin depender de nada de lo de arriba.")
 
 
+def mirar_mundo():
+    """La 26.x reorganizó la carpeta del mundo: las dimensiones se fueron a
+    `dimensions/`, los jugadores a `players/`, y los ajustes de generación —con
+    la semilla— a algún sitio que hay que encontrar."""
+    titulo("5 · cómo está montada la carpeta del mundo")
+    w = MC / "world"
+    if not w.is_dir():
+        print("  ⚠ no existe %s" % w)
+        return
+    for sub in ("dimensions", "players", "data", "datapacks"):
+        d = w / sub
+        if not d.is_dir():
+            print("  %-12s NO EXISTE" % (sub + "/"))
+            continue
+        hijos = sorted(d.iterdir())
+        print("  %-12s %d entradas" % (sub + "/", len(hijos)))
+        for h in hijos[:12]:
+            marca = "/" if h.is_dir() else ""
+            n = len(list(h.iterdir())) if h.is_dir() else h.stat().st_size
+            print("      %-40s %s" % (h.name + marca,
+                                      ("%d dentro" % n) if h.is_dir() else ("%d bytes" % n)))
+            if h.is_dir():
+                for n2 in sorted(h.iterdir())[:8]:
+                    print("          %s%s" % (n2.name, "/" if n2.is_dir() else ""))
+        if len(hijos) > 12:
+            print("      … y %d más" % (len(hijos) - 12))
+
+    # cualquier fichero suelto (no carpeta) por si la semilla vive ahí
+    print()
+    print("  Ficheros sueltos en world/ y en world/dimensions/**:")
+    for f in sorted(w.glob("*")):
+        if f.is_file():
+            print("      world/%-30s %d bytes" % (f.name, f.stat().st_size))
+    for f in sorted((w / "dimensions").rglob("*")) if (w / "dimensions").is_dir() else []:
+        if f.is_file() and f.suffix in (".dat", ".json", ".nbt", ".txt"):
+            print("      %-36s %d bytes" % (str(f.relative_to(w)), f.stat().st_size))
+
+
 def main():
     print("Reconocimiento del generador de mundos — no toca nada, solo lee.")
     version, jar, libs = mirar_disco()
     leer_semilla()
     mirar_nombres(version)
     mirar_conjuntos(jar)
+    mirar_mundo()
     titulo("listo")
     print("Pega TODA esta salida en el chat.")
     return 0

@@ -792,11 +792,23 @@ def reemplazar(archivo: Path, forzar=False):
 
 # ------------------------------------------------------------ jugadores
 # Qué carpeta del mundo guarda cada cosa.
+# OJO con las rutas: la 26.x movió las carpetas del jugador dentro de
+# `world/players/`. Antes estaban sueltas en la raíz del mundo. Se prueban las
+# dos, porque un mundo importado puede venir del formato viejo — y porque con la
+# ruta equivocada esto no falla, simplemente copia cero ficheros.
 QUE_JUGADORES = {
-    "logros":     ("advancements", "*.json", "logros"),
-    "stats":      ("stats",        "*.json", "estadísticas"),
-    "inventario": ("playerdata",   "*.dat",  "inventario y experiencia"),
+    "logros":     (("players/advancements", "advancements"), "*.json", "logros"),
+    "stats":      (("players/stats", "stats"),               "*.json", "estadísticas"),
+    "inventario": (("players", "playerdata"),                "*.dat",  "inventario y experiencia"),
 }
+
+
+def carpeta_jugadores(raiz: Path, candidatas):
+    """La primera que exista; si no hay ninguna, la primera (formato nuevo)."""
+    for c in candidatas:
+        if (raiz / c).is_dir():
+            return raiz / c
+    return raiz / candidatas[0]
 
 
 def _cset(items, clave, tag):
@@ -884,12 +896,15 @@ def jugadores(origen, que):
     cuenta, tocados = {}, set()
     try:
         for clave in que:
-            sub, patron, _ = QUE_JUGADORES[clave]
-            desde, hacia = org / sub, WORLD / sub
+            subs, patron, _ = QUE_JUGADORES[clave]
+            desde = carpeta_jugadores(org, subs)
+            hacia = carpeta_jugadores(WORLD, subs)
             if not desde.is_dir():
                 cuenta[clave] = 0
+                decir("%s: el mundo de origen no tiene esa carpeta" % QUE_JUGADORES[clave][2])
                 continue
             hacia.mkdir(parents=True, exist_ok=True)
+            sub = hacia.name
             n = 0
             for f in sorted(desde.glob(patron)):
                 previo = hacia / f.name
