@@ -1,0 +1,4354 @@
+#!/usr/bin/env python3
+"""Serve Actual Panel — self-hosted control panel for Juan's Minecraft server.
+
+Single-file Flask backend. Auth: scrypt-hashed passwords, signed session cookies,
+roles (admin/mod/viewer) + per-user permission toggles. Talks to the server via
+RCON (localhost), log tailing, stat files, and systemctl (sudo rule for restart).
+"""
+import base64, gzip, hashlib, hmac, json, os, re, secrets, socket, struct, subprocess, threading, time
+from pathlib import Path
+from flask import Flask, jsonify, request, send_file, send_from_directory, abort
+
+# ------------------------------------------------------------------ config
+PANEL_DIR = Path(os.environ.get("PANEL_DIR", Path(__file__).resolve().parent))
+MC_DIR    = Path(os.environ.get("MC_DIR", "/home/ubuntu/minecraft"))
+DATA_DIR  = PANEL_DIR / "data"
+DATA_DIR.mkdir(exist_ok=True)
+USERS_F   = DATA_DIR / "users.json"
+SECRET_F  = DATA_DIR / "secret.key"
+AUDIT_F   = DATA_DIR / "audit.log"
+SERVICE   = os.environ.get("MC_SERVICE", "minecraft")
+SESSION_HOURS = 24 * 7
+
+if not SECRET_F.exists():
+    SECRET_F.write_bytes(secrets.token_bytes(32))
+    os.chmod(SECRET_F, 0o600)
+SECRET = SECRET_F.read_bytes()
+
+app = Flask(__name__, static_folder=None)
+
+# roles -> default permission toggles (admin implicitly has all)
+DEFAULT_PERMS = {
+    "mod":    {"view_dashboard": True, "view_players": True, "view_console": False,
+               "whitelist": True, "ban": True, "kick": True, "restart": False,
+               "backups": False, "say": True},
+    "viewer": {"view_dashboard": True, "view_players": True, "view_console": False,
+               "whitelist": False, "ban": False, "kick": False, "restart": False,
+               "backups": False, "say": False},
+}
+ALL_PERMS = ["view_dashboard", "view_players", "view_console", "whitelist",
+             "ban", "kick", "restart", "backups", "say", "player_actions",
+             "memories", "memories_upload", "markers_add"]
+DEFAULT_PERMS["mod"]["player_actions"] = True
+DEFAULT_PERMS["viewer"]["player_actions"] = False
+DEFAULT_PERMS["mod"]["memories"] = True         # ver memorias
+DEFAULT_PERMS["mod"]["memories_upload"] = True  # subir fotos
+DEFAULT_PERMS["viewer"]["memories"] = True
+DEFAULT_PERMS["viewer"]["memories_upload"] = False
+DEFAULT_PERMS["mod"]["markers_add"] = True      # poner lugares en el mapa
+DEFAULT_PERMS["viewer"]["markers_add"] = True
+# vista pública (entra con el PIN compartido): mirar, subir a memorias y
+# marcar lugares en el mapa — borrarlos sigue siendo de moderadores y admin
+DEFAULT_PERMS["public"] = {"view_dashboard": True, "view_players": True,
+                           "memories": True, "memories_upload": True,
+                           "markers_add": True}
+
+# ------------------------------------------------------------------ helpers
+def hash_pw(pw: str) -> str:
+    salt = secrets.token_bytes(16)
+    h = hashlib.scrypt(pw.encode(), salt=salt, n=2**14, r=8, p=1)
+    return base64.b64encode(salt).decode() + "$" + base64.b64encode(h).decode()
+
+def check_pw(pw: str, stored: str) -> bool:
+    try:
+        salt_b64, h_b64 = stored.split("$")
+        salt = base64.b64decode(salt_b64)
+        h = hashlib.scrypt(pw.encode(), salt=salt, n=2**14, r=8, p=1)
+        return hmac.compare_digest(h, base64.b64decode(h_b64))
+    except Exception:
+        return False
+
+_users_lock = threading.Lock()
+def load_users() -> dict:
+    if not USERS_F.exists():
+        return {}
+    return json.loads(USERS_F.read_text())
+
+def save_users(users: dict):
+    with _users_lock:
+        tmp = USERS_F.with_suffix(".tmp")
+        tmp.write_text(json.dumps(users, indent=2))
+        os.chmod(tmp, 0o600)
+        tmp.replace(USERS_F)
+
+def _rotar(path: Path, limite_mb=5):
+    """Si el fichero pasa del límite, lo aparta a .1 y empieza uno nuevo.
+
+    Sin esto, audit.log crece para siempre: el panel está en internet y cada
+    intento de entrar (los buenos y los de los robots que rastrean puertos)
+    escribe una línea. Se guarda UNA generación anterior, así que el techo son
+    ~2x el límite y nunca hay que acordarse de vaciar nada.
+    """
+    try:
+        if path.exists() and path.stat().st_size > limite_mb * 1024 * 1024:
+            path.replace(path.with_suffix(path.suffix + ".1"))
+    except Exception:
+        pass
+
+# ---------------------------------------------------------------- salud
+# Los hilos de fondo (feed, skins) llevaban un `except Exception: pass` pelado.
+# Si el feed empezaba a fallar, la Historia se congelaba y NADA lo decía: ni un
+# aviso, ni una línea en el registro, y /api/feed seguía contestando que todo
+# iba bien con eventos viejos. Estando el server solo semanas, eso es justo el
+# fallo que no te enteras de que tienes.
+#
+# Cada automatismo apunta aquí cuándo corrió por última vez y si fue bien. La
+# pestaña Sistema lo enseña, así que se ve de un vistazo si algo lleva parado.
+_salud_estado = {}
+def _salud(que, ok=True, nota=""):
+    antes = _salud_estado.get(que)
+    _salud_estado[que] = {"ok": bool(ok), "t": time.time(), "nota": (nota or "")[:200]}
+    if antes is None or antes.get("ok") != bool(ok):
+        try:
+            _syslog(f"[salud] {que}: " + ("vuelve a ir bien" if ok else f"FALLA — {nota}"))
+        except Exception:
+            pass
+
+def _limpiar_papelera(carpeta: Path, dias=90, maximo=100):
+    """Las papeleras de fotos y plugins guardaban lo borrado PARA SIEMPRE.
+
+    Borrar una foto de 12 MB no liberaba ni un byte: solo la movía a
+    `_removed/`. Se mantiene la red de seguridad, pero con fecha de caducidad.
+    """
+    try:
+        if not carpeta.is_dir():
+            return
+        fs = sorted((p for p in carpeta.iterdir() if p.is_file()),
+                    key=lambda p: p.stat().st_mtime, reverse=True)
+        limite = time.time() - dias * 86400
+        for i, p in enumerate(fs):
+            if i >= maximo or p.stat().st_mtime < limite:
+                p.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+def audit(user: str, action: str):
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {user}: {action}\n"
+    _rotar(AUDIT_F)
+    with open(AUDIT_F, "a") as f:
+        f.write(line)
+
+def sign(payload: str) -> str:
+    mac = hmac.new(SECRET, payload.encode(), hashlib.sha256).hexdigest()
+    return payload + "." + mac
+
+def unsign(token: str):
+    try:
+        payload, mac = token.rsplit(".", 1)
+        good = hmac.new(SECRET, payload.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(mac, good):
+            return payload
+    except Exception:
+        pass
+    return None
+
+def current_user():
+    tok = request.cookies.get("panel_session")
+    if not tok:
+        return None
+    payload = unsign(tok)
+    if not payload:
+        return None
+    try:
+        name, expires = payload.split("|")
+        if time.time() > float(expires):
+            return None
+    except Exception:
+        return None
+    if name == "__public__":
+        return {"name": "invitado", "role": "public", "perms": {}, "must_change": False}
+    users = load_users()
+    u = users.get(name)
+    if not u:
+        return None
+    return {"name": name, **u}
+
+def has_perm(u, perm: str) -> bool:
+    if u is None:
+        return False
+    if u.get("role") == "admin":
+        return True
+    perms = u.get("perms", {})
+    if perm not in perms:  # new permissions inherit role defaults
+        return bool(DEFAULT_PERMS.get(u.get("role", "viewer"), {}).get(perm))
+    return bool(perms.get(perm))
+
+def user_payload(u):
+    """Lo que el navegador necesita saber de la sesión."""
+    return {"name": u["name"], "role": u["role"],
+            "perms": u.get("perms", {}),
+            "must_change": u.get("must_change", False),
+            "can_markers": has_perm(u, "markers_add")}
+
+# Mientras alguien siga con la contraseña que le entregaron (must_change) solo
+# puede MIRAR y cambiarla. Antes esto lo forzaba únicamente el navegador —un
+# modal que no se deja cerrar—, así que bastaba con saltarse la interfaz para
+# banear, expulsar o subir cosas sin haber puesto nunca una contraseña propia.
+# Las peticiones de lectura (GET) se dejan pasar para que la pantalla de detrás
+# no se rompa mientras el modal está abierto.
+SIN_CONTRASENA_OK = {"/api/password", "/api/logout"}
+
+def require(perm=None):
+    u = current_user()
+    if u is None:
+        abort(401)
+    if (u.get("must_change") and request.method != "GET"
+            and request.path not in SIN_CONTRASENA_OK):
+        abort(403)
+    if perm and not has_perm(u, perm):
+        abort(403)
+    return u
+
+# login rate limiting: ip -> [timestamps]
+_attempts = {}
+def rate_limited(ip: str) -> bool:
+    now = time.time()
+    # Limpieza general: antes solo se podaba la IP que volvía a llamar, así que
+    # cada IP distinta que tocara el login dejaba una entrada para siempre. En
+    # un panel abierto a internet eso es memoria que solo sube. Al pasar de 500
+    # IPs se barren de golpe las que ya no tienen intentos vivos.
+    if len(_attempts) > 500:
+        for k in [k for k, v in _attempts.items()
+                  if not v or now - max(v) >= 300]:
+            _attempts.pop(k, None)
+    lst = [t for t in _attempts.get(ip, []) if now - t < 300]
+    if lst:
+        _attempts[ip] = lst
+    else:
+        _attempts.pop(ip, None)      # sin intentos vivos, no ocupa sitio
+    return len(lst) >= 8
+
+# ------------------------------------------------------------------ rcon
+class Rcon:
+    def __init__(self, host, port, password, timeout=4.0):
+        self.host, self.port, self.password, self.timeout = host, port, password, timeout
+
+    def _pkt(self, req_id, ptype, body):
+        data = struct.pack("<ii", req_id, ptype) + body.encode("utf-8") + b"\x00\x00"
+        return struct.pack("<i", len(data)) + data
+
+    def command(self, cmd: str) -> str:
+        with socket.create_connection((self.host, self.port), timeout=self.timeout) as s:
+            s.settimeout(self.timeout)
+            s.sendall(self._pkt(1, 3, self.password))
+            self._read(s)  # auth response
+            s.sendall(self._pkt(2, 2, cmd))
+            resp = self._read(s)
+            return resp
+
+    def _read(self, s) -> str:
+        raw = b""
+        while len(raw) < 4:
+            chunk = s.recv(4 - len(raw))
+            if not chunk:
+                raise ConnectionError("rcon closed")
+            raw += chunk
+        (length,) = struct.unpack("<i", raw)
+        body = b""
+        while len(body) < length:
+            chunk = s.recv(length - len(body))
+            if not chunk:
+                break
+            body += chunk
+        req_id, ptype = struct.unpack("<ii", body[:8])
+        if req_id == -1:
+            raise PermissionError("rcon auth failed")
+        return body[8:-2].decode("utf-8", "replace")
+
+def read_properties() -> dict:
+    props = {}
+    try:
+        for line in (MC_DIR / "server.properties").read_text().splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                props[k.strip()] = v.strip()
+    except FileNotFoundError:
+        pass
+    return props
+
+def rcon() -> Rcon:
+    p = read_properties()
+    return Rcon("127.0.0.1", int(p.get("rcon.port", 25575)), p.get("rcon.password", ""))
+
+def rcon_try(cmd: str):
+    try:
+        return True, rcon().command(cmd)
+    except Exception as e:
+        return False, f"(server not reachable: {e})"
+
+# ------------------------------------------------------------------ server info
+def service_state() -> str:
+    try:
+        out = subprocess.run(["systemctl", "is-active", SERVICE],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+        return out or "unknown"
+    except Exception:
+        return "unknown"
+
+# La versión de Minecraft estaba escrita a mano ("26.2") y por tanto quedaba
+# mentirosa en cuanto el server se actualizara. Se saca del nombre del jar, que
+# es la única fuente que no se puede olvidar de cambiar.
+_ver_cache = {"t": 0, "val": None}
+def mc_version() -> str:
+    if time.time() - _ver_cache["t"] < 600 and _ver_cache["val"]:
+        return _ver_cache["val"]
+    v = None
+    try:
+        jars = sorted(MC_DIR.glob("versions/*/server-*.jar")) or \
+               sorted(MC_DIR.glob("paper-*.jar"))
+        for j in reversed(jars):
+            m = re.search(r"(?:server-|paper-)([\d.]+[\w.-]*?)(?:-\d+)?\.jar$", j.name)
+            if m:
+                v = m.group(1).rstrip("-")
+                break
+        if not v:
+            # respaldo: el nombre de la carpeta de versión
+            dirs = sorted(p.name for p in (MC_DIR / "versions").glob("*") if p.is_dir())
+            v = dirs[-1] if dirs else None
+    except Exception:
+        v = None
+    _ver_cache.update(t=time.time(), val=v or "?")
+    return _ver_cache["val"]
+
+def proc_metrics() -> dict:
+    # memory of java process + system cpu
+    mem_used_mb = None
+    try:
+        # con timeout: era el único subprocess del fichero sin él, y lo llama
+        # /api/status, que cada pestaña abierta pide cada 10 s. Un pgrep colgado
+        # dejaba ese hilo bloqueado para siempre, sin excepción que capturar.
+        pids = subprocess.run(["pgrep", "-f", "server.jar"], capture_output=True,
+                              text=True, timeout=5).stdout.split()
+        if pids:
+            rss = 0
+            for pid in pids:
+                with open(f"/proc/{pid}/status") as f:
+                    for line in f:
+                        if line.startswith("VmRSS:"):
+                            rss += int(line.split()[1])
+            mem_used_mb = rss // 1024
+    except Exception:
+        pass
+    total_mb = free_mb = None
+    try:
+        info = {}
+        for line in open("/proc/meminfo"):
+            k, v = line.split(":", 1)
+            info[k] = int(v.strip().split()[0])
+        total_mb = info["MemTotal"] // 1024
+        free_mb = info.get("MemAvailable", 0) // 1024
+    except Exception:
+        pass
+    return {"mc_mem_mb": mem_used_mb, "sys_total_mb": total_mb, "sys_free_mb": free_mb,
+            "load": os.getloadavg()[0] if hasattr(os, "getloadavg") else None}
+
+_last_tick = {"t": 0, "val": None}
+def tick_ms():
+    # cache /tick query for 10s to avoid spamming
+    if time.time() - _last_tick["t"] < 10:
+        return _last_tick["val"]
+    ok, out = rcon_try("tick query")
+    val = None
+    if ok:
+        m = re.search(r"(\d+[.,]\d+)ms", out.replace("§", ""))
+        if m:
+            val = float(m.group(1).replace(",", "."))
+    _last_tick.update(t=time.time(), val=val)
+    return val
+
+# Un nombre de Minecraft solo puede ser esto. Sirve de filtro de seguridad.
+NOMBRE_MC = re.compile(r"^[A-Za-z0-9_]{1,16}$")
+_aviso_list = {"t": 0}
+_online_cache = {"t": 0, "val": None}
+ONLINE_TTL = 4.0     # s
+
+def online_players():
+    """Con caché corta: /api/status lo pide cada 10 s POR PESTAÑA abierta, y
+    cada llamada es un comando RCON que corre en el hilo principal del juego.
+    Con la caché, diez personas mirando el panel cuestan lo mismo que una."""
+    if time.time() - _online_cache["t"] < ONLINE_TTL:
+        return _online_cache["val"]
+    val = _online_players_rcon()
+    _online_cache.update(t=time.time(), val=val)
+    return val
+
+def _online_players_rcon():
+    """Los conectados, o None si no se puede hablar con el servidor.
+
+    Vanilla responde:
+        "There are 3 of a max of 20 players online: Ana, Beto, Caro"
+        "There are 0 of a max of 20 players online:"
+
+    🔴 Todo lo que salga de aquí se valida contra NOMBRE_MC. Sin ese filtro,
+    cualquier respuesta que no encajara con lo esperado se colaba como si fuera
+    un jugador: se llegó a ver el mensaje entero ("There are 0 of a max of 20
+    players online:") como una ficha en "Conectados ahora", y de paso subía el
+    contador de gente conectada. Un dato que no puede ser un nombre no debe
+    salir del parser."""
+    ok, out = rcon_try("list")
+    if not ok:
+        return None
+    txt = re.sub(r"§.", "", out or "").strip()
+    # si el propio mensaje dice que hay 0, no hay nada más que mirar
+    cuenta = re.search(r"\b(\d+)\s+of a max of\b", txt, re.IGNORECASE)
+    if cuenta and cuenta.group(1) == "0":
+        return []
+    m = re.search(r"players online:?\s*(.*)$", txt, re.IGNORECASE | re.DOTALL)
+    crudos = [n.strip() for n in (m.group(1) if m else "").split(",") if n.strip()]
+    nombres = [n for n in crudos if NOMBRE_MC.match(n)]
+    # si había algo y NADA parecía un nombre, dejar rastro para poder verlo
+    if crudos and not nombres and time.time() - _aviso_list["t"] > 300:
+        _aviso_list["t"] = time.time()
+        audit("sistema", "no entendí la respuesta de /list: " + txt[:160])
+    return nombres
+
+_nombres_cache = {"claves": None, "data": {}}
+
+def usercache() -> dict:
+    """uuid -> nombre. La caché del juego (usercache.json) manda, pero la
+    reescribe el propio Minecraft y a veces deja fuera a jugadores que aún no
+    se han conectado; la whitelist también trae uuid+nombre y sirve de respaldo
+    para que no salgan como '4c988640' sin cara."""
+    fuentes = [MC_DIR / "whitelist.json", MC_DIR / "usercache.json"]   # el último gana
+    claves = []
+    for f in fuentes:
+        try:
+            claves.append(f.stat().st_mtime)
+        except OSError:
+            claves.append(0)
+    if _nombres_cache["claves"] == claves:
+        return _nombres_cache["data"]
+    nombres = {}
+    for f in fuentes:
+        try:
+            for e in json.loads(f.read_text()):
+                u, n = e.get("uuid"), e.get("name")
+                if u and n:
+                    nombres[u] = n
+        except Exception:
+            pass
+    _nombres_cache["claves"] = claves
+    _nombres_cache["data"] = nombres
+    return nombres
+
+def whitelist() -> list:
+    try:
+        return json.loads((MC_DIR / "whitelist.json").read_text())
+    except Exception:
+        return []
+
+def stats_dir() -> Path:
+    for cand in (MC_DIR / "world/players/stats", MC_DIR / "world/stats"):
+        if cand.is_dir():
+            return cand
+    return MC_DIR / "world/players/stats"
+
+# --- nivel de experiencia -------------------------------------------------
+# XpLevel es un TAG_Int llamado "XpLevel" dentro del .dat del jugador. Buscar
+# los bytes crudos (tipo 3 + longitud 7 + nombre) es ~100x mas rapido que
+# parsear el NBT completo, y la lista de jugadores se pide muy a menudo.
+_XP_TAG = b"\x03\x00\x07XpLevel"
+_xp_cache = {}   # uuid -> (mtime, nivel)
+
+def xp_level(dat: Path) -> int:
+    try:
+        mt = dat.stat().st_mtime
+    except OSError:
+        return 0
+    hit = _xp_cache.get(dat.name)
+    if hit and hit[0] == mt:
+        return hit[1]
+    lvl = 0
+    try:
+        raw = dat.read_bytes()
+        if raw[:2] == b"\x1f\x8b":
+            raw = gzip.decompress(raw)
+        i = raw.find(_XP_TAG)
+        if i >= 0:
+            lvl = int.from_bytes(raw[i + len(_XP_TAG):i + len(_XP_TAG) + 4], "big", signed=True)
+            if lvl < 0 or lvl > 100000:
+                lvl = 0
+    except Exception:
+        lvl = 0
+    _xp_cache[dat.name] = (mt, lvl)
+    return lvl
+
+def player_stats():
+    names = usercache()
+    online = set(online_players() or [])
+    out = []
+    sdir = stats_dir()
+    ddir = sdir.parent / "data"
+    files = sorted(sdir.glob("*.json"))
+    allstats = {}
+    for f in files:
+        try:
+            allstats[f.stem] = json.loads(f.read_text()).get("stats", {})
+        except Exception:
+            allstats[f.stem] = {}
+    # "bloques puestos": solo se puede minar lo que es bloque → la unión de ids
+    # minados por todos sirve de censo de bloques para filtrar los "usados"
+    block_ids = set()
+    for st in allstats.values():
+        block_ids.update(st.get("minecraft:mined", {}).keys())
+    cat = adv_catalog()
+    adir = adv_dir()
+    for f in files:
+        uuid = f.stem
+        full = allstats.get(uuid, {})
+        st = full.get("minecraft:custom", {})
+        used = full.get("minecraft:used", {})
+        placed = sum(v for k, v in used.items() if k in block_ids)
+        name = names.get(uuid, uuid[:8])
+        dat = ddir / f"{uuid}.dat"
+        last_seen = dat.stat().st_mtime if dat.exists() else f.stat().st_mtime
+        out.append({
+            "uuid": uuid, "name": name, "online": name in online,
+            "play_hours": round(st.get("minecraft:play_time", 0) / 20 / 3600, 1),
+            "deaths": st.get("minecraft:deaths", 0),
+            "mob_kills": st.get("minecraft:mob_kills", 0),
+            "player_kills": st.get("minecraft:player_kills", 0),
+            "walked_km": round(st.get("minecraft:walk_one_cm", 0) / 100000, 1),
+            "blocks_placed": placed,
+            "jumps": st.get("minecraft:jump", 0),
+            "damage_taken": round(st.get("minecraft:damage_taken", 0) / 10, 0),
+            "damage_dealt": round(st.get("minecraft:damage_dealt", 0) / 10, 0),
+            "last_seen": last_seen,
+            "xp_level": xp_level(dat) if dat.exists() else 0,
+        })
+        if cat:
+            try:
+                crudo = json.loads((adir / f"{uuid}.json").read_text())
+            except Exception:
+                crudo = {}
+            hecho = sum(1 for l in cat["logros"]
+                        if (crudo.get("minecraft:" + l["id"]) or crudo.get(l["id"]) or {}).get("done"))
+            out[-1]["adv_done"] = hecho
+            out[-1]["adv_total"] = cat["total"]
+            out[-1]["adv_pct"] = round(hecho * 100 / cat["total"], 1) if cat["total"] else 0
+    out.sort(key=lambda p: (-p["online"], -p["play_hours"]))
+    return out
+
+# ------------------------------------------------------------------ auth routes
+@app.post("/api/login")
+def api_login():
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "?")
+    if rate_limited(ip):
+        return jsonify(error="Demasiados intentos — espera 5 minutos"), 429
+    body = request.get_json(silent=True) or {}
+    name = (body.get("username") or "").strip()
+    pw = body.get("password") or ""
+    users = load_users()
+    u = users.get(name)
+    if not u or not check_pw(pw, u["hash"]):
+        _attempts.setdefault(ip, []).append(time.time())
+        audit(name or "?", f"FAILED login from {ip}")
+        return jsonify(error="Usuario o contraseña incorrectos"), 401
+    if u.get("totp"):
+        tmp = sign(f"2fa|{name}|{time.time() + 180}")
+        audit(name, f"password OK, esperando codigo 2FA ({ip})")
+        return jsonify(need_2fa=True, token=tmp)
+    expires = time.time() + SESSION_HOURS * 3600
+    tok = sign(f"{name}|{expires}")
+    resp = jsonify(ok=True, user=user_payload({"name": name, **u}))
+    resp.set_cookie("panel_session", tok, httponly=True, secure=True,
+                    samesite="Strict", max_age=SESSION_HOURS * 3600)
+    audit(name, f"logged in from {ip}")
+    return resp
+
+# ---------- TOTP (2FA) — implementación pura, RFC 6238 ----------
+def _totp_code(secret_b32: str, counter: int) -> str:
+    key = base64.b32decode(secret_b32)
+    msg = struct.pack(">Q", counter)
+    h = hmac.new(key, msg, hashlib.sha1).digest()
+    o = h[19] & 0x0F
+    num = (struct.unpack(">I", h[o:o + 4])[0] & 0x7FFFFFFF) % 1000000
+    return f"{num:06d}"
+
+def _totp_ok(secret_b32: str, code: str) -> bool:
+    try:
+        code = re.sub(r"\D", "", code or "")[:6]
+        now = int(time.time() // 30)
+        return any(hmac.compare_digest(_totp_code(secret_b32, now + d), code)
+                   for d in (-1, 0, 1))
+    except Exception:
+        return False
+
+@app.post("/api/login2")
+def api_login2():
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "?")
+    if rate_limited(ip):
+        return jsonify(error="Demasiados intentos — espera 5 minutos"), 429
+    body = request.get_json(silent=True) or {}
+    payload = unsign(body.get("token") or "")
+    if not payload or not payload.startswith("2fa|"):
+        return jsonify(error="Sesión 2FA inválida — vuelve a ingresar"), 401
+    _tag, name, exp = payload.split("|")
+    if time.time() > float(exp):
+        return jsonify(error="El código tardó demasiado — vuelve a ingresar"), 401
+    users = load_users()
+    u = users.get(name)
+    if not u or not u.get("totp"):
+        return jsonify(error="Sesión 2FA inválida"), 401
+    if not _totp_ok(u["totp"], body.get("code")):
+        _attempts.setdefault(ip, []).append(time.time())
+        audit(name, f"FAILED 2FA code from {ip}")
+        return jsonify(error="Código incorrecto"), 401
+    expires = time.time() + SESSION_HOURS * 3600
+    tok = sign(f"{name}|{expires}")
+    resp = jsonify(ok=True, user=user_payload({"name": name, **u}))
+    resp.set_cookie("panel_session", tok, httponly=True, secure=True,
+                    samesite="Strict", max_age=SESSION_HOURS * 3600)
+    audit(name, f"logged in with 2FA from {ip}")
+    return resp
+
+# ---------- PIN público ----------
+@app.post("/api/pin")
+def api_pin():
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "?")
+    if rate_limited("pin:" + ip):
+        return jsonify(error="rate", retry=300), 429
+    body = request.get_json(silent=True) or {}
+    pin = (body.get("pin") or "").strip()
+    real = get_settings().get("public_pin")
+    if not real:
+        return jsonify(error="unset"), 503
+    if not pin or not hmac.compare_digest(pin.lower(), real.lower()):
+        _attempts.setdefault("pin:" + ip, []).append(time.time())
+        audit("?", f"FAILED public PIN from {ip}")
+        return jsonify(error="wrong"), 401
+    expires = time.time() + 30 * 86400
+    tok = sign(f"__public__|{expires}")
+    resp = jsonify(ok=True, user=user_payload({"name": "invitado", "role": "public",
+                                               "perms": {}, "must_change": False}))
+    resp.set_cookie("panel_session", tok, httponly=True, secure=True,
+                    samesite="Strict", max_age=30 * 86400)
+    audit("public", f"PIN accepted from {ip}")
+    return resp
+
+@app.post("/api/logout")
+def api_logout():
+    resp = jsonify(ok=True)
+    resp.delete_cookie("panel_session")
+    return resp
+
+@app.get("/api/me")
+def api_me():
+    u = current_user()
+    if not u:
+        return jsonify(user=None)
+    return jsonify(user=user_payload(u))
+
+@app.post("/api/password")
+def api_password():
+    u = require()
+    body = request.get_json(silent=True) or {}
+    old, new = body.get("old") or "", body.get("new") or ""
+    if len(new) < 8:
+        return jsonify(error="La nueva contraseña debe tener al menos 8 caracteres"), 400
+    users = load_users()
+    if not check_pw(old, users[u["name"]]["hash"]):
+        return jsonify(error="La contraseña actual no es correcta"), 403
+    users[u["name"]]["hash"] = hash_pw(new)
+    users[u["name"]]["must_change"] = False
+    save_users(users)
+    audit(u["name"], "changed their password")
+    return jsonify(ok=True)
+
+# ------------------------------------------------------------------ info routes
+@app.get("/api/status")
+def api_status():
+    u = require("view_dashboard")
+    props = read_properties()
+    players = online_players()
+    return jsonify({
+        "state": service_state(),
+        "reachable": players is not None,
+        "online": players or [],
+        "max_players": int(props.get("max-players", 0) or 0),
+        "motd": props.get("motd", "").replace("\\n", " "),
+        "version": mc_version(),
+        "view_distance": props.get("view-distance"),
+        "simulation_distance": props.get("simulation-distance"),
+        "difficulty": props.get("difficulty"),
+        "tick_ms": tick_ms(),
+        "metrics": proc_metrics(),
+        "whitelist_count": len(whitelist()),
+        "engine": engine_kind(),
+        "time": time.time(),
+    })
+
+@app.get("/api/mapauth")
+def api_mapauth():
+    """Caddy (forward_auth) pregunta aquí si quien pide /map/ tiene sesión del panel."""
+    require("view_dashboard")
+    return "", 204
+
+# ------------------------------------------------------------------ biomas
+# Se lee directo del mundo: cada sección de chunk guarda sus biomas en celdas de
+# 4x4x4 (64 por sección) con paleta + índices empaquetados en longs.
+_DIMS_REGION = {
+    "overworld": ("dimensions/minecraft/overworld", "."),
+    "nether":    ("dimensions/minecraft/the_nether", "DIM-1"),
+    "end":       ("dimensions/minecraft/the_end", "DIM1"),
+}
+
+def region_dir(dim: str) -> Path:
+    nuevo, viejo = _DIMS_REGION.get(dim, _DIMS_REGION["overworld"])
+    for p in (MC_DIR / "world" / nuevo / "region", MC_DIR / "world" / viejo / "region"):
+        if p.is_dir():
+            return p
+    return MC_DIR / "world" / nuevo / "region"
+
+def _dim_de_mapa(mapa: str) -> str:
+    m = (mapa or "").lower()
+    if "nether" in m:
+        return "nether"
+    if "end" in m:
+        return "end"
+    return "overworld"
+
+BIOMAS_FILE = DATA_DIR / "biomas.json"
+_biomas_cache = {"mtime": 0, "data": None}
+
+def biomas_catalogo() -> dict:
+    try:
+        m = BIOMAS_FILE.stat().st_mtime
+    except OSError:
+        return {}
+    if _biomas_cache["data"] is None or m != _biomas_cache["mtime"]:
+        try:
+            _biomas_cache["data"] = json.loads(BIOMAS_FILE.read_text())
+            _biomas_cache["mtime"] = m
+        except Exception:
+            _biomas_cache["data"] = {}
+    return _biomas_cache["data"] or {}
+
+def _chunk_nbt(dim: str, cx: int, cz: int):
+    import zlib
+    import nbt as _n
+    path = region_dir(dim) / f"r.{cx >> 5}.{cz >> 5}.mca"
+    try:
+        with open(path, "rb") as f:
+            i = ((cx & 31) + (cz & 31) * 32) * 4
+            f.seek(i)
+            head = f.read(4)
+            if len(head) < 4:
+                return None
+            off = struct.unpack(">I", head)[0] >> 8
+            if off == 0:
+                return None
+            f.seek(off * 4096)
+            cab = f.read(5)
+            if len(cab) < 5:
+                return None
+            ln = struct.unpack(">I", cab[:4])[0]
+            comp = cab[4]
+            raw = f.read(max(0, ln - 1))
+    except Exception:
+        return None
+    try:
+        if comp == 1:
+            raw = gzip.decompress(raw)
+        elif comp == 2:
+            raw = zlib.decompress(raw)
+        elif comp != 3:
+            return None
+        _nombre, root = _n.parse(raw)
+        return root
+    except Exception:
+        return None
+
+def biomas_columna(dim: str, x: int, z: int):
+    """Toda la columna de biomas en ese x/z: [(y_base, id)] de abajo a arriba.
+    La resolución vertical del juego es de 4 bloques, así que hay una entrada
+    por cada celda de 4."""
+    import nbt as _n
+    root = _chunk_nbt(dim, x >> 4, z >> 4)
+    if root is None:
+        return []
+    secs = _n.cget(root.v, "sections") or _n.cget(root.v, "Sections")
+    if secs is None:
+        return []
+    col = []
+    base = ((z & 15) >> 2) * 4 + ((x & 15) >> 2)
+    for s in secs.v.items:
+        ty = _n.cget(s, "Y")
+        b = _n.cget(s, "biomes")
+        if ty is None or b is None:
+            continue
+        pal = _n.cget(b.v, "palette")
+        if pal is None or not pal.v.items:
+            continue
+        nombres = [n.decode() if isinstance(n, bytes) else str(n) for n in pal.v.items]
+        datos = _n.cget(b.v, "data")
+        longs = None
+        if len(nombres) > 1 and datos is not None:
+            longs = datos.v.items if hasattr(datos.v, "items") else datos.v
+        bits = max(1, (len(nombres) - 1).bit_length())
+        por_long = 64 // bits
+        for cy in range(4):
+            if longs is None:
+                nom = nombres[0]
+            else:
+                idx = cy * 16 + base
+                j, k = divmod(idx, por_long)
+                if j >= len(longs):
+                    nom = nombres[0]
+                else:
+                    val = (longs[j] >> (k * bits)) & ((1 << bits) - 1)
+                    nom = nombres[val] if val < len(nombres) else nombres[0]
+            col.append((ty.v * 16 + cy * 4, nom))
+    col.sort()
+    return col
+
+def bioma_en(dim: str, x: int, y: int, z: int):
+    """Devuelve el id del bioma ('minecraft:plains') en ese bloque, o None."""
+    hallado = None
+    for yb, nom in biomas_columna(dim, x, z):
+        if yb <= y:
+            hallado = nom
+        else:
+            break
+    return hallado
+
+def _tramos(col):
+    """Une celdas consecutivas del mismo bioma → [(id, y_min, y_max)]."""
+    out = []
+    for yb, nom in col:
+        if out and out[-1][0] == nom and out[-1][2] + 1 == yb:
+            out[-1][2] = yb + 3
+        else:
+            out.append([nom, yb, yb + 3])
+    return out
+
+@app.get("/api/biome")
+def api_biome():
+    require("view_dashboard")
+    def suelo(v, por_defecto):
+        return int(float(v) // 1) if v not in (None, "") else por_defecto
+    # y="auto" (o sin y): el clic vino de un tile de baja resolución, donde la
+    # altura no significa nada — BlueMap manda y=0 y ahí abajo todo son cuevas.
+    # En ese caso se usa el bioma de la CIMA de la columna, que es el de la
+    # superficie: los biomas de arriba se extienden hacia el cielo.
+    crudo_y = request.args.get("y")
+    auto = crudo_y in (None, "", "auto")
+    try:
+        x = suelo(request.args.get("x"), 0)
+        y = 0 if auto else suelo(crudo_y, 64)
+        z = suelo(request.args.get("z"), 0)
+    except (TypeError, ValueError):
+        return jsonify(error="coordenadas inválidas"), 400
+    if max(abs(x), abs(z)) > 30_000_000 or not (-2048 <= y <= 2048):
+        return jsonify(error="fuera del mundo"), 400
+    dim = _dim_de_mapa(request.args.get("mapa", ""))
+    col = biomas_columna(dim, x, z)
+    if not col:
+        return jsonify(found=False)
+    if auto:
+        y = col[-1][0]
+    cat = biomas_catalogo()
+
+    def nombres(bid):
+        corto = bid.split(":")[-1]
+        e = cat.get(bid) or cat.get(corto) or {}
+        bonito = corto.replace("_", " ").title()
+        return e.get("es") or bonito, e.get("en") or bonito
+
+    aqui = bioma_en(dim, x, y, z) or col[-1][1]
+    es, en = nombres(aqui)
+    # el resto de la columna: lo que hay DEBAJO del punto y es distinto
+    debajo = []
+    for bid, y0, y1 in _tramos(col):
+        if y0 > y or bid == aqui:
+            continue
+        e, i = nombres(bid)
+        debajo.append({"id": bid, "es": e, "en": i, "y0": y0, "y1": min(y1, y)})
+    debajo.reverse()      # de arriba hacia abajo
+    return jsonify(found=True, id=aqui, es=es, en=en, y=y, debajo=debajo[:4])
+
+@app.get("/api/players")
+def api_players():
+    require("view_players")
+    return jsonify(players=player_stats(), whitelist=whitelist())
+
+# --- estadísticas detalladas estilo Aternos (distancias, minados, usados, matados)
+_DIST_KEYS = [  # (clave stat, id de fila para el frontend)
+    ("minecraft:aviate_one_cm", "elytra"),   # el id real del juego es "aviate" (élytros)
+    ("minecraft:walk_one_cm", "walk"),
+    ("minecraft:sprint_one_cm", "sprint"),
+    ("minecraft:walk_on_water_one_cm", "walk_water"),
+    ("minecraft:walk_under_water_one_cm", "under_water"),
+    ("minecraft:crouch_one_cm", "crouch"),
+    ("minecraft:swim_one_cm", "swim"),
+    ("minecraft:fall_one_cm", "fall"),
+    ("minecraft:climb_one_cm", "climb"),
+    ("minecraft:horse_one_cm", "horse"),
+    ("minecraft:boat_one_cm", "boat"),
+    ("minecraft:minecart_one_cm", "minecart"),
+    ("minecraft:pig_one_cm", "pig"),
+    ("minecraft:strider_one_cm", "strider"),
+    # fly_one_cm queda FUERA a propósito: cuenta cada salto corriendo (número
+    # inflado sin sentido) y duplica lo ya contado — Aternos tampoco lo muestra.
+]
+
+@app.get("/api/playerstats/<uuid>")
+def api_playerstats(uuid):
+    require("view_players")
+    uuid = uuid.lower()
+    if not UUID_RE.match(uuid):
+        abort(400)
+    f = stats_dir() / f"{uuid}.json"
+    try:
+        allst = json.loads(f.read_text()).get("stats", {})
+    except Exception:
+        allst = {}
+    cust = allst.get("minecraft:custom", {})
+
+    def blocks(cm):  # cm -> bloques (como Aternos)
+        return int(round(cm / 100))
+
+    dist, dtotal = [], 0
+    for key, rid in _DIST_KEYS:
+        v = cust.get(key, 0)
+        if v > 0:
+            dist.append({"id": rid, "n": blocks(v)})
+            dtotal += v
+    dist.sort(key=lambda d: -d["n"])
+
+    def cat(section):
+        items = [{"id": k.split(":", 1)[-1], "n": v}
+                 for k, v in allst.get(section, {}).items() if v > 0]
+        items.sort(key=lambda d: -d["n"])
+        return {"total": sum(d["n"] for d in items), "items": items}
+
+    base = next((p for p in player_stats() if p["uuid"] == uuid), None)
+    return jsonify(
+        base=base,
+        distance={"total": blocks(dtotal), "rows": dist},
+        mined=cat("minecraft:mined"),
+        used=cat("minecraft:used"),
+        killed=cat("minecraft:killed"),
+    )
+
+# ------------------------------------------------------------------ logros (advancements)
+# El catálogo (los 126 logros con sus textos y criterios) lo construye
+# scripts/build-advancements.py a partir del jar oficial. Aquí solo se lee.
+def adv_dir() -> Path:
+    for cand in (MC_DIR / "world/players/advancements", MC_DIR / "world/advancements"):
+        if cand.is_dir():
+            return cand
+    return MC_DIR / "world/players/advancements"
+
+ADV_FILE = DATA_DIR / "advancements.json"
+_adv_cache = {"mtime": 0, "data": None}
+
+def adv_catalog():
+    try:
+        m = ADV_FILE.stat().st_mtime
+    except Exception:
+        return None
+    if _adv_cache["data"] is None or m != _adv_cache["mtime"]:
+        try:
+            _adv_cache["data"] = json.loads(ADV_FILE.read_text())
+            _adv_cache["mtime"] = m
+        except Exception:
+            return None
+    return _adv_cache["data"]
+
+def adv_player_raw(uuid):
+    try:
+        return json.loads((adv_dir() / f"{uuid}.json").read_text())
+    except Exception:
+        return {}
+
+def adv_eval(logro, hechos):
+    """Devuelve (completado, grupos_cumplidos, grupos_totales).
+
+    En Minecraft `requirements` es una lista de grupos: cada grupo se cumple con
+    CUALQUIERA de los criterios que contiene, y hacen falta TODOS los grupos.
+    Por eso 'Monster Hunter' (un grupo con 41 mobs) se completa matando uno solo,
+    y 'Monsters Hunted' (41 grupos de uno) exige matarlos todos.
+    """
+    grupos = logro.get("requirements") or [[c] for c in logro.get("criteria", [])]
+    ok = sum(1 for g in grupos if any(c in hechos for c in g))
+    return ok == len(grupos) and len(grupos) > 0, ok, len(grupos)
+
+def adv_resumen(uuid, cat=None):
+    """(completados, total) — barato, para la cuadrícula de jugadores."""
+    cat = cat or adv_catalog()
+    if not cat:
+        return None, None
+    crudo = adv_player_raw(uuid)
+    hecho = 0
+    for l in cat["logros"]:
+        e = crudo.get("minecraft:" + l["id"]) or crudo.get(l["id"])
+        if e and e.get("done"):
+            hecho += 1
+    return hecho, cat["total"]
+
+@app.get("/api/advancements/<uuid>")
+def api_advancements(uuid):
+    require("view_players")          # mismo permiso que el resto de estadísticas
+    uuid = uuid.lower()
+    if not UUID_RE.match(uuid):
+        abort(400)
+    cat = adv_catalog()
+    if not cat:
+        return jsonify(error="catalogo_no_generado", logros=[], total=0), 200
+    crudo = adv_player_raw(uuid)
+    salida, hechos_tot = [], 0
+    for l in cat["logros"]:
+        e = crudo.get("minecraft:" + l["id"]) or crudo.get(l["id"]) or {}
+        hechos = e.get("criteria") or {}          # criterio -> fecha
+        done = bool(e.get("done"))
+        _calc, ok, tot = adv_eval(l, hechos)
+        if done:
+            hechos_tot += 1
+        pasos = None
+        if tot > 1:                                # solo los de varios pasos traen detalle
+            pasos = [{"id": c,
+                      "es": l["labels"].get(c, {}).get("es", c),
+                      "en": l["labels"].get(c, {}).get("en", c),
+                      "d": hechos.get(c)}
+                     for c in l["criteria"]]
+            # ordenados por el nombre en INGLÉS, que es el que se enseña ahora:
+            # ordenar por el español dejaba la lista en un orden que no cuadraba
+            # con nada de lo que se ve en pantalla.
+            pasos.sort(key=lambda p: (p["d"] is None, (p["en"] or "").lower()))
+        salida.append({
+            "id": l["id"], "tab": l["tab"], "dim": l.get("dim", "overworld"),
+            "icon": l["icon"], "frame": l["frame"],
+            "hidden": l["hidden"], "title": l["title"], "desc": l["desc"],
+            "done": done, "ok": ok, "tot": tot,
+            "date": max(hechos.values()) if done and hechos else None,
+            "steps": pasos,
+        })
+    return jsonify(version=cat.get("version"), total=cat["total"],
+                   done=hechos_tot, tabs=cat.get("por_pestana", {}), logros=salida)
+
+@app.get("/api/audit")
+def api_audit():
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    lines = []
+    if AUDIT_F.exists():
+        lines = AUDIT_F.read_text().splitlines()[-200:]
+    return jsonify(lines=lines)
+
+# ------------------------------------------------------------------ action routes
+def _csrf_ok():
+    return request.headers.get("X-Panel", "") == "1"   # simple CSRF shield (custom header)
+
+def do_cmd(u, perm, cmd, action_desc):
+    if not _csrf_ok():
+        abort(400)
+    if not has_perm(u, perm):
+        abort(403)
+    ok, out = rcon_try(cmd)
+    audit(u["name"], f"{action_desc} -> {out[:120]}")
+    return jsonify(ok=ok, output=out)
+
+SAFE_NAME = re.compile(r"^[A-Za-z0-9_]{3,16}$")
+
+@app.post("/api/whitelist/add")
+def api_wl_add():
+    u = require(); body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not SAFE_NAME.match(name):
+        return jsonify(error="Nombre de Minecraft inválido"), 400
+    return do_cmd(u, "whitelist", f"whitelist add {name}", f"whitelisted {name}")
+
+@app.post("/api/whitelist/remove")
+def api_wl_remove():
+    u = require(); body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not SAFE_NAME.match(name):
+        return jsonify(error="Nombre de Minecraft inválido"), 400
+    return do_cmd(u, "whitelist", f"whitelist remove {name}", f"removed {name} from whitelist")
+
+@app.post("/api/ban")
+def api_ban():
+    u = require(); body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not SAFE_NAME.match(name):
+        return jsonify(error="Nombre de Minecraft inválido"), 400
+    return do_cmd(u, "ban", f"ban {name}", f"BANNED {name}")
+
+@app.post("/api/pardon")
+def api_pardon():
+    u = require(); body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not SAFE_NAME.match(name):
+        return jsonify(error="Nombre de Minecraft inválido"), 400
+    return do_cmd(u, "ban", f"pardon {name}", f"unbanned {name}")
+
+@app.post("/api/kick")
+def api_kick():
+    u = require(); body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not SAFE_NAME.match(name):
+        return jsonify(error="Nombre de Minecraft inválido"), 400
+    return do_cmd(u, "kick", f"kick {name}", f"kicked {name}")
+
+@app.post("/api/say")
+def api_say():
+    u = require(); body = request.get_json(silent=True) or {}
+    msg = (body.get("message") or "").strip()[:200]
+    if not msg:
+        return jsonify(error="El mensaje está vacío"), 400
+    msg = msg.replace("\n", " ")
+    return do_cmd(u, "say", f"say [{u['name']}] {msg}", f"said: {msg}")
+
+@app.post("/api/restart")
+def api_restart():
+    u = require()
+    if not _csrf_ok() or not has_perm(u, "restart"):
+        abort(403)
+    audit(u["name"], "RESTARTED the server")
+    subprocess.Popen(["sudo", "-n", "systemctl", "restart", SERVICE])
+    return jsonify(ok=True, output="Reiniciando…")
+
+# ------------------------------------------------------------------ console
+@app.get("/api/console/tail")
+def api_console():
+    require("view_console")
+    log = MC_DIR / "logs/latest.log"
+    try:
+        with open(log, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 40_000))
+            text = f.read().decode("utf-8", "replace")
+        lines = text.splitlines()[-250:]
+    except FileNotFoundError:
+        lines = ["(no log yet)"]
+    return jsonify(lines=lines)
+
+@app.post("/api/console/send")
+def api_console_send():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    cmd = (body.get("command") or "").strip()[:300]
+    if not cmd or cmd.startswith("/"):
+        cmd = cmd.lstrip("/")
+    if not cmd:
+        return jsonify(error="El comando está vacío"), 400
+    ok, out = rcon_try(cmd)
+    audit(u["name"], f"console: {cmd}")
+    return jsonify(ok=ok, output=out)
+
+# ------------------------------------------------------------------ backups
+@app.get("/api/backups")
+def api_backups():
+    require("backups")
+    bdir = MC_DIR / "backups"
+    items = []
+    if bdir.is_dir():
+        for f in sorted(bdir.glob("world-*.tar.gz"), reverse=True):
+            items.append({"name": f.name, "size_mb": round(f.stat().st_size / 1e6, 1),
+                          "mtime": f.stat().st_mtime})
+    return jsonify(backups=items)
+
+@app.post("/api/backups/now")
+def api_backup_now():
+    u = require("backups")
+    if not _csrf_ok():
+        abort(400)
+    script = MC_DIR / "backup.sh"
+    if not script.exists():
+        return jsonify(error="backup.sh not found"), 500
+    subprocess.Popen(["bash", str(script)])
+    audit(u["name"], "started a manual backup")
+    return jsonify(ok=True, output="Copia iniciada — aparece en la lista en ~1 minuto")
+
+@app.get("/api/backups/download/<name>")
+def api_backup_dl(name):
+    require("backups")
+    if not re.match(r"^world-[\w.-]+\.tar\.gz$", name):
+        abort(400)
+    return send_file(MC_DIR / "backups" / name, as_attachment=True)
+
+# ------------------------------------------------------------------ inventory x-ray (admin only)
+DATA_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+def _uuid_name(uuid):
+    return usercache().get(uuid) or uuid[:8]
+
+# ---- item detail extraction (nombre custom, lore, encantamientos, trim…) ----
+_MC_NAMED_COLORS = {
+    "black": "#000000", "dark_blue": "#0000AA", "dark_green": "#00AA00", "dark_aqua": "#00AAAA",
+    "dark_red": "#AA0000", "dark_purple": "#AA00AA", "gold": "#FFAA00", "gray": "#AAAAAA",
+    "dark_gray": "#555555", "blue": "#5555FF", "green": "#55FF55", "aqua": "#55FFFF",
+    "red": "#FF5555", "light_purple": "#FF55FF", "yellow": "#FFFF55", "white": "#FFFFFF",
+}
+_SECT_CODE = re.compile("§([0-9a-fk-orx])", re.I)
+
+def _pyify(t, v):
+    """NBT payload -> plain python (para componentes de texto)."""
+    import nbt as _n
+    if t == _n.TAG_STRING:
+        return v.decode("utf-8", "replace")
+    if t == _n.TAG_LIST:
+        return [_pyify(v.etype, i) for i in v.items]
+    if t == _n.TAG_COMPOUND:
+        return {k.decode("utf-8", "replace"): _pyify(tag.t, tag.v) for k, tag in v}
+    return v
+
+_CODE_HEX = {"0":"#000000","1":"#0000AA","2":"#00AA00","3":"#00AAAA","4":"#AA0000","5":"#AA00AA",
+             "6":"#FFAA00","7":"#AAAAAA","8":"#555555","9":"#5555FF","a":"#55FF55","b":"#55FFFF",
+             "c":"#FF5555","d":"#FF55FF","e":"#FFFF55","f":"#FFFFFF"}
+
+def _legacy_segments(s, base):
+    """'§eYELMO §cDE...' -> segmentos con estilos, fiel a los códigos legacy."""
+    segs, cur, buf, i = [], dict(base), "", 0
+    def flush():
+        nonlocal buf
+        if buf:
+            segs.append({**cur, "t": buf})
+            buf = ""
+    while i < len(s):
+        ch = s[i]
+        if ch == "§" and i + 1 < len(s):
+            code = s[i + 1].lower()
+            i += 2
+            flush()
+            if code in _CODE_HEX:
+                cur = dict(base)          # un código de color resetea estilos
+                cur["c"] = _CODE_HEX[code]
+            elif code == "l": cur["b"] = True
+            elif code == "o": cur["i"] = True
+            elif code == "n": cur["u"] = True
+            elif code == "m": cur["s"] = True
+            elif code == "r": cur = dict(base)
+            continue
+        buf += ch
+        i += 1
+    flush()
+    return segs
+
+def _seg_walk(x, inh, out, depth=0):
+    """Componente de texto (str|dict|list) -> lista de segmentos {t,c,b,i,u,s} con herencia."""
+    if x is None or depth > 12:
+        return
+    if isinstance(x, (int, float, bool)):
+        out.append({**inh, "t": str(x)})
+        return
+    if isinstance(x, str):
+        st = x.strip()
+        if st[:1] in "{[":
+            try:
+                _seg_walk(json.loads(st), inh, out, depth + 1)
+                return
+            except Exception:
+                pass
+        if "§" in x:
+            out.extend(_legacy_segments(x, inh))
+        elif x:
+            out.append({**inh, "t": x})
+        return
+    if isinstance(x, list):
+        for i in x:
+            _seg_walk(i, inh, out, depth + 1)
+        return
+    if isinstance(x, dict):
+        st = dict(inh)
+        c = x.get("color")
+        if isinstance(c, str):
+            st["c"] = c if c.startswith("#") else _MC_NAMED_COLORS.get(c, st.get("c"))
+        for key, flag in (("bold", "b"), ("italic", "i"), ("underlined", "u"),
+                          ("strikethrough", "s")):
+            if key in x:
+                v = x[key]
+                st[flag] = (v != "false") if isinstance(v, str) else bool(v)
+        t = x.get("text", "")
+        if isinstance(t, str):
+            if "§" in t:
+                out.extend(_legacy_segments(t, st))
+            elif t:
+                out.append({**st, "t": t})
+        else:
+            _seg_walk(t, st, out, depth + 1)
+        if not t and x.get("translate"):
+            out.append({**st, "t": str(x["translate"]).split(".")[-1].replace("_", " ")})
+        for e in (x.get("extra") or []):
+            _seg_walk(e, st, out, depth + 1)
+        return
+    out.append({**inh, "t": str(x)})
+
+def _segments(raw):
+    """-> lista compacta de segmentos; [] si no hay texto."""
+    out = []
+    _seg_walk(raw, {}, out)
+    segs = []
+    for s in out:
+        t = s.pop("t", "")
+        if not t:
+            continue
+        seg = {"t": t[:200]}
+        for k in ("c", "b", "i", "u", "s"):
+            if s.get(k):
+                seg[k] = s[k] if k == "c" else True
+            elif k == "i" and s.get("i") is False:
+                seg["i"] = False
+        segs.append(seg)
+        if len(segs) >= 40:
+            break
+    return segs
+
+def _text_component(raw):
+    """Compat: -> (texto plano, primer color, italic|None)."""
+    segs = _segments(raw)
+    text = "".join(s["t"] for s in segs)
+    color = next((s["c"] for s in segs if s.get("c")), None)
+    italic = next((s["i"] for s in segs if "i" in s), None)
+    return text, color, italic
+
+def _ench_entries(ct):
+    """componente enchantments/stored_enchantments -> [(id_corto, nivel)] en cualquier formato."""
+    import nbt as _n
+    out = []
+    payload = ct.v
+    if isinstance(payload, _n.NList):            # formato viejo: lista de {id, lvl}
+        for item in payload.items:
+            eid, lvl = None, 1
+            for k, tg in item:
+                if k == b"id" and tg.t == _n.TAG_STRING:
+                    eid = tg.v.decode().replace("minecraft:", "")
+                elif k in (b"lvl", b"level"):
+                    lvl = int(tg.v)
+            if eid:
+                out.append((eid, lvl))
+        return out
+    entries = payload                             # compound: {levels:{...}} o mapa directo
+    for k, tg in payload:
+        if k == b"levels" and tg.t == _n.TAG_COMPOUND:
+            entries = tg.v
+            break
+    for k, tg in entries:
+        key = k.decode()
+        if key in ("show_in_tooltip", "levels"):
+            continue
+        if tg.t in (_n.TAG_BYTE, _n.TAG_SHORT, _n.TAG_INT):
+            out.append((key.replace("minecraft:", ""), int(tg.v)))
+    return out
+
+def _item_dict(comp_items):
+    """comp_items = payload list of an item compound -> friendly dict."""
+    import nbt as _n
+    d = {"id": "", "count": 1, "slot": None, "enchanted": False, "inside": None, "damage": None,
+         "name": None, "name_color": None, "name_italic": None, "name_seg": None, "ench": [],
+         "trim": None, "lore": [], "unbreakable": False, "rarity": None, "max_damage": None}
+    custom_name = item_name = None
+    custom_seg = item_seg = None
+    for name, tag in comp_items:
+        key = name.decode()
+        if key == "id":
+            d["id"] = tag.v.decode().replace("minecraft:", "")
+        elif key in ("count", "Count"):
+            d["count"] = tag.v
+        elif key == "Slot":
+            d["slot"] = tag.v
+        elif key == "components":
+            for cn, ct in tag.v:
+                ck = cn.decode()
+                if ck in ("minecraft:enchantments", "minecraft:stored_enchantments"):
+                    ent = _ench_entries(ct)
+                    if ent:
+                        d["enchanted"] = True
+                        d["ench"] += [{"id": e, "lvl": l} for e, l in ent]
+                elif ck == "minecraft:custom_name":
+                    raw = _pyify(ct.t, ct.v)
+                    custom_name = _text_component(raw)
+                    custom_seg = _segments(raw)
+                elif ck == "minecraft:item_name":
+                    raw = _pyify(ct.t, ct.v)
+                    item_name = _text_component(raw)
+                    item_seg = _segments(raw)
+                elif ck == "minecraft:lore":
+                    try:
+                        for entry in _pyify(ct.t, ct.v)[:16]:
+                            segs = _segments(entry)
+                            if segs:
+                                d["lore"].append({"seg": segs})
+                    except Exception:
+                        pass
+                elif ck == "minecraft:trim":
+                    mat = pat = None
+                    for k2, tg2 in ct.v:
+                        if k2 == b"material":
+                            mat = tg2.v.decode().replace("minecraft:", "") if tg2.t == _n.TAG_STRING else "custom"
+                        elif k2 == b"pattern":
+                            pat = tg2.v.decode().replace("minecraft:", "") if tg2.t == _n.TAG_STRING else "custom"
+                    if mat or pat:
+                        d["trim"] = {"pattern": pat, "material": mat}
+                elif ck == "minecraft:base_color" and ct.t == _n.TAG_STRING:
+                    d["shield_base"] = ct.v.decode().replace("minecraft:", "")
+                elif ck == "minecraft:banner_patterns":
+                    pats = []
+                    try:
+                        for entry in ct.v.items:
+                            pat = col = None
+                            for k2, tg2 in entry:
+                                if k2 == b"pattern" and tg2.t == _n.TAG_STRING:
+                                    pat = tg2.v.decode().replace("minecraft:", "")
+                                elif k2 == b"color" and tg2.t == _n.TAG_STRING:
+                                    col = tg2.v.decode()
+                            if pat and col:
+                                pats.append([pat, col])
+                    except Exception:
+                        pass
+                    if pats:
+                        d["banner_pats"] = pats[:8]
+                elif ck == "minecraft:unbreakable":
+                    d["unbreakable"] = True
+                elif ck == "minecraft:rarity" and ct.t == _n.TAG_STRING:
+                    d["rarity"] = ct.v.decode()
+                elif ck == "minecraft:max_damage":
+                    d["max_damage"] = ct.v
+                elif ck == "minecraft:damage":
+                    d["damage"] = ct.v
+                elif ck == "minecraft:container":
+                    inner = []
+                    for entry in ct.v.items:  # list of {slot, item}
+                        slot_v, item_d = None, None
+                        for en, et in entry:
+                            if en == b"slot":
+                                slot_v = et.v
+                            elif en == b"item":
+                                item_d = _item_dict(et.v)
+                        if item_d is not None:
+                            item_d["slot"] = slot_v
+                            inner.append(item_d)
+                    d["inside"] = inner
+                elif ck == "minecraft:bundle_contents":
+                    d["inside"] = [_item_dict(it) for it in ct.v.items]
+    named = custom_name or item_name
+    if named:
+        d["name"] = named[0][:120] or None
+        d["name_color"] = named[1]
+        d["name_italic"] = named[2] if named[2] is not None else (custom_name is not None)
+        d["name_seg"] = custom_seg or item_seg
+    return d
+
+def _load_player(uuid):
+    import nbt as _n
+    path = MC_DIR / "world/players/data" / f"{uuid}.dat"
+    if not path.exists():
+        return None, None
+    name, root, gz = _n.load(path)
+    return path, root
+
+@app.get("/api/player/<uuid>/gear")
+def api_player_gear(uuid):
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    uuid = uuid.lower()
+    if not DATA_UUID.match(uuid):
+        abort(400)
+    import nbt as _n
+    path, root = _load_player(uuid)
+    if root is None:
+        return jsonify(error="No hay datos de este jugador"), 404
+    c = root.v
+    def num(key, default=0):
+        t = _n.cget(c, key)
+        return t.v if t else default
+    inv = _n.cget(c, "Inventory")
+    ender = _n.cget(c, "EnderItems")
+    equipment = {}
+    eq = _n.cget(c, "equipment")
+    if eq:
+        for en, et in eq.v:
+            equipment[en.decode()] = _item_dict(et.v)
+    else:  # older format: armor in slots 100-103, offhand -106
+        pass
+    pname = _uuid_name(uuid)
+    online = pname in (online_players() or [])
+    audit(u["name"], f"viewed inventory of {pname}")
+    return jsonify({
+        "uuid": uuid, "name": pname, "online": online,
+        "health": round(float(num("Health", 0)), 1),
+        "food": num("foodLevel", 0),
+        "xp_level": num("XpLevel", 0),
+        "inventory": [_item_dict(it) for it in inv.v.items] if inv else [],
+        "ender": [_item_dict(it) for it in ender.v.items] if ender else [],
+        "equipment": equipment,
+    })
+
+def _slot_command_name(slot, where):
+    if where == "ender":
+        return f"enderchest.{slot}"
+    if 0 <= slot <= 8:
+        return f"hotbar.{slot}"
+    if 9 <= slot <= 35:
+        return f"inventory.{slot-9}"
+    if slot == 100: return "armor.feet"
+    if slot == 101: return "armor.legs"
+    if slot == 102: return "armor.chest"
+    if slot == 103: return "armor.head"
+    if slot == -106: return "weapon.offhand"
+    return None
+
+@app.post("/api/player/<uuid>/remove_item")
+def api_player_remove(uuid):
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    uuid = uuid.lower()
+    if not DATA_UUID.match(uuid):
+        abort(400)
+    body = request.get_json(silent=True) or {}
+    where = body.get("where")          # 'inv' | 'ender' | 'equipment'
+    slot = body.get("slot")            # int for inv/ender; str key for equipment
+    nested = body.get("nested")        # index inside shulker/bundle, or None
+    pname = _uuid_name(uuid)
+    online = pname in (online_players() or [])
+    if online:
+        if nested is not None or where == "equipment":
+            return jsonify(error=f"{pname} está conectado — para editar dentro de cajas o armadura debe salir primero"), 409
+        cmd_slot = _slot_command_name(int(slot), "ender" if where == "ender" else "inv")
+        if not cmd_slot:
+            return jsonify(error="Slot inválido"), 400
+        ok, out = rcon_try(f"item replace entity {pname} {cmd_slot} with minecraft:air")
+        audit(u["name"], f"removed item (online) from {pname} {cmd_slot} -> {out[:80]}")
+        return jsonify(ok=ok, output=out)
+    # offline: NBT surgery with backup
+    import nbt as _n
+    path = MC_DIR / "world/players/data" / f"{uuid}.dat"
+    if not path.exists():
+        return jsonify(error="No hay archivo de este jugador"), 404
+    nm, root, gz = _n.load(path)
+    c = root.v
+    removed = False
+    if where in ("inv", "ender"):
+        lst = _n.cget(c, "Inventory" if where == "inv" else "EnderItems")
+        if lst:
+            for i, it in enumerate(lst.v.items):
+                slot_t = _n.cget(it, "Slot")
+                if slot_t is not None and slot_t.v == int(slot):
+                    if nested is None:
+                        del lst.v.items[i]
+                        removed = True
+                    else:
+                        comps = _n.cget(it, "components")
+                        if comps:
+                            for cn, ct in comps.v:
+                                if cn in (b"minecraft:container",):
+                                    for j, entry in enumerate(ct.v.items):
+                                        sv = None
+                                        for en, et in entry:
+                                            if en == b"slot": sv = et.v
+                                        if sv == int(nested):
+                                            del ct.v.items[j]; removed = True; break
+                                elif cn == b"minecraft:bundle_contents":
+                                    if 0 <= int(nested) < len(ct.v.items):
+                                        del ct.v.items[int(nested)]; removed = True
+                    break
+    elif where == "equipment":
+        eq = _n.cget(c, "equipment")
+        if eq and _n.cdel(eq.v, str(slot)):
+            removed = True
+    if not removed:
+        return jsonify(error="No se encontró ese ítem (¿cambió algo?)"), 404
+    shutil_backup = str(path) + f".bak-{int(time.time())}"
+    import shutil as _sh
+    _sh.copy2(path, shutil_backup)
+    # Estas copias viven DENTRO de world/, así que además de ocupar disco se
+    # cuelan en cada copia de seguridad del mundo. Se guardan las 3 últimas de
+    # cada jugador y las demás fuera.
+    try:
+        previas = sorted(path.parent.glob(path.name + ".bak-*"),
+                         key=lambda p: p.stat().st_mtime, reverse=True)
+        for viejo in previas[3:]:
+            viejo.unlink(missing_ok=True)
+    except Exception:
+        pass
+    _n.save(path, nm, root, gz=True)
+    _n.load(path)  # verify it still parses
+    audit(u["name"], f"removed item (offline) from {pname} {where}[{slot}]" + (f" inside[{nested}]" if nested is not None else ""))
+    return jsonify(ok=True, output=f"Ítem eliminado de {pname}")
+
+@app.post("/api/player/action")
+def api_player_action():
+    u = require("player_actions")
+    if not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    act = body.get("act")
+    if not SAFE_NAME.match(name) or act not in ("heal", "feed", "kill"):
+        return jsonify(error="Petición inválida"), 400
+    if name not in (online_players() or []):
+        return jsonify(error=f"{name} no está conectado ahora"), 409
+    cmds = {"heal": f"effect give {name} minecraft:instant_health 1 10 true",
+            "feed": f"effect give {name} minecraft:saturation 1 10 true",
+            "kill": f"kill {name}"}
+    ok, out = rcon_try(cmds[act])
+    audit(u["name"], f"{act.upper()} on {name} -> {out[:80]}")
+    return jsonify(ok=ok, output=out or "Hecho")
+
+# ------------------------------------------------------------------ plugins (admin)
+PLUGIN_DIR = MC_DIR / "plugins"
+
+def engine_kind():
+    if list(MC_DIR.glob("paper-*.jar")) or (MC_DIR / ".paper-engine").exists():
+        return "paper"
+    return "vanilla"
+
+@app.get("/api/plugins")
+def api_plugins():
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    items = []
+    if PLUGIN_DIR.is_dir():
+        for f in sorted(PLUGIN_DIR.glob("*.jar")):
+            items.append({"name": f.name, "size_mb": round(f.stat().st_size / 1e6, 2)})
+    return jsonify(engine=engine_kind(), plugins=items)
+
+@app.post("/api/plugins/upload")
+def api_plugins_upload():
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    if engine_kind() != "paper":
+        return jsonify(error="El motor aún es vanilla — primero hay que migrar a Paper"), 400
+    f = request.files.get("file")
+    if not f or not f.filename.lower().endswith(".jar"):
+        return jsonify(error="Sube un archivo .jar"), 400
+    fname = re.sub(r"[^A-Za-z0-9._-]", "_", f.filename)[:80]
+    PLUGIN_DIR.mkdir(exist_ok=True)
+    dest = PLUGIN_DIR / fname
+    f.save(dest)
+    if dest.stat().st_size > 40_000_000:
+        dest.unlink()
+        return jsonify(error="Máximo 40 MB"), 400
+    audit(u["name"], f"uploaded plugin {fname}")
+    return jsonify(ok=True, output=f"{fname} subido — se activa al reiniciar")
+
+@app.post("/api/plugins/delete")
+def api_plugins_delete():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", (body.get("name") or ""))
+    src = PLUGIN_DIR / name
+    if not src.exists():
+        return jsonify(error="No existe ese plugin"), 404
+    trash = PLUGIN_DIR / "_removed"
+    trash.mkdir(exist_ok=True)
+    src.rename(trash / f"{int(time.time())}-{name}")
+    _limpiar_papelera(trash, dias=90, maximo=20)      # los jar pesan hasta 40 MB
+    audit(u["name"], f"removed plugin {name}")
+    return jsonify(ok=True, output=f"{name} quitado — se aplica al reiniciar")
+
+# ------------------------------------------------------------------ item icons (self-hosted, extracted from the official client)
+ICONS_DIR = PANEL_DIR / "icons"
+
+# ítems cuya textura no se llama igual que el ítem
+ICON_ALIAS = {
+    "magma_block": "magma", "snow_block": "snow", "quartz_block": "quartz_block_side",
+    "grass_block": "grass_block_side", "dirt_path": "dirt_path_top", "farmland": "farmland_moist",
+    "glass_pane": "glass", "smooth_stone": "smooth_stone", "smooth_stone_slab": "smooth_stone",
+    "smooth_sandstone": "sandstone_top", "smooth_red_sandstone": "red_sandstone_top",
+    "smooth_quartz": "quartz_block_bottom", "dried_kelp_block": "dried_kelp_side",
+    "tnt": "tnt_side", "crafting_table": "crafting_table_front", "furnace": "furnace_front",
+    "smoker": "smoker_front", "blast_furnace": "blast_furnace_front", "loom": "loom_front",
+    "cartography_table": "cartography_table_side3", "smithing_table": "smithing_table_front",
+    "fletching_table": "fletching_table_front", "lodestone": "lodestone_top",
+    "respawn_anchor": "respawn_anchor_top_off", "hay_block": "hay_block_side",
+    "bone_block": "bone_block_side", "melon": "melon_side", "pumpkin": "pumpkin_side",
+    "cake": "cake_side", "composter": "composter_side", "barrel": "barrel_side",
+    "beehive": "beehive_front", "bee_nest": "bee_nest_front", "ancient_debris": "ancient_debris_side",
+    "basalt": "basalt_side", "polished_basalt": "polished_basalt_side", "podzol": "podzol_side",
+    "mycelium": "mycelium_side", "crimson_nylium": "crimson_nylium_side",
+    "warped_nylium": "warped_nylium_side", "decorated_pot": "decorated_pot_side",
+    "chiseled_bookshelf": "chiseled_bookshelf_empty", "sculk_sensor": "sculk_sensor_top",
+    "calibrated_sculk_sensor": "calibrated_sculk_sensor_top", "jukebox": "jukebox_side",
+    "note_block": "note_block", "piston": "piston_side", "sticky_piston": "piston_side",
+    "dispenser": "dispenser_front", "dropper": "dropper_front", "observer": "observer_front",
+    "daylight_detector": "daylight_detector_top", "enchanting_table": "enchanting_table_side",
+    "end_portal_frame": "end_portal_frame_side", "spawner": "spawner", "beacon": "beacon",
+}
+_SUFFIX_STRIP = ("_slab", "_stairs", "_wall", "_fence_gate", "_fence", "_button",
+                 "_pressure_plate", "_pane", "_carpet")
+
+def _icon_candidates(iid):
+    out, seen = [], set()
+    def add(x):
+        if x and x not in seen:
+            seen.add(x)
+            out.append(x)
+    def gen(x):
+        add(x)
+        if x in ICON_ALIAS:
+            add(ICON_ALIAS[x])
+        for suf in _SUFFIX_STRIP:
+            if x.endswith(suf):
+                b = x[: -len(suf)]
+                for c in (b, b + "s", b + "_planks", b + "_wool", b + "_block", b + "_top", b + "_side"):
+                    add(c)
+                if b in ICON_ALIAS:
+                    add(ICON_ALIAS[b])
+                break
+        if x.endswith("_block"):
+            add(x[:-6])
+        for suf in ("_top", "_side", "_front"):
+            add(x + suf)
+    gen(iid)
+    if iid.startswith("waxed_"):
+        gen(iid[6:])
+    return out
+
+_icon_cache = {}
+
+@app.get("/icons/<path:iid>")
+def api_icon(iid):
+    iid = re.sub(r"[^a-z0-9_.]", "", iid.lower())
+    if not iid.endswith(".png"):
+        abort(404)
+    base = iid[:-4]
+    # Dos cosas que se arreglan aquí:
+    #  · la ruta /icons/ no pide contraseña, así que cualquiera podía llenar
+    #    este diccionario con nombres inventados. Al pasar de 4000 se vacía.
+    #  · los FALLOS se recordaban para siempre. Después de regenerar los iconos,
+    #    los que antes daban 404 seguían dando 404 hasta reiniciar el panel.
+    #    Ahora un fallo se recuerda solo 10 minutos.
+    if len(_icon_cache) > 4000:
+        _icon_cache.clear()
+    hit = _icon_cache.get(base)
+    if isinstance(hit, tuple):                    # fallo recordado: (\"\", cuándo)
+        hit = "" if time.time() - hit[1] < 600 else None
+    if hit is None:
+        hit = ""
+        r = ICONS_DIR / "render" / (base + ".png")   # render 3D del juego: prioridad
+        if r.exists():
+            hit = str(r)
+        else:
+            for cand in _icon_candidates(base):
+                for sub in ("render", "item", "block", "misc"):
+                    f = ICONS_DIR / sub / (cand + ".png")
+                    if f.exists():
+                        hit = str(f)
+                        break
+                if hit:
+                    break
+        _icon_cache[base] = hit if hit else ("", time.time())
+    if not hit:
+        abort(404)
+    return send_file(hit, max_age=604800)
+
+# ---- escudo con estandarte real (compuesto al vuelo, cacheado) ----
+_DYE_RGB = {"white": (249,255,254), "orange": (249,128,29), "magenta": (199,78,189),
+    "light_blue": (58,179,218), "yellow": (254,216,61), "lime": (128,199,31),
+    "pink": (243,139,170), "gray": (71,79,82), "light_gray": (157,157,151),
+    "cyan": (22,156,156), "purple": (137,50,184), "blue": (60,68,170),
+    "brown": (131,84,50), "green": (94,124,22), "red": (176,46,38), "black": (29,29,33)}
+_SHIELD_QUAD = [(17,5),(45,11),(45,59),(17,53)]
+_SHIELD_FRONT = (2,2,14,24)
+
+def _persp_coeffs(dest, src):
+    A, B = [], []
+    for (X, Y), (x, y) in zip(dest, src):
+        A.append([x,y,1,0,0,0,-X*x,-X*y]); B.append(X)
+        A.append([0,0,0,x,y,1,-Y*x,-Y*y]); B.append(Y)
+    M = [row[:] + [b] for row, b in zip(A, B)]
+    for col in range(8):
+        piv = max(range(col,8), key=lambda r: abs(M[r][col]))
+        if abs(M[piv][col]) < 1e-12:
+            return None
+        M[col], M[piv] = M[piv], M[col]
+        pv = M[col][col]
+        M[col] = [v/pv for v in M[col]]
+        for r in range(8):
+            if r != col and M[r][col]:
+                f = M[r][col]
+                M[r] = [a - f*b for a, b in zip(M[r], M[col])]
+    return [M[i][8] for i in range(8)]
+
+_BANNER_QUAD = [(18, 5), (44, 10), (44, 57), (18, 52)]
+_BANNER_FRONT = (1, 1, 21, 41)
+
+@app.get("/icons/banner/<spec>")
+def api_icon_banner(spec):
+    """banner con patrones: /icons/banner/red~stripe_center.white~cross.black.png"""
+    spec = re.sub(r"[^a-z0-9_.~]", "", spec.lower())
+    if not spec.endswith(".png"):
+        abort(404)
+    key = spec[:-4][:180]
+    out = ICONS_DIR / "composited" / f"banner~{key}.png"
+    if not out.exists():
+        try:
+            from PIL import Image
+            parts = key.split("~")
+            base_col = parts[0] if parts and parts[0] in _DYE_RGB else "white"
+            base_tex = None
+            for cand in ("entity/banner/base.png", "entity/banner_base.png"):
+                f = ICONS_DIR / cand
+                if f.exists():
+                    base_tex = f
+                    break
+            if base_tex is None:
+                abort(404)
+            def tinted(png, col):
+                p = Image.open(png).convert("RGBA").crop(_BANNER_FRONT).resize((20*8, 40*8), Image.NEAREST)
+                r, g, b = _DYE_RGB.get(col, (255, 255, 255))
+                pr, pg, pb, pa = p.split()
+                return Image.merge("RGBA", (pr.point([i*r//255 for i in range(256)]),
+                                            pg.point([i*g//255 for i in range(256)]),
+                                            pb.point([i*b//255 for i in range(256)]), pa))
+            front = tinted(base_tex, base_col)
+            for pp in parts[1:]:
+                if "." in pp:
+                    pat, col = pp.split(".", 1)
+                    pf = ICONS_DIR / "entity" / "banner" / f"{re.sub(r'[^a-z_]', '', pat)}.png"
+                    if pf.exists():
+                        front.alpha_composite(tinted(pf, col))
+            cv = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            co = _persp_coeffs([(0,0),(front.width,0),(front.width,front.height),(0,front.height)], _BANNER_QUAD)
+            if co is None:
+                abort(404)
+            cv.alpha_composite(front.transform((64, 64), Image.PERSPECTIVE, co, resample=Image.NEAREST))
+            out.parent.mkdir(exist_ok=True)
+            cv.save(out, "PNG")
+        except Exception:
+            abort(404)
+    return send_file(out, max_age=604800)
+
+@app.get("/icons/shield/<spec>")
+def api_icon_shield(spec):
+    spec = re.sub(r"[^a-z0-9_.~]", "", spec.lower())
+    if not spec.endswith(".png"):
+        abort(404)
+    key = spec[:-4][:180]
+    out = ICONS_DIR / "composited" / f"shield~{key}.png"
+    if not out.exists():
+        try:
+            from PIL import Image
+            parts = key.split("~")
+            base_col = parts[0] if parts and parts[0] in _DYE_RGB else None
+            names = ("shield_base.png", "shield/base.png", "shield/shield_base.png") if base_col \
+                else ("shield_base_nopattern.png", "shield/base_nopattern.png", "shield/shield_base_nopattern.png")
+            base_tex = None
+            for nm in names:
+                f = ICONS_DIR / "entity" / nm
+                if f.exists():
+                    base_tex = f
+                    break
+            if base_tex is None:
+                abort(404)
+            tex = Image.open(base_tex).convert("RGBA")
+            front = tex.crop(_SHIELD_FRONT).resize((12*8, 22*8), Image.NEAREST)
+            def tint_overlay(pat_name, col):
+                pf = ICONS_DIR / "entity" / "shield" / f"{pat_name}.png"
+                if not pf.exists() or col not in _DYE_RGB:
+                    return
+                p = Image.open(pf).convert("RGBA").crop(_SHIELD_FRONT).resize(front.size, Image.NEAREST)
+                r, g, b = _DYE_RGB[col]
+                pr, pg, pb, pa = p.split()
+                lutr = [int(i*r/255) for i in range(256)]
+                lutg = [int(i*g/255) for i in range(256)]
+                lutb = [int(i*b/255) for i in range(256)]
+                tp = Image.merge("RGBA", (pr.point(lutr), pg.point(lutg), pb.point(lutb), pa))
+                front.alpha_composite(tp)
+            if base_col:
+                tint_overlay("base", base_col)
+                for pp in parts[1:]:
+                    if "." in pp:
+                        pat, col = pp.split(".", 1)
+                        tint_overlay(re.sub(r"[^a-z_]", "", pat), col)
+            cv = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            co = _persp_coeffs([(0,0),(front.width,0),(front.width,front.height),(0,front.height)], _SHIELD_QUAD)
+            if co is None:
+                abort(404)
+            cv.alpha_composite(front.transform((64, 64), Image.PERSPECTIVE, co, resample=Image.NEAREST))
+            out.parent.mkdir(exist_ok=True)
+            cv.save(out, "PNG")
+        except Exception:
+            abort(404)
+    return send_file(out, max_age=604800)
+
+# ---- ícono de armadura con su trim compuesto (textura base + overlay teñido) ----
+_ARMOR_MAT = {"golden": "gold", "iron": "iron", "diamond": "diamond", "netherite": "netherite"}
+
+@app.get("/icons/armor/<spec>")
+def api_icon_armor(spec):
+    spec = re.sub(r"[^a-z0-9_+.]", "", spec.lower())
+    if not spec.endswith(".png") or "+" not in spec:
+        abort(404)
+    item_id, mat = spec[:-4].split("+", 1)
+    mat = re.sub(r"[^a-z_]", "", mat)
+    out = ICONS_DIR / "composited" / f"{item_id}+{mat}.png"
+    if not out.exists():
+        piece = next((p for s, p in (("_helmet", "helmet"), ("_chestplate", "chestplate"),
+                                     ("_leggings", "leggings"), ("_boots", "boots"))
+                      if item_id.endswith(s)), None)
+        base_f = ICONS_DIR / "item" / f"{item_id}.png"
+        trim_f = ICONS_DIR / "trims" / "items" / f"{piece}_trim.png" if piece else None
+        # si el material del trim es igual al de la armadura, el juego usa la paleta _darker
+        pal_name = mat
+        if _ARMOR_MAT.get(item_id.split("_")[0]) == mat and \
+                (ICONS_DIR / "trims" / "color_palettes" / f"{mat}_darker.png").exists():
+            pal_name = f"{mat}_darker"
+        pal_f = ICONS_DIR / "trims" / "color_palettes" / f"{pal_name}.png"
+        if not (piece and base_f.exists() and trim_f.exists() and pal_f.exists()):
+            abort(404)
+        try:
+            from PIL import Image
+            base = Image.open(base_f).convert("RGBA")
+            trim = Image.open(trim_f).convert("RGBA")
+            pal = Image.open(pal_f).convert("RGBA")
+            colors = [pal.getpixel((i, 0)) for i in range(pal.width)]
+            if trim.size != base.size:
+                trim = trim.resize(base.size, Image.NEAREST)
+            grays = sorted({p[0] for p in trim.getdata() if p[3] > 8})
+            n = max(1, len(grays))
+            gmap = {g: colors[min(int(i * len(colors) / n), len(colors) - 1)]
+                    for i, g in enumerate(grays)}
+            px_t, px_b = trim.load(), base.load()
+            for y in range(base.size[1]):
+                for x in range(base.size[0]):
+                    r, g, b, a = px_t[x, y]
+                    if a > 8:
+                        cr, cg, cb, _ca = gmap.get(r, (r, g, b, a))
+                        px_b[x, y] = (cr, cg, cb, 255)
+            out.parent.mkdir(exist_ok=True)
+            base.save(out, "PNG")
+        except Exception:
+            abort(404)
+    return send_file(out, max_age=604800)
+
+# ------------------------------------------------------------------ branding
+SETTINGS_F = DATA_DIR / "settings.json"
+
+def get_settings():
+    try:
+        return json.loads(SETTINGS_F.read_text())
+    except Exception:
+        return {}
+
+@app.get("/api/branding")
+def api_branding():
+    s = get_settings()
+    return jsonify(name=s.get("name", "Serve Actual"))
+
+@app.post("/api/settings/name")
+def api_settings_name():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()[:40]
+    if not name:
+        return jsonify(error="El nombre no puede estar vacío"), 400
+    s = get_settings()
+    s["name"] = name
+    SETTINGS_F.write_text(json.dumps(s))
+    audit(u["name"], f"renamed panel to: {name}")
+    return jsonify(ok=True)
+
+# ------------------------------------------------------------------ settings (admin)
+@app.post("/api/settings/motd")
+def api_settings_motd():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    text = (body.get("motd") or "").strip()[:120]
+    if not text:
+        return jsonify(error="La descripción no puede estar vacía"), 400
+    text = text.replace("\\", "").replace("\n", " ")
+    stored = text.replace("|", "\\n")
+    pf = MC_DIR / "server.properties"
+    lines = pf.read_text().splitlines()
+    out, done = [], False
+    for ln in lines:
+        if ln.startswith("motd="):
+            out.append("motd=" + stored)
+            done = True
+        else:
+            out.append(ln)
+    if not done:
+        out.append("motd=" + stored)
+    pf.write_text("\n".join(out) + "\n")
+    audit(u["name"], f"changed server description to: {text}")
+    return jsonify(ok=True, note="Guardado — se ve al reiniciar el servidor")
+
+# ------------------------------------------------------------------ join requests
+JOINREQ_F = DATA_DIR / "join_requests.json"
+JOINSTATE_F = DATA_DIR / "joinreq_state.json"
+_join_lock = threading.Lock()
+JOIN_PATTERNS = [
+    re.compile(r"([A-Za-z0-9_]{2,16}) \(/[\d.:]+\) lost connection: You are not white-?listed"),
+    re.compile(r"Disconnecting .*?name=([A-Za-z0-9_]{2,16}).*?You are not white-?listed"),
+]
+
+JOINREQ_MAX = 300         # cuántos nombres se guardan como mucho
+JOINREQ_DIAS = 60         # y durante cuánto, si nadie los ha tocado
+
+def _podar_joinreq(store, ahora):
+    """Deja el fichero con un tamaño de verdad.
+
+    El servidor está en internet y los robots que rastrean puertos intentan
+    entrar con nombres inventados: cada uno se quedaba aquí guardado PARA
+    SIEMPRE, y el fichero entero se lee y se reescribe cada vez que alguien abre
+    Moderación. Se conservan los pendientes recientes (que es lo que hay que
+    mirar) y se tiran los viejos y los ya resueltos.
+    """
+    limite = ahora - JOINREQ_DIAS * 86400
+    vivos = {n: e for n, e in store.items()
+             if e.get("status") == "pending" or e.get("last", 0) > limite}
+    if len(vivos) <= JOINREQ_MAX:
+        return vivos
+    # si aun así son demasiados, se quedan los más recientes
+    orden = sorted(vivos.items(),
+                   key=lambda kv: (kv[1].get("status") == "pending",
+                                   kv[1].get("last", 0)), reverse=True)
+    return dict(orden[:JOINREQ_MAX])
+
+def _scan_join_attempts():
+    with _join_lock:
+        store = json.loads(JOINREQ_F.read_text()) if JOINREQ_F.exists() else {}
+        state = json.loads(JOINSTATE_F.read_text()) if JOINSTATE_F.exists() else {"offset": 0, "inode": 0}
+        log = MC_DIR / "logs/latest.log"
+        try:
+            st = log.stat()
+        except FileNotFoundError:
+            return store
+        if st.st_ino != state.get("inode") or st.st_size < state.get("offset", 0):
+            state = {"offset": 0, "inode": st.st_ino}
+        with open(log, "r", errors="replace") as f:
+            f.seek(state["offset"])
+            chunk = f.read()
+            state["offset"] = f.tell()
+        state["inode"] = st.st_ino
+        new_names = []
+        for line in chunk.splitlines():
+            if "not white" not in line:
+                continue
+            for pat in JOIN_PATTERNS:
+                m = pat.search(line)
+                if m:
+                    new_names.append(m.group(1) or m.group(0))
+                    break
+        wl = {e["name"].lower() for e in whitelist()}
+        now = time.time()
+        for n in new_names:
+            if n.lower() in wl:
+                continue
+            e = store.setdefault(n, {"count": 0, "first": now, "last": now, "status": "pending"})
+            e["count"] += 1
+            e["last"] = now
+            if e["status"] == "dismissed":
+                e["status"] = "pending"
+        store = _podar_joinreq(store, now)
+        JOINREQ_F.write_text(json.dumps(store))
+        JOINSTATE_F.write_text(json.dumps(state))
+        return store
+
+@app.get("/api/joinreq")
+def api_joinreq():
+    require("whitelist")
+    store = _scan_join_attempts()
+    items = [{"name": n, **v} for n, v in store.items() if v["status"] == "pending"]
+    items.sort(key=lambda x: -x["last"])
+    return jsonify(requests=items)
+
+@app.post("/api/joinreq/accept")
+def api_joinreq_accept():
+    u = require()
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not SAFE_NAME.match(name):
+        return jsonify(error="Nombre inválido"), 400
+    resp = do_cmd(u, "whitelist", f"whitelist add {name}", f"ACCEPTED join request of {name}")
+    with _join_lock:
+        store = json.loads(JOINREQ_F.read_text()) if JOINREQ_F.exists() else {}
+        if name in store:
+            store[name]["status"] = "accepted"
+            JOINREQ_F.write_text(json.dumps(store))
+    return resp
+
+@app.post("/api/joinreq/dismiss")
+def api_joinreq_dismiss():
+    u = require("whitelist")
+    if not _csrf_ok():
+        abort(400)
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    with _join_lock:
+        store = json.loads(JOINREQ_F.read_text()) if JOINREQ_F.exists() else {}
+        if name in store:
+            store[name]["status"] = "dismissed"
+            JOINREQ_F.write_text(json.dumps(store))
+    audit(u["name"], f"dismissed join request of {name}")
+    return jsonify(ok=True)
+
+# ------------------------------------------------------------------ user management (admin)
+@app.get("/api/users")
+def api_users():
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    users = load_users()
+    return jsonify(users=[{"name": n, "role": v["role"], "perms": v.get("perms", {}),
+                           "must_change": v.get("must_change", False)}
+                          for n, v in sorted(users.items())],
+                   all_perms=ALL_PERMS)
+
+@app.post("/api/users/create")
+def api_users_create():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    pw = body.get("password") or ""
+    role = body.get("role") or "viewer"
+    if not re.match(r"^[A-Za-z0-9_.-]{2,24}$", name):
+        return jsonify(error="Usuario inválido (letras/números, 2-24 caracteres)"), 400
+    if name.lower() in ("__public__", "invitado", "public"):
+        return jsonify(error="Ese nombre está reservado"), 400
+    if len(pw) < 8:
+        return jsonify(error="La contraseña temporal debe tener 8+ caracteres"), 400
+    if role not in ("admin", "mod", "viewer"):
+        return jsonify(error="Rol inválido"), 400
+    users = load_users()
+    if name in users:
+        return jsonify(error="Ese usuario ya existe"), 400
+    users[name] = {"hash": hash_pw(pw), "role": role,
+                   "perms": dict(DEFAULT_PERMS.get(role, DEFAULT_PERMS["viewer"])),
+                   "must_change": True}
+    save_users(users)
+    audit(u["name"], f"created user {name} ({role})")
+    return jsonify(ok=True)
+
+@app.post("/api/users/update")
+def api_users_update():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    name = body.get("name")
+    users = load_users()
+    if name not in users:
+        return jsonify(error="No existe ese usuario"), 404
+    if name == u["name"] and body.get("role") and body["role"] != "admin":
+        return jsonify(error="No puedes bajarte de rango a ti mismo"), 400
+    if body.get("role") in ("admin", "mod", "viewer"):
+        users[name]["role"] = body["role"]
+    if isinstance(body.get("perms"), dict):
+        users[name]["perms"] = {k: bool(v) for k, v in body["perms"].items() if k in ALL_PERMS}
+    if body.get("password"):
+        if len(body["password"]) < 8:
+            return jsonify(error="La contraseña debe tener 8+ caracteres"), 400
+        users[name]["hash"] = hash_pw(body["password"])
+        users[name]["must_change"] = True
+    save_users(users)
+    audit(u["name"], f"updated user {name}")
+    return jsonify(ok=True)
+
+@app.post("/api/users/delete")
+def api_users_delete():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    name = body.get("name")
+    if name == u["name"]:
+        return jsonify(error="No puedes eliminar tu propia cuenta"), 400
+    users = load_users()
+    if users.pop(name, None) is None:
+        return jsonify(error="No existe ese usuario"), 404
+    save_users(users)
+    audit(u["name"], f"deleted user {name}")
+    return jsonify(ok=True)
+
+# ------------------------------------------------------------------ memorias del server
+# v5: dos niveles — GLOBALES (memories/) e INDIVIDUALES (memories/players/<uuid>/).
+# Ver: cualquiera con sesión (perm "memories"). Subir: perm "memories_upload"
+# (incluye al público con PIN; sistema de honor en carpetas individuales).
+# Borrar/editar: SOLO moderadores y admin. Descripción SIEMPRE obligatoria.
+MEM_DIR = PANEL_DIR / "memories"
+MEM_THUMBS = MEM_DIR / "thumbs"
+MEM_META = MEM_DIR / "memories.json"
+MEM_PLAYERS = MEM_DIR / "players"
+_mem_lock = threading.Lock()
+MEM_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+def _mem_paths(target):
+    """target: None/'global' -> global; uuid -> carpeta del jugador. -> (dir, thumbs, meta)"""
+    if not target or target == "global":
+        return MEM_DIR, MEM_THUMBS, MEM_META
+    d = MEM_PLAYERS / target
+    return d, d / "thumbs", d / "meta.json"
+
+def _mem_load(meta_f):
+    try:
+        return json.loads(meta_f.read_text())
+    except Exception:
+        return []
+
+def _mem_save(meta_f, items):
+    meta_f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = meta_f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=1))
+    tmp.replace(MEM_META if meta_f == MEM_META else meta_f)
+
+def _valid_player_target(target):
+    if not UUID_RE.match(target or ""):
+        return None
+    for e in whitelist():
+        if e.get("uuid", "").lower() == target:
+            return e.get("name") or usercache().get(target) or target[:8]
+    return None
+
+@app.get("/api/memories")
+def api_memories():
+    u = require("memories")
+    items = sorted(_mem_load(MEM_META), key=lambda m: -m.get("ts", 0))
+    can_edit = u["role"] in ("mod", "admin")
+    return jsonify(memories=items, can_delete_any=can_edit, me=u["name"],
+                   can_upload=has_perm(u, "memories_upload"))
+
+@app.get("/api/memories/players")
+def api_memories_players():
+    require("memories")
+    out = []
+    for e in sorted(whitelist(), key=lambda x: (x.get("name") or "").lower()):
+        uid = (e.get("uuid") or "").lower()
+        if not UUID_RE.match(uid):
+            continue
+        meta = _mem_load(MEM_PLAYERS / uid / "meta.json")
+        cover = None
+        if meta:
+            newest = max(meta, key=lambda m: m.get("ts", 0))
+            cover = newest.get("thumb") or newest.get("file")
+        out.append({"uuid": uid, "name": e.get("name"), "count": len(meta), "cover": cover})
+    return jsonify(players=out)
+
+@app.get("/api/memories/player/<uuid>")
+def api_memories_player(uuid):
+    u = require("memories")
+    uuid = uuid.lower()
+    name = _valid_player_target(uuid)
+    if not name:
+        return jsonify(error="Ese jugador no está en la whitelist"), 404
+    items = sorted(_mem_load(MEM_PLAYERS / uuid / "meta.json"), key=lambda m: -m.get("ts", 0))
+    return jsonify(name=name, memories=items,
+                   can_delete_any=u["role"] in ("mod", "admin"),
+                   can_upload=has_perm(u, "memories_upload"))
+
+@app.post("/api/memories/upload")
+def api_memories_upload():
+    u = require("memories_upload")
+    if not _csrf_ok():
+        abort(403)
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify(error="Sube una imagen"), 400
+    ext = Path(f.filename).suffix.lower()
+    if ext == ".jpeg":
+        ext = ".jpg"
+    if ext not in MEM_EXT:
+        return jsonify(error="Formato no válido — usa JPG, PNG, GIF o WebP (las HEIC de iPhone hay que convertirlas)"), 400
+    title = (request.form.get("title") or "").strip()[:120]
+    if len(title) < 3:
+        return jsonify(error="La descripción es obligatoria (mínimo 3 letras)"), 400
+    target = (request.form.get("target") or "global").strip().lower()
+    if target != "global" and not _valid_player_target(target):
+        return jsonify(error="Ese jugador no está en la whitelist"), 404
+    mdir, mthumbs, mmeta = _mem_paths(target)
+    mdir.mkdir(parents=True, exist_ok=True)
+    mthumbs.mkdir(exist_ok=True)
+    fname = f"mem-{int(time.time())}-{secrets.token_hex(3)}{ext}"
+    dest = mdir / fname
+    f.save(dest)
+    if dest.stat().st_size > 15_000_000:
+        dest.unlink()
+        return jsonify(error="Máximo 15 MB por foto"), 400
+    w = h = 0
+    thumb = fname
+    try:
+        from PIL import Image
+        im = Image.open(dest)
+        im.load()
+        w, h = im.size
+        tt = im.convert("RGB")
+        tt.thumbnail((640, 640))
+        tname = Path(fname).stem + ".jpg"
+        tt.save(mthumbs / tname, "JPEG", quality=80, optimize=True)
+        thumb = tname
+    except Exception:
+        pass
+    with _mem_lock:
+        items = _mem_load(mmeta)
+        items.append({"file": fname, "thumb": thumb, "title": title,
+                      "uploader": u["name"], "ts": int(time.time() * 1000), "w": w, "h": h})
+        _mem_save(mmeta, items)
+    audit(u["name"], f"added memory photo {fname} ({title}) target={target}")
+    return jsonify(ok=True, output="Foto guardada en las Memorias del server")
+
+@app.post("/api/memories/delete")
+def api_memories_delete():
+    u = require("memories")
+    if u["role"] not in ("mod", "admin") or not _csrf_ok():
+        return jsonify(error="Solo los moderadores pueden borrar fotos"), 403
+    body = request.get_json(silent=True) or {}
+    fname = re.sub(r"[^A-Za-z0-9._-]", "", body.get("file") or "")
+    target = (body.get("target") or "global").strip().lower()
+    if target != "global" and not UUID_RE.match(target):
+        return jsonify(error="Destino inválido"), 400
+    mdir, mthumbs, mmeta = _mem_paths(target)
+    with _mem_lock:
+        items = _mem_load(mmeta)
+        if not any(m["file"] == fname for m in items):
+            return jsonify(error="Esa foto ya no existe"), 404
+        items = [m for m in items if m["file"] != fname]
+        _mem_save(mmeta, items)
+    trash = MEM_DIR / "_removed"
+    trash.mkdir(exist_ok=True)
+    src = mdir / fname
+    if src.exists():
+        src.rename(trash / f"{int(time.time())}-{target}-{fname}")
+    _limpiar_papelera(trash, dias=60, maximo=150)     # fotos de hasta 15 MB
+    tb = mthumbs / (Path(fname).stem + ".jpg")
+    if tb.exists():
+        tb.unlink()
+    audit(u["name"], f"removed memory photo {fname} target={target}")
+    return jsonify(ok=True, output="Foto eliminada de las Memorias")
+
+@app.post("/api/memories/edit")
+def api_memories_edit():
+    u = require("memories")
+    if u["role"] not in ("mod", "admin") or not _csrf_ok():
+        return jsonify(error="Solo los moderadores pueden editar descripciones"), 403
+    body = request.get_json(silent=True) or {}
+    fname = re.sub(r"[^A-Za-z0-9._-]", "", body.get("file") or "")
+    title = (body.get("title") or "").strip()[:120]
+    target = (body.get("target") or "global").strip().lower()
+    if len(title) < 3:
+        return jsonify(error="La descripción no puede quedar vacía"), 400
+    if target != "global" and not UUID_RE.match(target):
+        return jsonify(error="Destino inválido"), 400
+    _d, _t, mmeta = _mem_paths(target)
+    with _mem_lock:
+        items = _mem_load(mmeta)
+        hit = next((m for m in items if m["file"] == fname), None)
+        if not hit:
+            return jsonify(error="Esa foto ya no existe"), 404
+        hit["title"] = title
+        _mem_save(mmeta, items)
+    audit(u["name"], f"renamed memory {fname} -> {title}")
+    return jsonify(ok=True, output="Descripción actualizada")
+
+@app.get("/memories/<path:p>")
+def mem_file(p):
+    require("memories")
+    parts = [re.sub(r"[^A-Za-z0-9._-]", "", x) for x in p.split("/") if x]
+    if parts and parts[0] == "p":                      # individuales: p/<uuid>/[thumbs/]<file>
+        if len(parts) == 3 and UUID_RE.match(parts[1]):
+            f = MEM_PLAYERS / parts[1] / parts[2]
+        elif len(parts) == 4 and parts[2] == "thumbs" and UUID_RE.match(parts[1]):
+            f = MEM_PLAYERS / parts[1] / "thumbs" / parts[3]
+        else:
+            abort(404)
+    elif parts and parts[0] == "thumbs" and len(parts) == 2:
+        f = MEM_THUMBS / parts[1]
+    elif len(parts) == 1:
+        f = MEM_DIR / parts[0]
+    else:
+        abort(404)
+    if not f.exists():
+        abort(404)
+    return send_file(f, max_age=86400)
+
+# ------------------------------------------------------------------ skins (viewer 3D + archivo propio)
+SKINS_DIR = DATA_DIR / "skins"
+SKINS_CUR = SKINS_DIR / "current"
+SKINS_HIS = SKINS_DIR / "history"
+
+def _fetch_skin_info(uuid):
+    """Mojang session server -> (skin_url, slim). Lanza excepción si falla."""
+    import urllib.request
+    uid = uuid.replace("-", "")
+    with urllib.request.urlopen(
+            f"https://sessionserver.mojang.com/session/minecraft/profile/{uid}", timeout=8) as r:
+        prof = json.loads(r.read())
+    for prop in prof.get("properties", []):
+        if prop.get("name") == "textures":
+            tex = json.loads(base64.b64decode(prop["value"]))
+            skin = tex.get("textures", {}).get("SKIN", {})
+            url = skin.get("url")
+            slim = skin.get("metadata", {}).get("model") == "slim"
+            return url, slim
+    return None, False
+
+def _skin_refresh(uuid, force=False):
+    """Baja/actualiza la skin actual (cache 1h). -> (png_path|None, slim)"""
+    import urllib.request
+    SKINS_CUR.mkdir(parents=True, exist_ok=True)
+    png = SKINS_CUR / f"{uuid}.png"
+    meta_f = SKINS_CUR / f"{uuid}.json"
+    meta = {}
+    try:
+        meta = json.loads(meta_f.read_text())
+    except Exception:
+        pass
+    if not force and png.exists() and time.time() - meta.get("fetched", 0) < 3600:
+        return png, meta.get("slim", False)
+    try:
+        url, slim = _fetch_skin_info(uuid)
+        if not url:
+            raise ValueError("sin skin")
+        with urllib.request.urlopen(url, timeout=8) as r:
+            data = r.read()
+        png.write_bytes(data)
+        h = hashlib.sha1(data).hexdigest()[:10]
+        meta = {"fetched": int(time.time()), "slim": slim, "hash": h, "url": url}
+        meta_f.write_text(json.dumps(meta))
+        # archivo histórico: guarda solo si la skin cambió
+        hdir = SKINS_HIS / uuid
+        hdir.mkdir(parents=True, exist_ok=True)
+        idx_f = hdir / "index.json"
+        try:
+            idx = json.loads(idx_f.read_text())
+        except Exception:
+            idx = []
+        if not any(e.get("hash") == h for e in idx):
+            day = time.strftime("%Y-%m-%d")
+            fn = f"{day}-{h}.png"
+            (hdir / fn).write_bytes(data)
+            idx.append({"date": day, "file": fn, "hash": h, "slim": slim})
+            idx_f.write_text(json.dumps(idx))
+        return png, slim
+    except Exception:
+        if png.exists():
+            return png, meta.get("slim", False)
+        return None, False
+
+@app.get("/api/skin/<uuid>")
+def api_skin(uuid):
+    require("view_players")
+    uuid = uuid.lower()
+    if not UUID_RE.match(uuid):
+        abort(400)
+    png, _slim = _skin_refresh(uuid)
+    if png is None:
+        abort(404)
+    return send_file(png, max_age=1800)
+
+@app.get("/api/skininfo/<uuid>")
+def api_skininfo(uuid):
+    require("view_players")
+    uuid = uuid.lower()
+    if not UUID_RE.match(uuid):
+        abort(400)
+    _png, slim = _skin_refresh(uuid)
+    idx = []
+    try:
+        idx = json.loads((SKINS_HIS / uuid / "index.json").read_text())
+    except Exception:
+        pass
+    # hora real de captura (mtime del archivo) para desempatar entradas del mismo día
+    for e in idx:
+        try:
+            e["ts"] = int((SKINS_HIS / uuid / e.get("file", "")).stat().st_mtime)
+        except Exception:
+            e["ts"] = 0
+    idx.sort(key=lambda e: (e.get("date", ""), e.get("ts", 0)), reverse=True)
+    cur_hash = None
+    try:
+        cur_hash = json.loads((SKINS_CUR / f"{uuid}.json").read_text()).get("hash")
+    except Exception:
+        pass
+    return jsonify(slim=slim, history=idx, name=_uuid_name(uuid), current=cur_hash)
+
+@app.get("/skinhist/<uuid>/<fn>")
+def api_skin_hist(uuid, fn):
+    require("view_players")
+    uuid = uuid.lower()
+    fn = re.sub(r"[^A-Za-z0-9.-]", "", fn)
+    f = SKINS_HIS / uuid / fn
+    if not UUID_RE.match(uuid) or not f.exists():
+        abort(404)
+    return send_file(f, max_age=604800)
+
+@app.post("/api/skinhist/delete")
+def api_skinhist_delete():
+    """SOLO admin: borra una skin del archivo histórico de un jugador."""
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    uuid = (body.get("uuid") or "").strip().lower()
+    fn = re.sub(r"[^A-Za-z0-9.-]", "", body.get("file") or "")
+    if not UUID_RE.match(uuid) or not fn.endswith(".png"):
+        return jsonify(error="petición inválida"), 400
+    hdir = SKINS_HIS / uuid
+    idx_f = hdir / "index.json"
+    try:
+        idx = json.loads(idx_f.read_text())
+    except Exception:
+        idx = []
+    if not any(e.get("file") == fn for e in idx):
+        return jsonify(error="esa skin no está en el archivo"), 404
+    idx = [e for e in idx if e.get("file") != fn]
+    idx_f.write_text(json.dumps(idx))
+    try:
+        (hdir / fn).unlink()
+    except Exception:
+        pass
+    audit(u["name"], f"skin histórica borrada de {uuid} ({fn})")
+    return jsonify(ok=True)
+
+@app.post("/api/skinhist/upload")
+def api_skinhist_upload():
+    """Mods/admin: mete una skin antigua al archivo con fecha manual (para el historial pre-panel)."""
+    u = require()
+    if u["role"] not in ("admin", "mod"):
+        abort(403)
+    uuid = (request.form.get("uuid") or "").strip().lower()
+    date = (request.form.get("date") or "").strip()
+    fs = request.files.get("file")
+    if not UUID_RE.match(uuid):
+        return jsonify(error="uuid inválido"), 400
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+        return jsonify(error="fecha inválida (AAAA-MM-DD)"), 400
+    if not fs:
+        return jsonify(error="falta el archivo"), 400
+    data = fs.read()
+    if len(data) > 256 * 1024:
+        return jsonify(error="muy grande — una skin pesa unos KB"), 400
+    try:
+        from PIL import Image
+        import io
+        im = Image.open(io.BytesIO(data))
+        im.load()
+        if im.format != "PNG" or im.width != 64 or im.height not in (32, 64):
+            return jsonify(error="debe ser una skin PNG de 64x64 (o 64x32 antigua)"), 400
+        # detección slim: brazo de 3px deja transparente la columna x=54 del brazo derecho
+        slim = False
+        if im.height == 64:
+            rgba = im.convert("RGBA")
+            slim = all(rgba.getpixel((54, y))[3] == 0 for y in range(20, 32))
+    except Exception:
+        return jsonify(error="no pude leer el PNG"), 400
+    h = hashlib.sha1(data).hexdigest()[:10]
+    hdir = SKINS_HIS / uuid
+    hdir.mkdir(parents=True, exist_ok=True)
+    idx_f = hdir / "index.json"
+    try:
+        idx = json.loads(idx_f.read_text())
+    except Exception:
+        idx = []
+    if any(e.get("hash") == h for e in idx):
+        return jsonify(error="esa skin ya está en el archivo"), 400
+    fn = f"{date}-{h}.png"
+    (hdir / fn).write_bytes(data)
+    idx.append({"date": date, "file": fn, "hash": h, "slim": slim, "manual": True})
+    idx_f.write_text(json.dumps(idx))
+    audit(u["name"], f"skin histórica subida para {uuid} ({date})")
+    return jsonify(ok=True, file=fn, slim=slim)
+
+def _skin_snapshot_loop():
+    """Hilo diario: fotografía la skin de cada whitelisted (el archivo crece solo)."""
+    mark = SKINS_DIR / "last_snapshot.txt"
+    while True:
+        try:
+            today = time.strftime("%Y-%m-%d")
+            done = mark.read_text().strip() if mark.exists() else ""
+            if done != today:
+                fallos = 0
+                for e in whitelist():
+                    uid = (e.get("uuid") or "").lower()
+                    if UUID_RE.match(uid):
+                        # Cada jugador va en su propio try: antes, si Mojang
+                        # fallaba con UNO, la excepción salía del bucle, la marca
+                        # del día no se escribía y se repetía la vuelta entera
+                        # CADA HORA, sin que nadie se enterara.
+                        try:
+                            _skin_refresh(uid, force=True)
+                        except Exception:
+                            fallos += 1
+                        time.sleep(2)
+                SKINS_DIR.mkdir(parents=True, exist_ok=True)
+                mark.write_text(today)
+                _salud("skins", ok=True,
+                       nota=("%d skins no se pudieron leer" % fallos) if fallos else "")
+        except Exception as ex:
+            _salud("skins", ok=False, nota=str(ex)[:120])
+        time.sleep(3600)
+
+threading.Thread(target=_skin_snapshot_loop, daemon=True).start()
+
+# ------------------------------------------------------------------ librería 3D (se auto-descarga en el servidor)
+def _fetch_libs():
+    """Baja la librería del muñeco 3D. Se reintenta unas cuantas veces.
+
+    Antes se probaba UNA vez al arrancar y ya. Al reiniciar la máquina, el panel
+    suele levantar antes de que haya red: la descarga fallaba, el visor 3D se
+    quedaba muerto en silencio y solo volvía reiniciando el panel a mano.
+    """
+    import urllib.request
+    dest = PANEL_DIR / "static" / "skinview3d.js"
+    for intento in range(6):                       # ~0, 1, 2, 5, 10 y 20 minutos
+        if dest.exists() and dest.stat().st_size > 100_000:
+            return
+        for url in ("https://unpkg.com/skinview3d@3.4.1/bundles/skinview3d.bundle.js",
+                    "https://cdn.jsdelivr.net/npm/skinview3d@3.4.1/bundles/skinview3d.bundle.js"):
+            try:
+                with urllib.request.urlopen(url, timeout=20) as r:
+                    data = r.read()
+                if len(data) > 100_000:
+                    dest.write_bytes(data)
+                    return
+            except Exception:
+                continue
+        time.sleep([60, 60, 180, 300, 600, 600][intento])
+    _salud("libreria3d", ok=False, nota="no pude bajar skinview3d.js")
+
+threading.Thread(target=_fetch_libs, daemon=True).start()
+
+# ------------------------------------------------------------------ sistema (solo admin)
+SYS_LOG = DATA_DIR / "system.log"
+_sys_lock = threading.Lock()
+_sys_busy = {}
+
+def _syslog(line):
+    _rotar(SYS_LOG, 2)
+    with open(SYS_LOG, "a") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {line}\n")
+
+def _sys_run_bg(job, cmd, timeout=1800):
+    # OJO con el timeout: subprocess.run MATA el proceso al agotarse. Con los 30
+    # minutos de siempre, el botón del mapa arrancaba un render que tarda 57-98
+    # min y se lo cargaba a media faena, dejando además el java suelto (solo se
+    # mata al hijo directo, que es el bash). Por eso los trabajos del mapa piden
+    # su propio plazo.
+    def worker():
+        _syslog(f"[{job}] iniciando: {' '.join(cmd)}")
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            out = (r.stdout or "") + (r.stderr or "")
+            for ln in out.splitlines()[-40:]:
+                _syslog(f"[{job}] {ln}")
+            _syslog(f"[{job}] terminó con código {r.returncode}")
+        except Exception as e:
+            _syslog(f"[{job}] ERROR: {e}")
+        finally:
+            _sys_busy.pop(job, None)
+    with _sys_lock:
+        empezo = _sys_busy.get(job)
+        # Si el hilo murió sin pasar por su `finally` (o el arranque falló), la
+        # marca se quedaba puesta y ese trabajo NO se podía volver a lanzar
+        # hasta reiniciar el panel. Pasado su plazo más un margen, se suelta.
+        if empezo and time.time() - empezo < timeout + 300:
+            return False
+        _sys_busy[job] = time.time()
+    try:
+        threading.Thread(target=worker, daemon=True).start()
+    except Exception:
+        with _sys_lock:
+            _sys_busy.pop(job, None)
+        raise
+    return True
+
+def _require_admin():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    return u
+
+@app.get("/api/system/status")
+def api_system_status():
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    lines = []
+    try:
+        lines = SYS_LOG.read_text().splitlines()[-30:]
+    except Exception:
+        pass
+    s = get_settings()
+    users = load_users()
+    return jsonify(busy=list(_sys_busy.keys()), log=lines,
+                   pin_set=bool(s.get("public_pin")),
+                   engine=engine_kind(),
+                   version=mc_version(),
+                   skinlib=(PANEL_DIR / "static" / "skinview3d.js").exists(),
+                   totp_on=bool(users.get(u["name"], {}).get("totp")),
+                   automatismos=_automatismos())
+
+def _automatismos():
+    """Estado de todo lo que se actualiza SOLO, para verlo de un vistazo.
+
+    La idea es que, con el server desatendido semanas, baste con abrir Sistema
+    para saber si algo lleva parado. Cada entrada trae cuándo funcionó por
+    última vez y cuánto puede tardar como mucho antes de considerarse dormido.
+    """
+    ahora = time.time()
+    def _mtime(p):
+        try:
+            return p.stat().st_mtime
+        except Exception:
+            return 0
+
+    salidas = []
+    def añadir(clave, nombre, ultimo, margen, nota=""):
+        salidas.append({"id": clave, "nombre": nombre,
+                        "ultimo": ultimo or 0,
+                        "edad": (ahora - ultimo) if ultimo else None,
+                        "ok": bool(ultimo) and (ahora - ultimo) < margen,
+                        "margen": margen, "nota": nota})
+
+    f = _salud_estado.get("feed", {})
+    añadir("feed", "Historia (lee el log cada 20 s)",
+           f.get("t"), 300, "" if f.get("ok", True) else f.get("nota", ""))
+
+    if MAPA_CONGELADO.exists():
+        # No es que el mapa lleve dormido: está parado a propósito porque
+        # Minecraft cambió de versión. Pintarlo en rojo haría creer que algo se
+        # ha roto justo cuando todo va bien.
+        try:
+            c = json.loads(MAPA_CONGELADO.read_text())
+        except Exception:
+            c = {}
+        salidas.append({"id": "mapa", "nombre": "Mapa de BlueMap (en pausa)",
+                        "ultimo": c.get("desde") or 0,
+                        "edad": (ahora - c["desde"]) if c.get("desde") else None,
+                        "ok": True, "pausa": True, "margen": 0,
+                        "nota": "Minecraft pasó a la %s. El mapa se queda como estaba "
+                                "hasta que BlueMap la soporte — se reintenta solo cada "
+                                "día." % (c.get("version") or "nueva versión")})
+    else:
+        añadir("mapa", "Mapa de BlueMap (cada noche)",
+               _mtime(Path.home() / "bluemap/render.log"), 36 * 3600)
+    añadir("estructuras", "Iconos de estructuras (cada noche)",
+           _mtime(DATA_DIR / "structures-cache.json"), 36 * 3600)
+
+    sk = _salud_estado.get("skins", {})
+    añadir("skins", "Fotos de las skins (una al día)",
+           _mtime(SKINS_DIR / "last_snapshot.txt") or sk.get("t"), 50 * 3600,
+           "" if sk.get("ok", True) else sk.get("nota", ""))
+
+    cop = None
+    try:
+        cs = sorted((MC_DIR / "backups").glob("world-*.tar.gz"),
+                    key=lambda p: p.stat().st_mtime)
+        cop = cs[-1].stat().st_mtime if cs else 0
+    except Exception:
+        cop = 0
+    añadir("copias", "Copia de seguridad del mundo", cop, 8 * 86400)
+    return salidas
+
+@app.post("/api/system/set_pin")
+def api_system_set_pin():
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    pin = (body.get("pin") or "").strip()
+    if not (4 <= len(pin) <= 32):
+        return jsonify(error="El PIN debe tener entre 4 y 32 caracteres"), 400
+    s = get_settings()
+    s["public_pin"] = pin
+    SETTINGS_F.write_text(json.dumps(s))
+    audit(u["name"], "changed the public PIN")
+    return jsonify(ok=True, output="PIN público actualizado")
+
+@app.post("/api/system/restart_panel")
+def api_system_restart_panel():
+    u = _require_admin()
+    audit(u["name"], "panel restart from Sistema")
+    _syslog("[panel] reinicio solicitado desde el panel")
+    subprocess.Popen(["bash", "-c", "sleep 1; sudo systemctl restart panel"],
+                     start_new_session=True)
+    return jsonify(ok=True, output="Reiniciando el panel — vuelve en ~10 segundos")
+
+@app.post("/api/system/regen_icons")
+def api_system_regen_icons():
+    u = _require_admin()
+    ok = _sys_run_bg("iconos", ["python3", str(PANEL_DIR / "get-icons.py")])
+    audit(u["name"], "regen icons from Sistema")
+    return jsonify(ok=ok, output="Regenerando íconos (1-2 min) — mira el registro"
+                   if ok else "Ya hay una regeneración corriendo")
+
+@app.post("/api/system/scan_map")
+def api_system_scan_map():
+    """Escanea estructuras reales del mundo y re-renderiza el mapa con los marcadores."""
+    u = require()
+    if u["role"] not in ("admin", "mod") or not _csrf_ok():
+        abort(403)
+    script = PANEL_DIR / "scripts/render-mapa.sh"
+    if not script.exists():
+        return jsonify(ok=False, output="Falta scripts/render-mapa.sh en el server"), 400
+    # el MISMO script que usa el cron de cada noche: un solo camino, un solo
+    # candado, y el parche del bioma se reaplica siempre al terminar
+    ok = _sys_run_bg("mapa", ["bash", str(script)], timeout=6 * 3600)
+    audit(u["name"], "escaneo de estructuras + render del mapa")
+    return jsonify(ok=ok, output="Escaneando el mundo y actualizando el mapa — mira el registro"
+                   if ok else "Ya hay una actualización del mapa corriendo")
+
+@app.post("/api/system/map_markers")
+def api_system_map_markers():
+    """Solo los ICONOS: busca estructuras y las publica. No vuelve a dibujar nada.
+
+    Es lo que hace falta cuando el terreno ya está en el mapa pero le faltan los
+    marcadores. Tarda segundos o minutos, no la hora larga del render entero.
+    """
+    u = require()
+    if u["role"] not in ("admin", "mod") or not _csrf_ok():
+        abort(403)
+    script = PANEL_DIR / "scripts/marcadores.sh"
+    if not script.exists():
+        return jsonify(ok=False, output="Falta scripts/marcadores.sh en el server"), 400
+    # comparte el trabajo "mapa" con el render a propósito: los dos tocan los
+    # mismos ficheros de BlueMap y no deben solaparse
+    ok = _sys_run_bg("mapa", ["bash", str(script)], timeout=3 * 3600)
+    audit(u["name"], "actualizar los iconos del mapa")
+    return jsonify(ok=ok, output="Buscando estructuras y publicando los iconos — mira el registro"
+                   if ok else "Ya hay una actualización del mapa corriendo")
+
+# ============================================================ mundos (admin)
+#
+# Varios mundos guardados en el disco y un botón para saltar entre ellos. Toda
+# la fontanería está en scripts/mundos.py, que es el que sabe parar el servidor,
+# mover carpetas y llevarse el mapa de BlueMap con cada mundo. Aquí solo se le
+# llama y se guarda en qué va, porque cambiar de mundo tarda más de lo que
+# aguanta una petición del navegador.
+MUNDOS_PY  = PANEL_DIR / "scripts" / "mundos.py"
+DESCARGAS  = DATA_DIR / "descargas"
+SUBIDAS    = DATA_DIR / "subidas"
+SUBIDA_MAX = 6 * 1024**3          # 6 GB: un mundo muy grande cabe, un disco lleno no
+TROZO_MAX  = 32 * 1024**2         # cada trozo del navegador
+
+# En qué va el último trabajo de mundos: lo pinta la pestaña mientras dura.
+_mundo_job = {"nombre": None, "estado": "quieto", "mensaje": "", "t": 0, "datos": {}}
+_mundo_lock = threading.Lock()
+
+
+def _mundos_ocupado(timeout=3 * 3600):
+    with _mundo_lock:
+        if _mundo_job["estado"] == "trabajando" and time.time() - _mundo_job["t"] < timeout:
+            return _mundo_job["nombre"] or "otra cosa"
+    return None
+
+
+def _mundos_run(nombre, args, timeout=3 * 3600, al_acabar=None, guion=None):
+    """Lanza mundos.py en segundo plano y guarda su respuesta.
+
+    Se le pasa siempre --json y se lee la ÚLTIMA línea: el script escribe su
+    diario por delante y el resultado al final.
+    """
+    with _mundo_lock:
+        if _mundo_job["estado"] == "trabajando" and time.time() - _mundo_job["t"] < timeout:
+            return False, "Ya hay algo en marcha: %s" % (_mundo_job["nombre"] or "")
+        _mundo_job.update(nombre=nombre, estado="trabajando", mensaje="", t=time.time(),
+                          datos={})
+
+    def worker():
+        try:
+            r = subprocess.run(["python3", str(guion or MUNDOS_PY)] + args + ["--json"],
+                               capture_output=True, text=True, timeout=timeout)
+            datos, salida = {}, (r.stdout or "").strip()
+            for ln in reversed(salida.splitlines()):
+                try:
+                    datos = json.loads(ln)
+                    break
+                except Exception:
+                    continue
+            bien = bool(datos.get("ok"))
+            msg = datos.get("mensaje") or (r.stderr or "")[-300:] or "sin respuesta"
+            _syslog(f"[mundos] {nombre}: " + ("ok" if bien else "FALLA") + f" — {msg}")
+            with _mundo_lock:
+                _mundo_job.update(estado="listo" if bien else "error",
+                                  mensaje=msg, datos=datos, t=time.time())
+            if al_acabar:
+                try:
+                    al_acabar(bien, datos)
+                except Exception:
+                    pass
+        except Exception as e:
+            _syslog(f"[mundos] {nombre}: ERROR {e}")
+            with _mundo_lock:
+                _mundo_job.update(estado="error", mensaje=str(e)[:300], t=time.time())
+
+    threading.Thread(target=worker, daemon=True).start()
+    return True, ""
+
+
+def _mundos_listar():
+    try:
+        r = subprocess.run(["python3", str(MUNDOS_PY), "listar", "--json"],
+                           capture_output=True, text=True, timeout=60)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception as e:
+        return {"ok": False, "mensaje": str(e)[:200], "mundos": []}
+
+
+def _slug_ok(s):
+    return bool(re.match(r"^[a-z0-9][a-z0-9-]{0,60}$", s or ""))
+
+
+def _require_admin_ro():
+    """Admin, pero sin exigir CSRF: es para los GET que solo leen."""
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    return u
+
+
+@app.get("/api/mundos")
+def api_mundos():
+    _require_admin_ro()
+    d = _mundos_listar()
+    con = None
+    try:
+        f = max(DESCARGAS.glob("*.tar.gz"), key=lambda p: p.stat().st_mtime) \
+            if DESCARGAS.is_dir() else None
+        if f:
+            con = {"name": f.name, "bytes": f.stat().st_size, "mtime": f.stat().st_mtime}
+    except Exception:
+        pass
+    with _mundo_lock:
+        trabajo = dict(_mundo_job)
+    trabajo.pop("datos", None)
+    return jsonify(ok=d.get("ok", False), mundos=d.get("mundos", []),
+                   libre=d.get("libre", 0), papelera=d.get("papelera", 0),
+                   descarga=con, trabajo=trabajo,
+                   disponible=MUNDOS_PY.exists())
+
+
+# ------------------------------------------------------------------ descargar
+@app.post("/api/mundos/preparar")
+def api_mundos_preparar():
+    """Empaqueta el mundo ACTIVO tal y como está ahora mismo.
+
+    No se sirve el .tar.gz directamente desde `world`: hay que pausar el
+    guardado, comprimir y reanudarlo. Si se sirviera en caliente saldrían
+    ficheros de región a medio escribir y la copia parecería buena hasta el día
+    que la cargas. Por eso primero se prepara y luego se descarga.
+    """
+    u = _require_admin()
+    ocupado = _mundos_ocupado()
+    if ocupado:
+        return jsonify(ok=False, output="Ya hay algo en marcha: %s" % ocupado)
+    DESCARGAS.mkdir(parents=True, exist_ok=True)
+    # solo se guarda la última: son gigas, y no se borra hasta aquí para que el
+    # que ya está descargando la anterior no se quede a medias
+    for p in DESCARGAS.glob("*.tar.gz"):
+        p.unlink(missing_ok=True)
+    act = next((m for m in _mundos_listar().get("mundos", []) if m.get("activo")), {})
+    nombre = "%s-%s.tar.gz" % (act.get("slug") or "mundo", time.strftime("%Y%m%d-%H%M"))
+    ok, por = _mundos_run("preparar la descarga",
+                          ["copia", str(DESCARGAS / nombre)], timeout=2 * 3600)
+    audit(u["name"], "preparó la descarga del mundo activo")
+    return jsonify(ok=ok, output="Empaquetando el mundo — puede tardar unos minutos"
+                   if ok else por)
+
+
+@app.get("/api/mundos/descargar")
+def api_mundos_descargar():
+    _require_admin_ro()
+    try:
+        f = max(DESCARGAS.glob("*.tar.gz"), key=lambda p: p.stat().st_mtime)
+    except ValueError:
+        return jsonify(error="No hay ninguna copia preparada"), 404
+    return send_file(f, as_attachment=True, download_name=f.name)
+
+
+# --------------------------------------------------------------------- subir
+@app.post("/api/mundos/trozo")
+def api_mundos_trozo():
+    """Recibe la subida a cachos.
+
+    Un mundo pesa un giga largo y mandarlo en UNA petición se lo come el
+    tiempo de espera de gunicorn o el del navegador a mitad de camino, sin
+    forma de saber por dónde iba. A cachos se puede enseñar una barra de
+    progreso y, si se corta, seguir desde donde estaba: el cliente manda el
+    desplazamiento y aquí se comprueba contra lo que ya hay escrito.
+    """
+    u = _require_admin()
+    sid = request.form.get("id") or ""
+    if not re.match(r"^[a-f0-9]{8,32}$", sid):
+        return jsonify(error="id de subida inválido"), 400
+    try:
+        offset = int(request.form.get("offset") or 0)
+    except ValueError:
+        return jsonify(error="offset inválido"), 400
+    f = request.files.get("trozo")
+    if not f:
+        return jsonify(error="Falta el trozo"), 400
+
+    SUBIDAS.mkdir(parents=True, exist_ok=True)
+    if offset == 0:
+        _limpiar_papelera(SUBIDAS, dias=1, maximo=6)   # restos de subidas cortadas
+    dest = SUBIDAS / (sid + ".part")
+    ya = dest.stat().st_size if dest.exists() else 0
+    if offset != ya:
+        # el navegador se ha perdido: se le dice por dónde iba de verdad
+        return jsonify(error="desincronizado", esperado=ya), 409
+
+    datos = f.read(TROZO_MAX + 1)
+    if len(datos) > TROZO_MAX:
+        return jsonify(error="Trozo demasiado grande"), 400
+    if ya + len(datos) > SUBIDA_MAX:
+        dest.unlink(missing_ok=True)
+        return jsonify(error="El archivo pasa de %d GB" % (SUBIDA_MAX // 1024**3)), 400
+    with open(dest, "ab") as out:
+        out.write(datos)
+    return jsonify(ok=True, recibido=dest.stat().st_size)
+
+
+def _parte_subida(body):
+    sid = (body.get("id") or "").strip()
+    if not re.match(r"^[a-f0-9]{8,32}$", sid):
+        return None, (jsonify(error="id de subida inválido"), 400)
+    parte = SUBIDAS / (sid + ".part")
+    if not parte.exists() or parte.stat().st_size < 1024:
+        return None, (jsonify(error="No he recibido el archivo entero"), 400)
+    return parte, None
+
+
+@app.post("/api/mundos/inspeccionar")
+def api_mundos_inspeccionar():
+    """Qué mundo es el que se acaba de subir, antes de decidir qué hacer con él.
+
+    Solo lee el level.dat de dentro del archivo, así que responde al momento
+    aunque el mundo pese un giga. Con esto la pestaña puede preguntar «¿esto es
+    una versión nueva del mundo de ahora, o un mundo distinto?» y avisar si
+    viene de un Minecraft más nuevo que el servidor.
+    """
+    _require_admin()
+    parte, err = _parte_subida(request.get_json(silent=True) or {})
+    if err:
+        return err
+    try:
+        r = subprocess.run(["python3", str(MUNDOS_PY), "inspeccionar", str(parte), "--json"],
+                           capture_output=True, text=True, timeout=180)
+        return jsonify(json.loads(r.stdout.strip().splitlines()[-1]))
+    except Exception as e:
+        return jsonify(ok=False, mensaje="No pude leer el archivo: %s" % e), 400
+
+
+@app.post("/api/mundos/descartar")
+def api_mundos_descartar():
+    """Tira una subida que el usuario canceló en el cuadro de «qué hago con él».
+
+    Sin esto, decir que no dejaba el archivo entero —que pueden ser dos gigas—
+    ocupando disco hasta que la limpieza de restos lo pillara al día siguiente.
+    """
+    _require_admin()
+    parte, err = _parte_subida(request.get_json(silent=True) or {})
+    if err:
+        return err
+    parte.unlink(missing_ok=True)
+    return jsonify(ok=True)
+
+
+@app.post("/api/mundos/importar")
+def api_mundos_importar():
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    parte, err = _parte_subida(body)
+    if err:
+        return err
+    modo = body.get("modo") or "nuevo"
+    forzar = ["--forzar"] if body.get("forzar") else []
+
+    if modo == "reemplazar":
+        # misma identidad, mismo mapa: es «he editado el mundo y lo devuelvo»
+        def limpiar_r(bien, datos):
+            parte.unlink(missing_ok=True)
+        ok, por = _mundos_run("actualizar el mundo activo",
+                              ["reemplazar", str(parte)] + forzar,
+                              timeout=3 * 3600, al_acabar=limpiar_r)
+        if not ok:
+            return jsonify(ok=False, ocupado=True, output=por)
+        audit(u["name"], "subió una versión nueva del mundo activo")
+        return jsonify(ok=True, output="Parando el servidor y poniendo la versión nueva…")
+
+    nombre = re.sub(r"\s+", " ", (body.get("nombre") or "")).strip()[:48]
+    if len(nombre) < 2:
+        return jsonify(error="Ponle un nombre al mundo"), 400
+    # el .part son los mismos gigas otra vez: en cuanto mundos.py lo ha
+    # descomprimido no pinta nada en el disco
+    def limpiar(bien, datos):
+        parte.unlink(missing_ok=True)
+
+    ok, por = _mundos_run("importar «%s»" % nombre,
+                          ["importar", str(parte), "--nombre", nombre] + forzar,
+                          timeout=2 * 3600, al_acabar=limpiar)
+    if not ok:
+        # OJO: el .part NO se borra aquí. El archivo ya está subido entero —
+        # pueden ser diez minutos de subida— y tirarlo porque justo había otro
+        # trabajo en marcha sería cruel. `ocupado` le dice al navegador que
+        # espere y lo reintente en vez de darlo por perdido.
+        return jsonify(ok=False, ocupado=True, output=por)
+    audit(u["name"], f"subió un mundo: {nombre}")
+    return jsonify(ok=True, output="Descomprimiendo y comprobando el mundo…")
+
+
+# -------------------------------------------------------------------- cambiar
+@app.post("/api/mundos/cambiar")
+def api_mundos_cambiar():
+    u = _require_admin()
+    slug = (request.get_json(silent=True) or {}).get("slug") or ""
+    if not _slug_ok(slug):
+        return jsonify(error="mundo inválido"), 400
+    ok, por = _mundos_run("cambiar a %s" % slug, ["cambiar", slug], timeout=3 * 3600)
+    audit(u["name"], f"cambió el mundo activo a {slug}")
+    return jsonify(ok=ok, output="Parando el servidor y cambiando de mundo…" if ok else por)
+
+
+@app.post("/api/mundos/nuevo")
+def api_mundos_nuevo():
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    nombre = re.sub(r"\s+", " ", (body.get("nombre") or "")).strip()[:48]
+    if len(nombre) < 2:
+        return jsonify(error="Ponle un nombre al mundo"), 400
+    semilla = re.sub(r"[^\w -]", "", (body.get("semilla") or ""))[:48]
+    args = ["nuevo", "--nombre", nombre] + (["--semilla", semilla] if semilla else [])
+    ok, por = _mundos_run("estrenar «%s»" % nombre, args, timeout=2 * 3600)
+    audit(u["name"], f"estrenó un mundo nuevo: {nombre}")
+    return jsonify(ok=ok, output="Guardando el mundo de ahora y generando el nuevo…"
+                   if ok else por)
+
+
+@app.post("/api/mundos/borrar")
+def api_mundos_borrar():
+    u = _require_admin()
+    slug = (request.get_json(silent=True) or {}).get("slug") or ""
+    if not _slug_ok(slug):
+        return jsonify(error="mundo inválido"), 400
+    ok, por = _mundos_run("quitar %s" % slug, ["borrar", slug], timeout=600)
+    audit(u["name"], f"quitó el mundo {slug}")
+    return jsonify(ok=ok, output="Moviendo el mundo a la papelera…" if ok else por)
+
+
+@app.post("/api/mundos/jugadores")
+def api_mundos_jugadores():
+    """Trae logros, estadísticas y (si se pide) inventario de otro mundo.
+
+    Sirve para estrenar mapa sin que la gente pierda su historial: el ranking
+    del panel lee esos mismos ficheros, así que la tabla sigue donde estaba.
+    """
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    origen = body.get("origen") or ""
+    if not _slug_ok(origen):
+        return jsonify(error="mundo inválido"), 400
+    permitido = ("logros", "stats", "inventario")
+    que = [q for q in (body.get("que") or []) if q in permitido]
+    if not que:
+        return jsonify(error="Elige al menos una cosa que traer"), 400
+    ok, por = _mundos_run("traer los jugadores de %s" % origen,
+                          ["jugadores", origen, "--que", ",".join(que)], timeout=3600)
+    audit(u["name"], f"trajo {'+'.join(que)} desde el mundo {origen}")
+    return jsonify(ok=ok, output="Parando el servidor y copiando los datos…" if ok else por)
+
+
+@app.post("/api/mundos/vaciar_papelera")
+def api_mundos_vaciar():
+    u = _require_admin()
+    ok, por = _mundos_run("vaciar la papelera", ["vaciar-papelera"], timeout=1800)
+    audit(u["name"], "vació la papelera de mundos")
+    return jsonify(ok=ok, output="Borrando del disco…" if ok else por)
+
+
+
+# ============================================================ versión de Minecraft
+#
+# El servidor se mantiene solo al día, y el mapa se protege mientras BlueMap se
+# pone al día con la versión nueva. Toda la maña está en scripts/actualizar.py;
+# aquí se le llama y se guarda cada cuánto mirar.
+#
+# Comparte cerrojo con los mundos a propósito: los dos paran Minecraft, y
+# solaparlos dejaría el mundo a medio mover con el jar cambiándose debajo.
+ACTUALIZAR_PY = PANEL_DIR / "scripts" / "actualizar.py"
+MAPA_CONGELADO = DATA_DIR / "mapa-congelado.json"
+_ver_estado = {"t": 0, "datos": {}}
+
+
+def _act_run(args, timeout=120):
+    try:
+        r = subprocess.run(["python3", str(ACTUALIZAR_PY)] + args + ["--json"],
+                           capture_output=True, text=True, timeout=timeout)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception as e:
+        return {"ok": False, "mensaje": str(e)[:200]}
+
+
+def _act_estado(refrescar=False):
+    """Estado cacheado: preguntar a Mojang y a GitHub en cada carga de Sistema
+    sería una llamada de red por cada pestaña abierta cada cinco segundos."""
+    if not refrescar and time.time() - _ver_estado["t"] < 1800 and _ver_estado["datos"]:
+        return _ver_estado["datos"]
+    d = _act_run(["comprobar"], timeout=90)
+    m = _act_run(["mapa-estado"], timeout=90)
+    d["bluemap"] = m.get("bluemap")
+    d["bluemap_ultima"] = m.get("bluemap_ultima")
+    d["hay_bluemap_nuevo"] = m.get("hay_bluemap_nuevo")
+    d["congelado"] = m.get("congelado") or d.get("congelado")
+    _ver_estado.update(t=time.time(), datos=d)
+    return d
+
+
+def _auto_update_on():
+    return get_settings().get("auto_update", True) is not False
+
+
+@app.get("/api/actualizar/estado")
+def api_act_estado():
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    d = dict(_act_estado("refrescar" in request.args))
+    # El estado del mapa se lee del disco SIEMPRE, nunca de la caché: es un
+    # fichero local y no cuesta nada, y cachearlo abría una carrera — el trabajo
+    # se marcaba terminado un instante antes de invalidar la caché, y si la
+    # pestaña preguntaba justo ahí se quedaba sin enseñar el aviso de pausa
+    # hasta la siguiente media hora.
+    try:
+        d["congelado"] = json.loads(MAPA_CONGELADO.read_text())
+    except Exception:
+        d["congelado"] = None
+    d["auto"] = _auto_update_on()
+    d["disponible"] = ACTUALIZAR_PY.exists()
+    with _mundo_lock:
+        t = dict(_mundo_job)
+    t.pop("datos", None)
+    d["trabajo"] = t
+    return jsonify(d)
+
+
+@app.post("/api/actualizar/auto")
+def api_act_auto():
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    s = get_settings()
+    s["auto_update"] = bool(body.get("auto"))
+    SETTINGS_F.write_text(json.dumps(s))
+    audit(u["name"], "auto-actualización de Minecraft: %s" % ("SÍ" if s["auto_update"] else "NO"))
+    return jsonify(ok=True, output="Se actualizará solo" if s["auto_update"]
+                   else "Ya no se actualizará solo")
+
+
+@app.post("/api/actualizar/ahora")
+def api_act_ahora():
+    u = _require_admin()
+    ok, por = _mundos_run("actualizar Minecraft", ["actualizar"],
+                          timeout=2 * 3600, guion=ACTUALIZAR_PY,
+                          al_acabar=lambda bien, d: _ver_estado.update(t=0))
+    audit(u["name"], "actualización de Minecraft a mano")
+    return jsonify(ok=ok, output="Copia de seguridad, descarga y reinicio — unos minutos"
+                   if ok else por)
+
+
+@app.post("/api/actualizar/mapa")
+def api_act_mapa():
+    """Intenta poner el mapa al día con la versión de Minecraft actual."""
+    u = _require_admin()
+    ok, por = _mundos_run("poner el mapa al día", ["mapa-al-dia"],
+                          timeout=6 * 3600, guion=ACTUALIZAR_PY,
+                          al_acabar=lambda bien, d: _ver_estado.update(t=0))
+    audit(u["name"], "descongelar el mapa")
+    return jsonify(ok=ok, output="Probando con el BlueMap más nuevo — mira el registro"
+                   if ok else por)
+
+
+@app.post("/api/actualizar/deshacer")
+def api_act_deshacer():
+    u = _require_admin()
+    ok, por = _mundos_run("volver a la versión anterior", ["deshacer"],
+                          timeout=3600, guion=ACTUALIZAR_PY,
+                          al_acabar=lambda bien, d: _ver_estado.update(t=0))
+    audit(u["name"], "volver a la versión anterior de Minecraft")
+    return jsonify(ok=ok, output="Devolviendo el jar anterior…" if ok else por)
+
+
+def _bucle_actualizar():
+    """Mira si hay versión nueva, y si el mapa puede descongelarse ya.
+
+    Va en un hilo del panel y no en cron a propósito: así se despliega con el
+    resto del panel y no hace falta tocar nada en la máquina.
+    """
+    time.sleep(180)                      # que el panel arranque tranquilo
+    while True:
+        try:
+            if ACTUALIZAR_PY.exists():
+                d = _act_estado(refrescar=True)
+                if d.get("hay_nueva") and _auto_update_on():
+                    _syslog("[version] hay Minecraft %s, actualizando solo" % d.get("ultima"))
+                    _mundos_run("actualizar Minecraft a la %s" % d.get("ultima"),
+                                ["actualizar"], timeout=2 * 3600, guion=ACTUALIZAR_PY,
+                                al_acabar=lambda bien, x: _ver_estado.update(t=0))
+                elif MAPA_CONGELADO.exists():
+                    # se reintenta solo una vez al día: el día que BlueMap se
+                    # ponga al día, el mapa vuelve sin que nadie haga nada
+                    _syslog("[version] el mapa sigue congelado; pruebo a ponerlo al día")
+                    _mundos_run("poner el mapa al día", ["mapa-al-dia"],
+                                timeout=6 * 3600, guion=ACTUALIZAR_PY,
+                                al_acabar=lambda bien, x: _ver_estado.update(t=0))
+        except Exception as e:
+            try:
+                _syslog("[version] ERROR: %s" % e)
+            except Exception:
+                pass
+        time.sleep(6 * 3600)
+
+
+threading.Thread(target=_bucle_actualizar, daemon=True).start()
+
+# ============================================================ feed del servidor
+#
+# Una línea de tiempo leída del log de Minecraft. Vanilla puro: no hay plugin
+# que emita eventos, así que todo sale de las frases que el servidor escribe en
+# la consola, y esas frases se sacan del jar (scripts/build-mensajes.py) en vez
+# de escribirlas a mano — si Mojang las cambia, se regenera y ya.
+#
+# Tres tipos de evento:
+#   sesion  — entrada + salida emparejadas, una línea por sesión con su duración
+#   muerte  — con la causa exacta y, cuando se puede, dónde
+#   logro   — incluye el primer paso al Nether y al End, que en vanilla son logros
+#
+# Dos ficheros, a propósito:
+#   feed-historico.jsonl  el relleno de los .log.gz viejos, se escribe una vez
+#   feed.jsonl            lo que va pasando, se añade en caliente
+# Separados porque el relleno corre en segundo plano y podría tardar minutos; si
+# escribieran en el mismo fichero los eventos quedarían desordenados.
+# La marca que el datapack de vigilancia pone delante del nombre del bicho.
+# Tiene que ser la misma que MARCA en scripts/vigilancia.py.
+MARCA_VIGILANCIA = "☠"        # ☠
+
+FEED_F      = DATA_DIR / "feed.jsonl"
+FEEDHIST_F  = DATA_DIR / "feed-historico.jsonl"
+FEEDSTATE_F = DATA_DIR / "feed_state.json"
+FEEDLOCK_F  = DATA_DIR / "feed.lock"
+MENSAJES_F  = DATA_DIR / "mensajes.json"
+_feed_lock  = threading.Lock()
+
+# El candado tiene que valer entre PROCESOS, no solo entre hilos: gunicorn puede
+# levantar varios trabajadores y cada uno arranca su propio hilo de lectura del
+# log. Con solo un Lock de threading, dos trabajadores leen el mismo trozo a la
+# vez y el feed sale DUPLICADO (comprobado: pasó con dos paneles a la vez).
+try:
+    import fcntl as _fcntl
+except ImportError:
+    _fcntl = None
+
+class _feed_exclusivo:
+    def __enter__(self):
+        _feed_lock.acquire()
+        self.f = None
+        if _fcntl:
+            try:
+                FEEDLOCK_F.parent.mkdir(parents=True, exist_ok=True)
+                self.f = open(FEEDLOCK_F, "a+")
+                _fcntl.flock(self.f, _fcntl.LOCK_EX)
+            except Exception:
+                if self.f:
+                    try: self.f.close()
+                    except Exception: pass
+                self.f = None
+        return self
+    def __exit__(self, *a):
+        if self.f:
+            try:
+                _fcntl.flock(self.f, _fcntl.LOCK_UN)
+                self.f.close()
+            except Exception:
+                pass
+        _feed_lock.release()
+        return False
+
+# [17:20:00] [Server thread/INFO]: mensaje      (y la variante [17:20:00 INFO]:)
+LINEA_LOG = re.compile(r"^\[(\d\d):(\d\d):(\d\d)(?:\s+\w+)?\](?:\s*\[[^\]]*\])*:\s?(.*)$")
+ARCHIVO_LOG = re.compile(r"^(\d{4})-(\d\d)-(\d\d)-(\d+)\.log(\.gz)?$")
+
+_msgs_cache = {"mtime": None, "data": None}
+
+def mensajes():
+    """Las frases del juego ya compiladas. Las genera scripts/build-mensajes.py.
+    Si el fichero no está, el feed no puede leer nada y lo dice claro."""
+    try:
+        mt = MENSAJES_F.stat().st_mtime
+    except OSError:
+        return None
+    if _msgs_cache["mtime"] != mt:
+        try:
+            d = json.loads(MENSAJES_F.read_text())
+        except Exception:
+            return None
+        d["_muertes"] = [(re.compile(m["rx"]), m) for m in d.get("muertes", [])]
+        d["_sesion"] = {k: re.compile(v["rx"])
+                        for k, v in d.get("sesion", {}).items() if v.get("rx")}
+        d["_logros"] = {k: re.compile(v["rx"])
+                        for k, v in d.get("logros", {}).items() if v.get("rx")}
+        d["_porclave"] = {m["clave"]: m for m in d.get("muertes", [])}
+        _msgs_cache["mtime"], _msgs_cache["data"] = mt, d
+    return _msgs_cache["data"]
+
+def _feed_state():
+    try:
+        return json.loads(FEEDSTATE_F.read_text())
+    except Exception:
+        return {"latest": {}, "archivos": [], "abiertas": {}, "relleno": None}
+
+def _feed_state_save(s):
+    FEEDSTATE_F.write_text(json.dumps(s))
+
+def _uuid_de(nombre):
+    n = (nombre or "").lower()
+    for u, nom in usercache().items():
+        if (nom or "").lower() == n:
+            return u
+    return None
+
+# ------------------------------------------------------------------ el reloj
+#
+# GOTCHA: las líneas del log traen la HORA pero NO la fecha. La fecha sale del
+# nombre del fichero (2026-08-23-1.log.gz) y, para latest.log, de su mtime.
+# Dentro de un mismo fichero se detecta el cambio de día porque la hora
+# retrocede: si la línea de las 00:03 va después de la de las 23:58, es el día
+# siguiente.
+def _lineas_con_fecha(texto, dia0, hora_previa=None):
+    """Devuelve (lineas, hora_ultima, saltos_de_dia). dia0 = [año, mes, día]."""
+    out = []
+    dia = list(dia0)
+    ant = hora_previa
+    saltos = 0
+    for linea in texto.splitlines():
+        m = LINEA_LOG.match(linea)
+        if not m:
+            continue
+        h, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        hora = h * 3600 + mi * 60 + s
+        if ant is not None and hora < ant - 60:      # el reloj retrocedió: otro día
+            dia[2] += 1
+            saltos += 1
+        ant = hora
+        try:
+            ts = time.mktime((dia[0], dia[1], dia[2], h, mi, s, 0, 0, -1))
+        except (OverflowError, ValueError):
+            continue
+        out.append((ts, m.group(4)))
+        # normalizar el día por si mktime lo desbordó (31 de mes, etc.)
+        t = time.localtime(ts)
+        dia = [t.tm_year, t.tm_mon, t.tm_mday]
+    return out, ant, saltos
+
+def _dia_de_archivo(nombre):
+    m = ARCHIVO_LOG.match(nombre)
+    if not m:
+        return None
+    return [int(m.group(1)), int(m.group(2)), int(m.group(3))]
+
+# --------------------------------------------------------------- el traductor
+def _interpretar(msg, msgs):
+    """Una línea del log -> (tipo, jugador, extra) o None."""
+    for campo, rx in msgs["_sesion"].items():
+        g = rx.match(msg)
+        if g:
+            return ("entro" if campo == "entro" else "salio"), g.group(1), {}
+    for campo, rx in msgs["_logros"].items():
+        g = rx.match(msg)
+        if g:
+            titulo = g.group(2).strip()
+            if titulo.startswith("[") and titulo.endswith("]"):
+                titulo = titulo[1:-1]
+            # Los logros que empiezan por la marca ☠ NO son logros: los pone
+            # el datapack de vigilancia (scripts/vigilancia.py) para que la
+            # muerte de un mob con nombre llegue al log, que es lo único que
+            # vanilla deja escrito. Se convierten en un evento aparte para que
+            # en la Historia salgan como una muerte y no como un trofeo.
+            if titulo.startswith(MARCA_VIGILANCIA):
+                return "mobmuerto", g.group(1), {
+                    "victima": titulo[len(MARCA_VIGILANCIA):].strip()}
+            return "logro", g.group(1), {"titulo": titulo, "tipo": campo}
+    for rx, plant in msgs["_muertes"]:
+        g = rx.match(msg)
+        if g:
+            return "muerte", g.group(1), {"clave": plant["clave"],
+                                          "args": list(g.groups()[1:]),
+                                          "frase": msg}
+    return None
+
+# --------------------------------------------------------- dónde murió alguien
+def _ultima_muerte_de(nombre, uuid, en_linea):
+    """LastDeathLocation: por RCON si está conectado (al instante) o del .dat.
+
+    El .dat solo se escribe al guardar, así que justo después de morir puede ir
+    atrasado; por eso para los conectados se pregunta al servidor."""
+    if en_linea:
+        ok, out = rcon_try(f"data get entity {nombre} LastDeathLocation")
+        if ok and "pos" in out:
+            mp = re.search(r"pos:\s*\[([-\d]+),\s*([-\d]+),\s*([-\d]+)\]", out)
+            md = re.search(r'dimension:\s*"([^"]+)"', out)
+            if mp:
+                return {"x": int(mp.group(1)), "y": int(mp.group(2)),
+                        "z": int(mp.group(3)),
+                        "dim": md.group(1) if md else "minecraft:overworld"}
+    if not uuid:
+        return None
+    try:
+        import nbt as _n
+        p = MC_DIR / "world/players/data" / f"{uuid}.dat"
+        if not p.exists():
+            return None
+        _, root, _gz = _n.load(p)
+        d = _n.cget(root.v, "LastDeathLocation")
+        if d is None:
+            return None
+        pos = _n.cget(d.v, "pos")
+        dim = _n.cget(d.v, "dimension")
+        if pos is None:
+            return None
+        xyz = list(pos.v.items if hasattr(pos.v, "items") else pos.v)
+        if len(xyz) < 3:
+            return None
+        return {"x": int(xyz[0]), "y": int(xyz[1]), "z": int(xyz[2]),
+                "dim": _texto_nbt(dim) or "minecraft:overworld"}
+    except Exception:
+        return None
+
+def _texto_nbt(tag):
+    """El payload de una cadena NBT son bytes crudos (UTF-8 modificado)."""
+    if tag is None:
+        return None
+    v = tag.v
+    if isinstance(v, bytes):
+        return v.decode("utf-8", "replace")
+    return str(v)
+
+def _bioma_suave(dim_id, x, z):
+    """El bioma de superficie en ese punto, si se puede. Nunca revienta."""
+    try:
+        dim = "nether" if "nether" in dim_id else ("end" if "end" in dim_id else "overworld")
+        col = biomas_columna(dim, int(x), int(z))
+        if not col:
+            return None
+        bid = col[-1][1]
+        cat = biomas_catalogo()
+        e = cat.get(bid) or {}
+        return {"id": bid, "es": e.get("es"), "en": e.get("en")}
+    except Exception:
+        return None
+
+# ------------------------------------------------------------------ el motor
+def _procesar(lineas, msgs, estado, salida, en_vivo):
+    """Convierte líneas (ts, msg) en eventos y los mete en `salida`.
+
+    `estado["abiertas"]` guarda las sesiones sin cerrar entre pasadas: una
+    entrada solo se convierte en evento cuando llega su salida, así el feed
+    tiene una línea por sesión con la duración y no dos sueltas."""
+    abiertas = estado.setdefault("abiertas", {})
+    ultima_muerte = {}
+    for ts, msg in lineas:
+        r = _interpretar(msg, msgs)
+        if not r:
+            continue
+        tipo, quien, extra = r
+        if tipo == "entro":
+            abiertas[quien] = ts
+        elif tipo == "salio":
+            ini = abiertas.pop(quien, None)
+            if ini is None or ts < ini:
+                continue
+            salida.append({"t": ini, "k": "sesion", "p": quien,
+                           "u": _uuid_de(quien), "fin": ts, "seg": int(ts - ini)})
+        elif tipo == "logro":
+            salida.append({"t": ts, "k": "logro", "p": quien, "u": _uuid_de(quien),
+                           "titulo": extra["titulo"], "tipo": extra["tipo"]})
+        elif tipo == "mobmuerto":
+            salida.append({"t": ts, "k": "mobmuerto", "p": quien, "u": _uuid_de(quien),
+                           "victima": extra["victima"]})
+        elif tipo == "muerte":
+            ev = {"t": ts, "k": "muerte", "p": quien, "u": _uuid_de(quien),
+                  "clave": extra["clave"], "args": extra["args"],
+                  "frase": extra["frase"]}
+            salida.append(ev)
+            ultima_muerte[quien] = ev
+    # El sitio de la muerte solo se puede saber de la ÚLTIMA de cada jugador, y
+    # solo si vamos al día: LastDeathLocation guarda una sola. En el relleno
+    # histórico no se intenta — esas muertes se quedan sin coordenadas, y el
+    # panel lo dice en vez de inventárselas.
+    if en_vivo and ultima_muerte:
+        conectados = set(online_players() or [])
+        for quien, ev in ultima_muerte.items():
+            loc = _ultima_muerte_de(quien, ev.get("u"), quien in conectados)
+            if not loc:
+                continue
+            ev.update(loc)
+            b = _bioma_suave(loc["dim"], loc["x"], loc["z"])
+            if b:
+                ev["bioma"] = b
+
+def _añadir(fichero, eventos):
+    if not eventos:
+        return
+    fichero.parent.mkdir(parents=True, exist_ok=True)
+    with open(fichero, "a", encoding="utf-8") as f:
+        for e in eventos:
+            f.write(json.dumps(e, ensure_ascii=False) + "\n")
+
+def feed_scan():
+    """Lee lo nuevo de latest.log. Barato: recuerda dónde se quedó."""
+    msgs = mensajes()
+    if not msgs:
+        return False
+    log = MC_DIR / "logs/latest.log"
+    try:
+        st = log.stat()
+    except OSError:
+        return False
+    with _feed_exclusivo():
+        estado = _feed_state()
+        lat = estado.setdefault("latest", {})
+        nuevo_fichero = (lat.get("inode") != st.st_ino or st.st_size < lat.get("offset", 0))
+        if nuevo_fichero:
+            # El servidor reinició. Las sesiones que quedaron abiertas no van a
+            # recibir nunca su "left the game", así que se cierran en la última
+            # hora que se vio en el log anterior. Sin esto, quien estaba dentro
+            # cuando se cayó el servidor desaparecería del feed.
+            corte = lat.get("ultimo_ts")
+            sueltas = estado.get("abiertas") or {}
+            if corte and sueltas:
+                _añadir(FEED_F, [{"t": ini, "k": "sesion", "p": quien,
+                                  "u": _uuid_de(quien), "fin": corte,
+                                  "seg": max(0, int(corte - ini)), "cortada": True}
+                                 for quien, ini in sueltas.items() if ini <= corte])
+            estado["abiertas"] = {}
+            lat = estado["latest"] = {"inode": st.st_ino, "offset": 0}
+        try:
+            with open(log, "r", errors="replace") as f:
+                f.seek(lat.get("offset", 0))
+                trozo = f.read()
+                lat["offset"] = f.tell()
+        except OSError:
+            return False
+        lat["inode"] = st.st_ino
+        if not trozo.strip():
+            _feed_state_save(estado)
+            return True
+
+        if lat.get("ultimo_ts"):
+            t = time.localtime(lat["ultimo_ts"])
+            dia0 = [t.tm_year, t.tm_mon, t.tm_mday]
+            hora_previa = t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec
+            lineas, _h, _s = _lineas_con_fecha(trozo, dia0, hora_previa)
+        else:
+            # Primera lectura de este fichero: no se sabe qué día empezó. Se ancla
+            # la ÚLTIMA línea al mtime (que es justo cuando se escribió) y se
+            # cuenta hacia atrás cuántos cambios de día hubo. Si la última línea
+            # es de una hora MAYOR que la del mtime, el fichero cruzó medianoche
+            # y hay que restar un día más.
+            #
+            # No se suman segundos a los timestamps ya calculados: se vuelve a
+            # calcular con el día bueno. Sumar 86400 se rompe en los cambios de
+            # horario de verano, y aquí el desfase sería de un día entero.
+            t = time.localtime(st.st_mtime)
+            hoy = [t.tm_year, t.tm_mon, t.tm_mday]
+            lineas, _h, saltos = _lineas_con_fecha(trozo, hoy)
+            if lineas:
+                ult = time.localtime(lineas[-1][0])
+                cruzo = 1 if (ult.tm_hour * 3600 + ult.tm_min * 60 + ult.tm_sec) > \
+                             (t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec) else 0
+                atras = saltos + cruzo
+                if atras:
+                    base = time.localtime(time.mktime(
+                        (hoy[0], hoy[1], hoy[2], 12, 0, 0, 0, 0, -1)) - atras * 86400)
+                    lineas, _h, _s = _lineas_con_fecha(
+                        trozo, [base.tm_year, base.tm_mon, base.tm_mday])
+        if lineas:
+            lat["ultimo_ts"] = lineas[-1][0]
+        eventos = []
+        _procesar(lineas, msgs, estado, eventos, en_vivo=True)
+        _añadir(FEED_F, eventos)
+        _feed_state_save(estado)
+    return True
+
+def feed_relleno():
+    """Una sola vez: lee los .log.gz viejos y arma la historia hacia atrás."""
+    msgs = mensajes()
+    if not msgs:
+        return
+    carpeta = MC_DIR / "logs"
+    if not carpeta.is_dir():
+        return
+    estado = _feed_state()
+    hechos = set(estado.get("archivos", []))
+    pend = []
+    for p in carpeta.iterdir():
+        dia = _dia_de_archivo(p.name)
+        if dia and p.name not in hechos:
+            m = ARCHIVO_LOG.match(p.name)
+            pend.append((dia[0], dia[1], dia[2], int(m.group(4)), p))
+    if not pend:
+        return
+    pend.sort()
+    # OJO: hay que releer el estado DENTRO del candado antes de guardar. Con el
+    # `estado` de hace un momento se pisaba la lista de archivos ya procesados
+    # por otro trabajador, y entonces todos volvían a leer el mismo log: el feed
+    # salía duplicado. Es el fallo que se cazó con cuatro paneles a la vez.
+    with _feed_exclusivo():
+        estado = _feed_state()
+        estado["relleno"] = {"total": len(pend), "hechos": 0, "desde": time.time()}
+        _feed_state_save(estado)
+    for i, (_a, _m, _d, _n, p) in enumerate(pend, 1):
+        try:
+            with _feed_exclusivo():
+                if p.name in set(_feed_state().get("archivos", [])):
+                    continue          # otro trabajador se adelantó
+            if p.suffix == ".gz":
+                with gzip.open(p, "rt", errors="replace") as f:
+                    texto = f.read()
+            else:
+                texto = p.read_text(errors="replace")
+            lineas, _h, _s = _lineas_con_fecha(texto, _dia_de_archivo(p.name))
+            eventos = []
+            # cada archivo es un arranque distinto: nada de sesiones heredadas
+            temp = {"abiertas": {}}
+            _procesar(lineas, msgs, temp, eventos, en_vivo=False)
+            with _feed_exclusivo():
+                estado = _feed_state()
+                if p.name in set(estado.get("archivos", [])):
+                    continue          # se adelantaron mientras yo leía
+                _añadir(FEEDHIST_F, eventos)
+                estado.setdefault("archivos", []).append(p.name)
+                estado["relleno"] = {"total": len(pend), "hechos": i,
+                                     "desde": estado.get("relleno", {}).get("desde")}
+                _feed_state_save(estado)
+        except Exception:
+            with _feed_exclusivo():
+                estado = _feed_state()
+                if p.name not in set(estado.get("archivos", [])):
+                    estado.setdefault("archivos", []).append(p.name)   # no reintentar en bucle
+                    _feed_state_save(estado)
+        time.sleep(0.2)          # amable con las 2 CPU de la caja
+    with _feed_exclusivo():
+        estado = _feed_state()
+        estado["relleno"] = {"total": len(pend), "hechos": len(pend), "fin": time.time()}
+        _feed_state_save(estado)
+
+def _leer_cola(fichero, limite):
+    """Últimas `limite` líneas de un JSONL, sin cargarlo entero en memoria."""
+    try:
+        tam = fichero.stat().st_size
+    except OSError:
+        return []
+    trozo, paso, pos = b"", 65536, tam
+    while pos > 0 and trozo.count(b"\n") <= limite:
+        pos = max(0, pos - paso)
+        paso *= 2
+        with open(fichero, "rb") as f:
+            f.seek(pos)
+            trozo = f.read(tam - pos)
+        if pos == 0:
+            break
+    out = []
+    for linea in trozo.decode("utf-8", "replace").splitlines()[-limite:]:
+        linea = linea.strip()
+        if not linea:
+            continue
+        try:
+            out.append(json.loads(linea))
+        except Exception:
+            pass
+    return out
+
+def feed_eventos(limite=200, antes=None, tipos=None):
+    """Los eventos más nuevos primero. `antes` = timestamp para paginar."""
+    cuantos = limite * 4 + 200        # de sobra para filtrar y paginar
+    ev = _leer_cola(FEED_F, cuantos) + _leer_cola(FEEDHIST_F, cuantos)
+    # las sesiones que siguen abiertas no están en el fichero: se sintetizan
+    estado = _feed_state()
+    conectados = set(online_players() or [])
+    ahora = time.time()
+    for quien, ini in (estado.get("abiertas") or {}).items():
+        if quien in conectados:
+            ev.append({"t": ini, "k": "sesion", "p": quien, "u": _uuid_de(quien),
+                       "seg": int(ahora - ini), "abierta": True})
+    ev.sort(key=lambda e: -e.get("t", 0))
+    if tipos:
+        ev = [e for e in ev if e.get("k") in tipos]
+    if antes:
+        ev = [e for e in ev if e.get("t", 0) < antes]
+    return ev[:limite]
+
+# ------------------------------------------------------------------ rutas
+def _puede_ver_lugar(u, ev):
+    """Las coordenadas de una muerte son el sitio donde quedaron las cosas del
+    muerto: cualquiera que las vea puede ir a saquearlas antes que él. Así que
+    solo las ven los moderadores/admin y el propio interesado.
+
+    Ojo: "el propio interesado" solo funciona si el nombre de su cuenta del
+    panel coincide con su nombre de Minecraft. Quien entra con el PIN es
+    'invitado' y no tiene identidad, así que nunca ve coordenadas."""
+    if u.get("role") in ("admin", "mod"):
+        return True
+    return (u.get("name") or "").lower() == (ev.get("p") or "").lower()
+
+# Minecraft mezcla los dos estilos de hueco en el mismo fichero de textos:
+# "%1$s fue asesinado por %2$s" (numerado) y "%s se unió a la partida" (simple).
+# Hay que entender los dos o la frase sale con los huecos a la vista.
+_HUECO = re.compile(r"%(?:(\d)\$)?s")
+
+def _rellenar(plantilla, partes):
+    seq = [0]
+    def rep(m):
+        if m.group(1):
+            i = int(m.group(1))
+        else:
+            seq[0] += 1
+            i = seq[0]
+        return partes[i - 1] if 0 < i <= len(partes) else ""
+    return _HUECO.sub(rep, plantilla)
+
+def _texto_muerte(ev):
+    """La frase de la muerte, ya montada, en los dos idiomas.
+
+    Se arma aquí y no en el navegador para no mandarle al cliente la tabla
+    entera de plantillas en cada petición."""
+    m = mensajes() or {}
+    plant = (m.get("_porclave") or {}).get(ev.get("clave"))
+    crudo = ev.get("frase") or ""
+    if not plant:
+        return crudo, crudo
+    partes = [ev.get("p") or ""] + [str(a) for a in (ev.get("args") or [])]
+    return _rellenar(plant.get("es") or crudo, partes), \
+           _rellenar(plant.get("en") or crudo, partes)
+
+def _feed_publico(u, eventos):
+    out = []
+    for ev in eventos:
+        e = dict(ev)
+        if e.get("k") == "muerte":
+            e["es"], e["en"] = _texto_muerte(ev)
+            for k in ("frase", "args"):
+                e.pop(k, None)
+            if not _puede_ver_lugar(u, e):
+                for k in ("x", "y", "z"):
+                    e.pop(k, None)
+                e["lugar_oculto"] = ev.get("x") is not None
+        out.append(e)
+    return out
+
+@app.get("/api/feed")
+def api_feed():
+    u = require("view_dashboard")
+    if not mensajes():
+        return jsonify(error="Faltan las frases del juego — corre "
+                             "scripts/build-mensajes.py en el servidor",
+                       eventos=[], listo=False), 200
+    feed_scan()
+    try:
+        limite = max(1, min(200, int(request.args.get("limite", 60))))
+    except ValueError:
+        limite = 60
+    try:
+        antes = float(request.args["antes"]) if request.args.get("antes") else None
+    except ValueError:
+        antes = None
+    crudos = (request.args.get("tipos") or "").strip()
+    tipos = [t for t in crudos.split(",") if t in ("sesion", "muerte", "logro")] or None
+    ev = feed_eventos(limite, antes, tipos)
+    estado = _feed_state()
+    return jsonify(eventos=_feed_publico(u, ev), listo=True,
+                   relleno=estado.get("relleno"), hay_mas=len(ev) == limite)
+
+def _feed_loop():
+    """Lee el log cada 20 s aunque no haya nadie mirando el panel: si nadie lo
+    lee en caliente, las muertes se quedan sin coordenadas para siempre."""
+    time.sleep(8)
+    try:
+        threading.Thread(target=feed_relleno, daemon=True).start()
+    except Exception:
+        pass
+    seguidos = 0
+    while True:
+        try:
+            feed_scan()
+            seguidos = 0
+            _salud("feed", ok=True)
+        except Exception as ex:
+            # Antes esto era un `pass` mudo. Si el feed empezaba a fallar, la
+            # Historia se congelaba y no había ni una pista de por qué.
+            seguidos += 1
+            _salud("feed", ok=False, nota=f"{type(ex).__name__}: {ex}")
+            if seguidos in (1, 5, 30) or seguidos % 180 == 0:
+                _syslog(f"[feed] fallo #{seguidos}: {type(ex).__name__}: {ex}")
+        time.sleep(20)
+
+threading.Thread(target=_feed_loop, daemon=True).start()
+
+# ==================================== posición, teleport y efectos (solo admin)
+#
+# Todo por RCON y solo con el jugador CONECTADO. Mover a alguien desconectado
+# obligaría a editarle el .dat mientras el servidor puede estar escribiéndolo:
+# es la forma de perderle la partida a un amigo, así que no se hace.
+DIMS = {"minecraft:overworld": "Overworld",
+        "minecraft:the_nether": "Nether",
+        "minecraft:the_end": "End"}
+DIM_CORTA = {"overworld": "minecraft:overworld",
+             "nether": "minecraft:the_nether",
+             "end": "minecraft:the_end"}
+
+def _dim_larga(v):
+    v = (v or "").strip().lower()
+    if v in DIMS:
+        return v
+    return DIM_CORTA.get(v, "minecraft:overworld")
+
+def _pos_conectado(nombre):
+    """Pos y Dimension del jugador vivo. Devuelve None si no se puede."""
+    ok, out = rcon_try(f"data get entity {nombre} Pos")
+    if not ok or "[" not in out:
+        return None
+    m = re.search(r"\[\s*(-?[\d.]+)d,\s*(-?[\d.]+)d,\s*(-?[\d.]+)d\s*\]", out)
+    if not m:
+        return None
+    p = {"x": float(m.group(1)), "y": float(m.group(2)), "z": float(m.group(3))}
+    ok2, out2 = rcon_try(f"data get entity {nombre} Dimension")
+    md = re.search(r'"([^"]+)"', out2 or "")
+    p["dim"] = md.group(1) if (ok2 and md) else "minecraft:overworld"
+    return p
+
+def _pos_desconectado(uuid):
+    """Última posición conocida, del .dat. Es de cuando se desconectó."""
+    try:
+        import nbt as _n
+        p = MC_DIR / "world/players/data" / f"{uuid}.dat"
+        if not p.exists():
+            return None
+        _, root, _gz = _n.load(p)
+        pos = _n.cget(root.v, "Pos")
+        if pos is None:
+            return None
+        xyz = list(pos.v.items if hasattr(pos.v, "items") else pos.v)
+        if len(xyz) < 3:
+            return None
+        d = _texto_nbt(_n.cget(root.v, "Dimension")) or "minecraft:overworld"
+        if d.lstrip("-").isdigit():          # mundos viejos guardaban un número
+            d = {"-1": "minecraft:the_nether", "1": "minecraft:the_end"}.get(
+                d, "minecraft:overworld")
+        return {"x": float(xyz[0]), "y": float(xyz[1]), "z": float(xyz[2]), "dim": d}
+    except Exception:
+        return None
+
+# Los datos viejos de este mundo traen posiciones basura a 25 MILLONES de
+# bloques (ver claude/bluemap-mapa.md: de ahí salieron los dos .mca perdidos).
+# Mandar a alguien ahí genera terreno nuevo en medio de la nada y es justo lo
+# que hay que evitar, así que se marca y el panel avisa antes de saltar.
+LEJOS = 1_000_000
+
+def _con_bioma(p):
+    if not p:
+        return p
+    extra = {}
+    if abs(p.get("x", 0)) > LEJOS or abs(p.get("z", 0)) > LEJOS:
+        extra["lejano"] = True
+    else:
+        b = _bioma_suave(p.get("dim", ""), p.get("x", 0), p.get("z", 0))
+        if b:
+            extra["bioma"] = b
+    return dict(p, **extra) if extra else p
+
+@app.get("/api/player/<uuid>/pos")
+def api_player_pos(uuid):
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    uuid = uuid.lower()
+    if not DATA_UUID.match(uuid):
+        abort(400)
+    nombre = usercache().get(uuid)
+    if not nombre:
+        return jsonify(error="No sé el nombre de ese jugador"), 404
+    conectados = set(online_players() or [])
+    en_linea = nombre in conectados
+    pos = _pos_conectado(nombre) if en_linea else None
+    if pos is None:
+        pos = _pos_desconectado(uuid)
+        fuente = "archivo"
+    else:
+        fuente = "vivo"
+    muerte = _ultima_muerte_de(nombre, uuid, en_linea)
+    return jsonify(name=nombre, online=en_linea, fuente=fuente,
+                   pos=_con_bioma(pos), muerte=_con_bioma(muerte),
+                   dims=DIMS,
+                   otros=sorted(n for n in conectados if n != nombre))
+
+# ------------------------------------------------------------------- efectos
+@app.get("/api/effects")
+def api_effects():
+    require("view_dashboard")
+    m = mensajes()
+    if not m:
+        return jsonify(efectos=[], error="Faltan las frases del juego — corre "
+                                         "scripts/build-mensajes.py"), 200
+    return jsonify(efectos=m.get("efectos", []))
+
+def _efectos_validos():
+    m = mensajes() or {}
+    return {e["id"]: e for e in m.get("efectos", [])}
+
+def _comando_efecto(nombre, e):
+    """Un dict {id, segundos|'infinite', nivel, ocultar} -> comando /effect.
+
+    OJO con el nivel: /effect toma el AMPLIFICADOR, que empieza en 0. Lo que en
+    el juego se llama "Fuerza II" es amplificador 1. Aquí la interfaz habla de
+    niveles empezando en 1 y aquí se resta."""
+    cat = _efectos_validos()
+    eid = str(e.get("id", ""))
+    if eid not in cat:
+        return None, f"Efecto desconocido: {eid}"
+    dur = e.get("segundos", 30)
+    if str(dur).lower() in ("infinite", "infinito", "inf"):
+        dur = "infinite"
+    else:
+        try:
+            dur = int(dur)
+        except (TypeError, ValueError):
+            return None, "Duración inválida"
+        if not (1 <= dur <= 1_000_000):
+            return None, "La duración va de 1 a 1.000.000 de segundos"
+    try:
+        nivel = int(e.get("nivel", 1))
+    except (TypeError, ValueError):
+        return None, "Nivel inválido"
+    if not (1 <= nivel <= 256):
+        return None, "El nivel va de 1 a 256"
+    ocultar = "true" if e.get("ocultar") else "false"
+    return (f"effect give {nombre} minecraft:{eid} {dur} {nivel - 1} {ocultar}"), None
+
+def _jugador_conectado(body):
+    """Saca el nombre del cuerpo de la petición y comprueba que esté dentro."""
+    nombre = (body.get("name") or "").strip()
+    if not nombre:
+        uuid = (body.get("uuid") or "").lower()
+        if DATA_UUID.match(uuid):
+            nombre = usercache().get(uuid, "")
+    if not SAFE_NAME.match(nombre or ""):
+        return None, "Nombre de jugador inválido"
+    if nombre not in set(online_players() or []):
+        return None, f"{nombre} no está conectado — esto solo funciona en vivo"
+    return nombre, None
+
+@app.post("/api/player/effects")
+def api_player_effects():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    nombre, err = _jugador_conectado(body)
+    if err:
+        return jsonify(error=err), 400
+
+    if body.get("limpiar"):
+        eid = body.get("limpiar")
+        if eid is True or eid == "todos":
+            cmd = f"effect clear {nombre}"
+            desc = f"limpió todos los efectos de {nombre}"
+        else:
+            if str(eid) not in _efectos_validos():
+                return jsonify(error="Efecto desconocido"), 400
+            cmd = f"effect clear {nombre} minecraft:{eid}"
+            desc = f"quitó {eid} a {nombre}"
+        ok, out = rcon_try(cmd)
+        audit(u["name"], f"{desc} -> {out[:120]}")
+        return jsonify(ok=ok, output=out)
+
+    efectos = body.get("efectos") or []
+    if not isinstance(efectos, list) or not efectos:
+        return jsonify(error="No mandaste ningún efecto"), 400
+    if len(efectos) > 12:
+        return jsonify(error="Máximo 12 efectos de una vez"), 400
+    cmds = []
+    for e in efectos:
+        cmd, err = _comando_efecto(nombre, e if isinstance(e, dict) else {})
+        if err:
+            return jsonify(error=err), 400
+        cmds.append(cmd)
+    salidas = []
+    for c in cmds:
+        ok, out = rcon_try(c)
+        salidas.append(out)
+        if not ok:
+            break
+    audit(u["name"], f"efectos a {nombre}: {len(cmds)} -> {' | '.join(salidas)[:160]}")
+    return jsonify(ok=True, output=" | ".join(salidas))
+
+# ------------------------------------------------------------------ teleport
+@app.post("/api/player/teleport")
+def api_player_teleport():
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    nombre, err = _jugador_conectado(body)
+    if err:
+        return jsonify(error=err), 400
+
+    # los efectos van ANTES del salto: así una caída larga con Caída lenta o
+    # Resistencia al fuego ya está puesta cuando el jugador aparece allí
+    previos = body.get("efectos") or []
+    salidas = []
+    if previos:
+        if len(previos) > 12:
+            return jsonify(error="Máximo 12 efectos de una vez"), 400
+        for e in previos:
+            cmd, err = _comando_efecto(nombre, e if isinstance(e, dict) else {})
+            if err:
+                return jsonify(error=err), 400
+            ok, out = rcon_try(cmd)
+            salidas.append(out)
+
+    tipo = (body.get("tipo") or "coords").strip()
+    if tipo == "jugador":
+        otro = (body.get("jugador") or "").strip()
+        if not SAFE_NAME.match(otro):
+            return jsonify(error="Nombre de destino inválido"), 400
+        if otro not in set(online_players() or []):
+            return jsonify(error=f"{otro} no está conectado"), 400
+        cmd = f"tp {nombre} {otro}"
+        desc = f"teletransportó a {nombre} hasta {otro}"
+    else:
+        try:
+            x = float(body.get("x")); y = float(body.get("y")); z = float(body.get("z"))
+        except (TypeError, ValueError):
+            return jsonify(error="Coordenadas inválidas"), 400
+        if not all(-30_000_000 <= c <= 30_000_000 for c in (x, z)) or not (-256 <= y <= 512):
+            return jsonify(error="Coordenadas fuera del mundo"), 400
+        dim = _dim_larga(body.get("dim"))
+        # +0.5 para caer en el centro del bloque y no en una esquina
+        cmd = (f"execute in {dim} run tp {nombre} "
+               f"{x:.2f} {y:.2f} {z:.2f}")
+        etiqueta = DIMS.get(dim, dim)
+        desc = (f"teletransportó a {nombre} a {x:.0f} {y:.0f} {z:.0f} ({etiqueta})"
+                + (f" tras {len(previos)} efecto(s)" if previos else ""))
+
+    ok, out = rcon_try(cmd)
+    salidas.append(out)
+    audit(u["name"], f"{desc} -> {out[:120]}")
+    return jsonify(ok=ok, output=" | ".join(s for s in salidas if s))
+
+# ------------------------------------------------------------ marcadores del mapa
+MARKERS_FILE = DATA_DIR / "markers.json"
+MARKER_ICONS = ["base", "spawn", "shop", "farm", "landmark", "danger", "portal", "meeting"]
+
+def _markers_load():
+    try:
+        v = json.loads(MARKERS_FILE.read_text())
+        return v if isinstance(v, list) else []
+    except Exception:
+        return []
+
+def _markers_save(v):
+    MARKERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MARKERS_FILE.write_text(json.dumps(v, ensure_ascii=False))
+
+@app.get("/api/markers")
+def api_markers():
+    require("view_dashboard")
+    return jsonify(markers=_markers_load(), icons=MARKER_ICONS)
+
+@app.post("/api/markers/add")
+def api_markers_add():
+    # cualquiera que entró con el PIN puede marcar un lugar; borrarlo no
+    u = require("markers_add")
+    if not _csrf_ok():
+        abort(403)
+    b = request.get_json(silent=True) or {}
+    name = (b.get("name") or "").strip()[:48]
+    icon = b.get("icon") if b.get("icon") in MARKER_ICONS else "landmark"
+    dim = b.get("dim") if b.get("dim") in ("overworld", "nether", "end") else "overworld"
+    if len(name) < 2:
+        return jsonify(error="Ponle un nombre (mínimo 2 letras)"), 400
+    try:
+        x, y, z = int(b.get("x")), int(b.get("y", 64)), int(b.get("z"))
+    except Exception:
+        return jsonify(error="Coordenadas inválidas"), 400
+    if not all(-30_000_000 <= c <= 30_000_000 for c in (x, z)) or not (-256 <= y <= 512):
+        return jsonify(error="Coordenadas fuera del mundo"), 400
+    ms = _markers_load()
+    if len(ms) >= 300:
+        return jsonify(error="Demasiados marcadores (máx. 300)"), 400
+    ms.append({"id": secrets.token_hex(6), "name": name, "x": x, "y": y, "z": z,
+               "icon": icon, "dim": dim, "by": u["name"], "ts": int(time.time())})
+    _markers_save(ms)
+    audit(u["name"], f"marcador '{name}' en {x},{y},{z} ({dim})")
+    return jsonify(ok=True, markers=ms)
+
+@app.post("/api/markers/delete")
+def api_markers_delete():
+    u = require()
+    if u["role"] not in ("admin", "mod") or not _csrf_ok():
+        abort(403)
+    mid = (request.get_json(silent=True) or {}).get("id")
+    ms = _markers_load()
+    keep = [m for m in ms if m.get("id") != mid]
+    if len(keep) == len(ms):
+        return jsonify(error="No encontré ese marcador"), 404
+    _markers_save(keep)
+    audit(u["name"], f"marcador borrado ({mid})")
+    return jsonify(ok=True, markers=keep)
+
+@app.post("/api/system/migrate_paper")
+def api_system_migrate_paper():
+    u = _require_admin()
+    if engine_kind() == "paper":
+        return jsonify(error="El motor ya es Paper"), 400
+    script = PANEL_DIR / "scripts" / "migrate-to-paper.sh"
+    if not script.exists():
+        script = PANEL_DIR / "migrate-to-paper.sh"
+    ok = _sys_run_bg("paper", ["bash", str(script)])
+    audit(u["name"], "PAPER MIGRATION from Sistema")
+    return jsonify(ok=ok, output="Migrando a Paper — el server estará ~3 min fuera. Mira el registro."
+                   if ok else "Ya hay una migración corriendo")
+
+@app.get("/api/system/backup_extras")
+def api_system_backup_extras():
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    import tarfile
+    # Cada clic dejaba un .tar.gz nuevo en /tmp con TODO data/ y memories/
+    # dentro, y nadie los borraba nunca. Con álbumes de fotos de por medio eso
+    # llena el disco de la caja a base de descargas. Se barren los de más de
+    # una hora antes de crear el siguiente.
+    try:
+        for viejo in Path("/tmp").glob("panel-extras-*.tar.gz"):
+            if time.time() - viejo.stat().st_mtime > 3600:
+                viejo.unlink()
+    except Exception:
+        pass
+    out = Path(f"/tmp/panel-extras-{int(time.time())}.tar.gz")
+    with tarfile.open(out, "w:gz") as tar:
+        tar.add(DATA_DIR, arcname="data")
+        if MEM_DIR.is_dir():
+            tar.add(MEM_DIR, arcname="memories")
+    audit(u["name"], "downloaded extras backup")
+    return send_file(out, as_attachment=True,
+                     download_name=f"panel-extras-{time.strftime('%Y%m%d')}.tar.gz")
+
+# ------------------------------------------------------------------ 2FA alta/baja (solo admin)
+@app.post("/api/2fa/setup")
+def api_2fa_setup():
+    u = _require_admin()
+    users = load_users()
+    sec = base64.b32encode(secrets.token_bytes(20)).decode()
+    users[u["name"]]["totp_pending"] = sec
+    save_users(users)
+    label = f"ServerPanel:{u['name']}"
+    uri = f"otpauth://totp/{label}?secret={sec}&issuer=Server%20of%20Califree&digits=6&period=30"
+    audit(u["name"], "2FA setup started")
+    return jsonify(secret=sec, otpauth=uri)
+
+@app.post("/api/2fa/confirm")
+def api_2fa_confirm():
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    users = load_users()
+    rec = users.get(u["name"], {})
+    sec = rec.get("totp_pending")
+    if not sec:
+        return jsonify(error="No hay activación pendiente"), 400
+    if not _totp_ok(sec, body.get("code")):
+        return jsonify(error="Código incorrecto — revisa la app y el reloj del teléfono"), 401
+    rec["totp"] = sec
+    rec.pop("totp_pending", None)
+    save_users(users)
+    audit(u["name"], "2FA ACTIVATED")
+    return jsonify(ok=True, output="2FA activado — desde ahora el login te pedirá el código")
+
+@app.post("/api/2fa/disable")
+def api_2fa_disable():
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    users = load_users()
+    rec = users.get(u["name"], {})
+    if not rec.get("totp"):
+        return jsonify(error="El 2FA no está activo"), 400
+    if not _totp_ok(rec["totp"], body.get("code")):
+        return jsonify(error="Código incorrecto"), 401
+    rec.pop("totp", None)
+    save_users(users)
+    audit(u["name"], "2FA disabled")
+    return jsonify(ok=True, output="2FA desactivado")
+
+# ------------------------------------------------------------------ security headers
+@app.after_request
+def _sec_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    resp.headers.setdefault("Content-Security-Policy",
+        "default-src 'self'; img-src 'self' data: https://mc-heads.net; "
+        "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' "
+        "https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+        "connect-src 'self'; frame-ancestors 'none'")
+    return resp
+
+# ------------------------------------------------------------------ static
+@app.get("/")
+def index():
+    return send_from_directory(PANEL_DIR / "static", "index.html")
+
+@app.get("/static/<path:p>")
+def static_files(p):
+    return send_from_directory(PANEL_DIR / "static", p)
+
+@app.get("/banner.png")
+def banner():
+    f = PANEL_DIR / "static" / "banner.png"
+    if f.exists():
+        return send_file(f)
+    abort(404)
+
+# ------------------------------------------------------------------ bootstrap
+def ensure_admin():
+    """First run: create admin account interactively (called from setup, not web)."""
+    users = load_users()
+    if users:
+        return
+    import getpass
+    print("No users yet — let's create the ADMIN account.")
+    name = input("Admin username [JEYtheFlash]: ").strip() or "JEYtheFlash"
+    while True:
+        pw = getpass.getpass("Admin password (8+ chars): ")
+        if len(pw) >= 8 and pw == getpass.getpass("Repeat password: "):
+            break
+        print("Passwords too short or didn't match — try again.")
+    users[name] = {"hash": hash_pw(pw), "role": "admin", "perms": {}, "must_change": False}
+    save_users(users)
+    print(f"Admin '{name}' created.")
+
+if __name__ == "__main__":
+    import sys
+    if "--create-admin" in sys.argv:
+        ensure_admin()
+        sys.exit(0)
+    cert = PANEL_DIR / "data" / "cert.pem"
+    key = PANEL_DIR / "data" / "key.pem"
+    ctx = (str(cert), str(key)) if cert.exists() and key.exists() else None
+    app.run(host="0.0.0.0", port=int(os.environ.get("PANEL_PORT", "8443")),
+            ssl_context=ctx, threaded=True)
