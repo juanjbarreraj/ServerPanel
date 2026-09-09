@@ -2809,6 +2809,354 @@ def api_system_map_markers():
     return jsonify(ok=ok, output="Buscando estructuras y publicando los iconos — mira el registro"
                    if ok else "Ya hay una actualización del mapa corriendo")
 
+# ============================================================ mundos (admin)
+#
+# Varios mundos guardados en el disco y un botón para saltar entre ellos. Toda
+# la fontanería está en scripts/mundos.py, que es el que sabe parar el servidor,
+# mover carpetas y llevarse el mapa de BlueMap con cada mundo. Aquí solo se le
+# llama y se guarda en qué va, porque cambiar de mundo tarda más de lo que
+# aguanta una petición del navegador.
+MUNDOS_PY  = PANEL_DIR / "scripts" / "mundos.py"
+DESCARGAS  = DATA_DIR / "descargas"
+SUBIDAS    = DATA_DIR / "subidas"
+SUBIDA_MAX = 6 * 1024**3          # 6 GB: un mundo muy grande cabe, un disco lleno no
+TROZO_MAX  = 32 * 1024**2         # cada trozo del navegador
+
+# En qué va el último trabajo de mundos: lo pinta la pestaña mientras dura.
+_mundo_job = {"nombre": None, "estado": "quieto", "mensaje": "", "t": 0, "datos": {}}
+_mundo_lock = threading.Lock()
+
+
+def _mundos_ocupado(timeout=3 * 3600):
+    with _mundo_lock:
+        if _mundo_job["estado"] == "trabajando" and time.time() - _mundo_job["t"] < timeout:
+            return _mundo_job["nombre"] or "otra cosa"
+    return None
+
+
+def _mundos_run(nombre, args, timeout=3 * 3600, al_acabar=None):
+    """Lanza mundos.py en segundo plano y guarda su respuesta.
+
+    Se le pasa siempre --json y se lee la ÚLTIMA línea: el script escribe su
+    diario por delante y el resultado al final.
+    """
+    with _mundo_lock:
+        if _mundo_job["estado"] == "trabajando" and time.time() - _mundo_job["t"] < timeout:
+            return False, "Ya hay algo en marcha: %s" % (_mundo_job["nombre"] or "")
+        _mundo_job.update(nombre=nombre, estado="trabajando", mensaje="", t=time.time(),
+                          datos={})
+
+    def worker():
+        try:
+            r = subprocess.run(["python3", str(MUNDOS_PY)] + args + ["--json"],
+                               capture_output=True, text=True, timeout=timeout)
+            datos, salida = {}, (r.stdout or "").strip()
+            for ln in reversed(salida.splitlines()):
+                try:
+                    datos = json.loads(ln)
+                    break
+                except Exception:
+                    continue
+            bien = bool(datos.get("ok"))
+            msg = datos.get("mensaje") or (r.stderr or "")[-300:] or "sin respuesta"
+            _syslog(f"[mundos] {nombre}: " + ("ok" if bien else "FALLA") + f" — {msg}")
+            with _mundo_lock:
+                _mundo_job.update(estado="listo" if bien else "error",
+                                  mensaje=msg, datos=datos, t=time.time())
+            if al_acabar:
+                try:
+                    al_acabar(bien, datos)
+                except Exception:
+                    pass
+        except Exception as e:
+            _syslog(f"[mundos] {nombre}: ERROR {e}")
+            with _mundo_lock:
+                _mundo_job.update(estado="error", mensaje=str(e)[:300], t=time.time())
+
+    threading.Thread(target=worker, daemon=True).start()
+    return True, ""
+
+
+def _mundos_listar():
+    try:
+        r = subprocess.run(["python3", str(MUNDOS_PY), "listar", "--json"],
+                           capture_output=True, text=True, timeout=60)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception as e:
+        return {"ok": False, "mensaje": str(e)[:200], "mundos": []}
+
+
+def _slug_ok(s):
+    return bool(re.match(r"^[a-z0-9][a-z0-9-]{0,60}$", s or ""))
+
+
+def _require_admin_ro():
+    """Admin, pero sin exigir CSRF: es para los GET que solo leen."""
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    return u
+
+
+@app.get("/api/mundos")
+def api_mundos():
+    _require_admin_ro()
+    d = _mundos_listar()
+    con = None
+    try:
+        f = max(DESCARGAS.glob("*.tar.gz"), key=lambda p: p.stat().st_mtime) \
+            if DESCARGAS.is_dir() else None
+        if f:
+            con = {"name": f.name, "bytes": f.stat().st_size, "mtime": f.stat().st_mtime}
+    except Exception:
+        pass
+    with _mundo_lock:
+        trabajo = dict(_mundo_job)
+    trabajo.pop("datos", None)
+    return jsonify(ok=d.get("ok", False), mundos=d.get("mundos", []),
+                   libre=d.get("libre", 0), papelera=d.get("papelera", 0),
+                   descarga=con, trabajo=trabajo,
+                   disponible=MUNDOS_PY.exists())
+
+
+# ------------------------------------------------------------------ descargar
+@app.post("/api/mundos/preparar")
+def api_mundos_preparar():
+    """Empaqueta el mundo ACTIVO tal y como está ahora mismo.
+
+    No se sirve el .tar.gz directamente desde `world`: hay que pausar el
+    guardado, comprimir y reanudarlo. Si se sirviera en caliente saldrían
+    ficheros de región a medio escribir y la copia parecería buena hasta el día
+    que la cargas. Por eso primero se prepara y luego se descarga.
+    """
+    u = _require_admin()
+    ocupado = _mundos_ocupado()
+    if ocupado:
+        return jsonify(ok=False, output="Ya hay algo en marcha: %s" % ocupado)
+    DESCARGAS.mkdir(parents=True, exist_ok=True)
+    # solo se guarda la última: son gigas, y no se borra hasta aquí para que el
+    # que ya está descargando la anterior no se quede a medias
+    for p in DESCARGAS.glob("*.tar.gz"):
+        p.unlink(missing_ok=True)
+    act = next((m for m in _mundos_listar().get("mundos", []) if m.get("activo")), {})
+    nombre = "%s-%s.tar.gz" % (act.get("slug") or "mundo", time.strftime("%Y%m%d-%H%M"))
+    ok, por = _mundos_run("preparar la descarga",
+                          ["copia", str(DESCARGAS / nombre)], timeout=2 * 3600)
+    audit(u["name"], "preparó la descarga del mundo activo")
+    return jsonify(ok=ok, output="Empaquetando el mundo — puede tardar unos minutos"
+                   if ok else por)
+
+
+@app.get("/api/mundos/descargar")
+def api_mundos_descargar():
+    _require_admin_ro()
+    try:
+        f = max(DESCARGAS.glob("*.tar.gz"), key=lambda p: p.stat().st_mtime)
+    except ValueError:
+        return jsonify(error="No hay ninguna copia preparada"), 404
+    return send_file(f, as_attachment=True, download_name=f.name)
+
+
+# --------------------------------------------------------------------- subir
+@app.post("/api/mundos/trozo")
+def api_mundos_trozo():
+    """Recibe la subida a cachos.
+
+    Un mundo pesa un giga largo y mandarlo en UNA petición se lo come el
+    tiempo de espera de gunicorn o el del navegador a mitad de camino, sin
+    forma de saber por dónde iba. A cachos se puede enseñar una barra de
+    progreso y, si se corta, seguir desde donde estaba: el cliente manda el
+    desplazamiento y aquí se comprueba contra lo que ya hay escrito.
+    """
+    u = _require_admin()
+    sid = request.form.get("id") or ""
+    if not re.match(r"^[a-f0-9]{8,32}$", sid):
+        return jsonify(error="id de subida inválido"), 400
+    try:
+        offset = int(request.form.get("offset") or 0)
+    except ValueError:
+        return jsonify(error="offset inválido"), 400
+    f = request.files.get("trozo")
+    if not f:
+        return jsonify(error="Falta el trozo"), 400
+
+    SUBIDAS.mkdir(parents=True, exist_ok=True)
+    if offset == 0:
+        _limpiar_papelera(SUBIDAS, dias=1, maximo=6)   # restos de subidas cortadas
+    dest = SUBIDAS / (sid + ".part")
+    ya = dest.stat().st_size if dest.exists() else 0
+    if offset != ya:
+        # el navegador se ha perdido: se le dice por dónde iba de verdad
+        return jsonify(error="desincronizado", esperado=ya), 409
+
+    datos = f.read(TROZO_MAX + 1)
+    if len(datos) > TROZO_MAX:
+        return jsonify(error="Trozo demasiado grande"), 400
+    if ya + len(datos) > SUBIDA_MAX:
+        dest.unlink(missing_ok=True)
+        return jsonify(error="El archivo pasa de %d GB" % (SUBIDA_MAX // 1024**3)), 400
+    with open(dest, "ab") as out:
+        out.write(datos)
+    return jsonify(ok=True, recibido=dest.stat().st_size)
+
+
+def _parte_subida(body):
+    sid = (body.get("id") or "").strip()
+    if not re.match(r"^[a-f0-9]{8,32}$", sid):
+        return None, (jsonify(error="id de subida inválido"), 400)
+    parte = SUBIDAS / (sid + ".part")
+    if not parte.exists() or parte.stat().st_size < 1024:
+        return None, (jsonify(error="No he recibido el archivo entero"), 400)
+    return parte, None
+
+
+@app.post("/api/mundos/inspeccionar")
+def api_mundos_inspeccionar():
+    """Qué mundo es el que se acaba de subir, antes de decidir qué hacer con él.
+
+    Solo lee el level.dat de dentro del archivo, así que responde al momento
+    aunque el mundo pese un giga. Con esto la pestaña puede preguntar «¿esto es
+    una versión nueva del mundo de ahora, o un mundo distinto?» y avisar si
+    viene de un Minecraft más nuevo que el servidor.
+    """
+    _require_admin()
+    parte, err = _parte_subida(request.get_json(silent=True) or {})
+    if err:
+        return err
+    try:
+        r = subprocess.run(["python3", str(MUNDOS_PY), "inspeccionar", str(parte), "--json"],
+                           capture_output=True, text=True, timeout=180)
+        return jsonify(json.loads(r.stdout.strip().splitlines()[-1]))
+    except Exception as e:
+        return jsonify(ok=False, mensaje="No pude leer el archivo: %s" % e), 400
+
+
+@app.post("/api/mundos/descartar")
+def api_mundos_descartar():
+    """Tira una subida que el usuario canceló en el cuadro de «qué hago con él».
+
+    Sin esto, decir que no dejaba el archivo entero —que pueden ser dos gigas—
+    ocupando disco hasta que la limpieza de restos lo pillara al día siguiente.
+    """
+    _require_admin()
+    parte, err = _parte_subida(request.get_json(silent=True) or {})
+    if err:
+        return err
+    parte.unlink(missing_ok=True)
+    return jsonify(ok=True)
+
+
+@app.post("/api/mundos/importar")
+def api_mundos_importar():
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    parte, err = _parte_subida(body)
+    if err:
+        return err
+    modo = body.get("modo") or "nuevo"
+    forzar = ["--forzar"] if body.get("forzar") else []
+
+    if modo == "reemplazar":
+        # misma identidad, mismo mapa: es «he editado el mundo y lo devuelvo»
+        def limpiar_r(bien, datos):
+            parte.unlink(missing_ok=True)
+        ok, por = _mundos_run("actualizar el mundo activo",
+                              ["reemplazar", str(parte)] + forzar,
+                              timeout=3 * 3600, al_acabar=limpiar_r)
+        if not ok:
+            return jsonify(ok=False, ocupado=True, output=por)
+        audit(u["name"], "subió una versión nueva del mundo activo")
+        return jsonify(ok=True, output="Parando el servidor y poniendo la versión nueva…")
+
+    nombre = re.sub(r"\s+", " ", (body.get("nombre") or "")).strip()[:48]
+    if len(nombre) < 2:
+        return jsonify(error="Ponle un nombre al mundo"), 400
+    # el .part son los mismos gigas otra vez: en cuanto mundos.py lo ha
+    # descomprimido no pinta nada en el disco
+    def limpiar(bien, datos):
+        parte.unlink(missing_ok=True)
+
+    ok, por = _mundos_run("importar «%s»" % nombre,
+                          ["importar", str(parte), "--nombre", nombre] + forzar,
+                          timeout=2 * 3600, al_acabar=limpiar)
+    if not ok:
+        # OJO: el .part NO se borra aquí. El archivo ya está subido entero —
+        # pueden ser diez minutos de subida— y tirarlo porque justo había otro
+        # trabajo en marcha sería cruel. `ocupado` le dice al navegador que
+        # espere y lo reintente en vez de darlo por perdido.
+        return jsonify(ok=False, ocupado=True, output=por)
+    audit(u["name"], f"subió un mundo: {nombre}")
+    return jsonify(ok=True, output="Descomprimiendo y comprobando el mundo…")
+
+
+# -------------------------------------------------------------------- cambiar
+@app.post("/api/mundos/cambiar")
+def api_mundos_cambiar():
+    u = _require_admin()
+    slug = (request.get_json(silent=True) or {}).get("slug") or ""
+    if not _slug_ok(slug):
+        return jsonify(error="mundo inválido"), 400
+    ok, por = _mundos_run("cambiar a %s" % slug, ["cambiar", slug], timeout=3 * 3600)
+    audit(u["name"], f"cambió el mundo activo a {slug}")
+    return jsonify(ok=ok, output="Parando el servidor y cambiando de mundo…" if ok else por)
+
+
+@app.post("/api/mundos/nuevo")
+def api_mundos_nuevo():
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    nombre = re.sub(r"\s+", " ", (body.get("nombre") or "")).strip()[:48]
+    if len(nombre) < 2:
+        return jsonify(error="Ponle un nombre al mundo"), 400
+    semilla = re.sub(r"[^\w -]", "", (body.get("semilla") or ""))[:48]
+    args = ["nuevo", "--nombre", nombre] + (["--semilla", semilla] if semilla else [])
+    ok, por = _mundos_run("estrenar «%s»" % nombre, args, timeout=2 * 3600)
+    audit(u["name"], f"estrenó un mundo nuevo: {nombre}")
+    return jsonify(ok=ok, output="Guardando el mundo de ahora y generando el nuevo…"
+                   if ok else por)
+
+
+@app.post("/api/mundos/borrar")
+def api_mundos_borrar():
+    u = _require_admin()
+    slug = (request.get_json(silent=True) or {}).get("slug") or ""
+    if not _slug_ok(slug):
+        return jsonify(error="mundo inválido"), 400
+    ok, por = _mundos_run("quitar %s" % slug, ["borrar", slug], timeout=600)
+    audit(u["name"], f"quitó el mundo {slug}")
+    return jsonify(ok=ok, output="Moviendo el mundo a la papelera…" if ok else por)
+
+
+@app.post("/api/mundos/jugadores")
+def api_mundos_jugadores():
+    """Trae logros, estadísticas y (si se pide) inventario de otro mundo.
+
+    Sirve para estrenar mapa sin que la gente pierda su historial: el ranking
+    del panel lee esos mismos ficheros, así que la tabla sigue donde estaba.
+    """
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    origen = body.get("origen") or ""
+    if not _slug_ok(origen):
+        return jsonify(error="mundo inválido"), 400
+    permitido = ("logros", "stats", "inventario")
+    que = [q for q in (body.get("que") or []) if q in permitido]
+    if not que:
+        return jsonify(error="Elige al menos una cosa que traer"), 400
+    ok, por = _mundos_run("traer los jugadores de %s" % origen,
+                          ["jugadores", origen, "--que", ",".join(que)], timeout=3600)
+    audit(u["name"], f"trajo {'+'.join(que)} desde el mundo {origen}")
+    return jsonify(ok=ok, output="Parando el servidor y copiando los datos…" if ok else por)
+
+
+@app.post("/api/mundos/vaciar_papelera")
+def api_mundos_vaciar():
+    u = _require_admin()
+    ok, por = _mundos_run("vaciar la papelera", ["vaciar-papelera"], timeout=1800)
+    audit(u["name"], "vació la papelera de mundos")
+    return jsonify(ok=ok, output="Borrando del disco…" if ok else por)
+
+
 # ============================================================ feed del servidor
 #
 # Una línea de tiempo leída del log de Minecraft. Vanilla puro: no hay plugin
@@ -2826,6 +3174,10 @@ def api_system_map_markers():
 #   feed.jsonl            lo que va pasando, se añade en caliente
 # Separados porque el relleno corre en segundo plano y podría tardar minutos; si
 # escribieran en el mismo fichero los eventos quedarían desordenados.
+# La marca que el datapack de vigilancia pone delante del nombre del bicho.
+# Tiene que ser la misma que MARCA en scripts/vigilancia.py.
+MARCA_VIGILANCIA = "☠"        # ☠
+
 FEED_F      = DATA_DIR / "feed.jsonl"
 FEEDHIST_F  = DATA_DIR / "feed-historico.jsonl"
 FEEDSTATE_F = DATA_DIR / "feed_state.json"
@@ -2962,6 +3314,14 @@ def _interpretar(msg, msgs):
             titulo = g.group(2).strip()
             if titulo.startswith("[") and titulo.endswith("]"):
                 titulo = titulo[1:-1]
+            # Los logros que empiezan por la marca ☠ NO son logros: los pone
+            # el datapack de vigilancia (scripts/vigilancia.py) para que la
+            # muerte de un mob con nombre llegue al log, que es lo único que
+            # vanilla deja escrito. Se convierten en un evento aparte para que
+            # en la Historia salgan como una muerte y no como un trofeo.
+            if titulo.startswith(MARCA_VIGILANCIA):
+                return "mobmuerto", g.group(1), {
+                    "victima": titulo[len(MARCA_VIGILANCIA):].strip()}
             return "logro", g.group(1), {"titulo": titulo, "tipo": campo}
     for rx, plant in msgs["_muertes"]:
         g = rx.match(msg)
@@ -3057,6 +3417,9 @@ def _procesar(lineas, msgs, estado, salida, en_vivo):
         elif tipo == "logro":
             salida.append({"t": ts, "k": "logro", "p": quien, "u": _uuid_de(quien),
                            "titulo": extra["titulo"], "tipo": extra["tipo"]})
+        elif tipo == "mobmuerto":
+            salida.append({"t": ts, "k": "mobmuerto", "p": quien, "u": _uuid_de(quien),
+                           "victima": extra["victima"]})
         elif tipo == "muerte":
             ev = {"t": ts, "k": "muerte", "p": quien, "u": _uuid_de(quien),
                   "clave": extra["clave"], "args": extra["args"],

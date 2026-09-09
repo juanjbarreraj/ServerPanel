@@ -463,6 +463,42 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   font-size:.8rem; font-weight:700; background:var(--slotbg);
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.09)}
 
+/* ============ mundos ============ */
+/* La barra de progreso es de las pocas cosas del panel que se mira fijamente
+   mientras dura, así que se le pone la misma piel hundida que a los huecos del
+   inventario en vez de un <progress> del navegador. */
+.barra{height:14px; border-radius:4px; background:var(--slotbg); overflow:hidden; margin-top:10px;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.55), inset -2px -2px 0 rgba(255,255,255,.08)}
+.barra > i{display:block; height:100%; width:0; background:linear-gradient(90deg,var(--slime),var(--slime2));
+  transition:width .3s linear}
+.barra.indef > i{width:35%; animation:vaiven 1.4s ease-in-out infinite}
+@keyframes vaiven{0%{margin-left:-35%}100%{margin-left:100%}}
+/* `mfila` y no `mrow`: .mrow ya existía para la fila de botones de los modales
+   (con justify-content:center), y reusar el nombre centraba estas filas y ponía
+   en riesgo aquellas. Un nombre nuevo cuesta menos que depurar la coincidencia. */
+.mfila{display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 0;
+  justify-content:flex-start; border-top:1px solid rgba(255,255,255,.07)}
+.mfila:first-of-type{border-top:0}
+.mfila .mn{font-weight:700}
+.mfila .msub{font-size:.76rem; color:var(--ink3)}
+.mfila .space{flex:1}
+.mact{display:flex; gap:8px; flex-wrap:wrap}
+.mundo-activo{background:rgba(111,212,78,.06); border-radius:6px; padding:12px; margin:-1px 0}
+.mopt{display:flex; gap:10px; align-items:flex-start; padding:12px; border-radius:6px;
+  background:var(--slotbg); margin-bottom:8px; cursor:pointer; line-height:1.45;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
+.mopt input{margin-top:3px; flex:none}
+.mopt .msub{font-size:.78rem; color:var(--ink3)}
+.chips label.chip{cursor:pointer; gap:7px}
+.enlace{color:var(--slime2); text-decoration:underline; cursor:pointer}
+.enlace:hover{color:var(--slime)}
+@media (max-width:600px){
+  .mfila{align-items:flex-start; flex-direction:column; gap:6px}
+  .mfila .space{display:none}
+  .mact{width:100%}
+  .mact .btn{flex:1}
+}
+
 
 /* ============ portada (landing) ============ */
 #landing{display:none; position:fixed; inset:0; z-index:40; overflow:hidden;
@@ -1114,6 +1150,103 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <div class="card"><h3><img class="hico" src="/static/ui/consola.png?v=14" alt="" onerror="this.outerHTML='📜 '">Registro del sistema</h3>
       <div class="console" style="height:220px; color:#c3c2b7" id="sys-log">…</div></div>
   </section>
+
+  <!-- MUNDO -->
+  <section id="tab-mundo" class="hidden">
+    <div class="card hidden" id="mu-trabajo" style="margin-bottom:14px">
+      <h3 id="mu-trabajo-t">Trabajando…</h3>
+      <div class="note" id="mu-trabajo-n" style="margin-top:0"></div>
+      <div class="barra indef"><i></i></div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <h3><img class="hico" src="/static/ui/s-mundo.png?v=14" alt="" onerror="this.outerHTML='🌎 '">El mundo de ahora</h3>
+      <div id="mu-activo">cargando…</div>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn small" id="mu-prep" onclick="muPreparar()">Descargar este mundo</button>
+        <a class="btn small ghost hidden" id="mu-baja" href="/api/mundos/descargar">Descargar (—)</a>
+        <a class="btn small ghost" href="#" id="mu-ultima" onclick="return muUltimaCopia(event)">Última copia de seguridad</a>
+      </div>
+      <div class="note">«Descargar este mundo» lo empaqueta tal y como está ahora: primero pausa el guardado del
+        servidor, comprime y lo reanuda. Por eso tarda un poco y no es un enlace directo — una copia hecha en
+        caliente sale con trozos a medio escribir y no lo notas hasta que intentas cargarla.</div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <h3><img class="hico" src="/static/ui/copias.png?v=14" alt="" onerror="this.outerHTML='📦 '">Mundos guardados</h3>
+      <div id="mu-lista">cargando…</div>
+      <div class="note" id="mu-disco"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:14px">
+      <h3><img class="hico" src="/static/ui/s-tolva.png?v=14" alt="" onerror="this.outerHTML='⬆️ '">Subir un mundo</h3>
+      <div class="drop" id="mu-drop"><img class="dico" src="/static/ui/s-tolva.png?v=14" alt=""
+        onerror="this.outerHTML='⬆️ '">Arrastra aquí el .zip o .tar.gz del mundo, o haz clic para elegirlo</div>
+      <input type="file" id="mu-file" accept=".zip,.tar,.gz,.tgz" class="hidden">
+      <div class="hidden" id="mu-subiendo">
+        <div class="barra"><i id="mu-pc"></i></div>
+        <div class="note" id="mu-pct" style="margin-top:6px">0 %</div>
+      </div>
+      <div class="note">Se sube a cachos, así que puedes seguir usando el panel mientras tanto. Al terminar
+        te pregunto si es una <b>versión nueva del mundo de ahora</b> (por ejemplo, te lo bajaste, le
+        construiste cosas y lo devuelves) o un <b>mundo distinto</b>.</div>
+    </div>
+
+    <div class="card hidden" id="mu-traer" style="margin-bottom:14px">
+      <h3><img class="hico" src="/static/ui/jugadores.png?v=14" alt="" onerror="this.outerHTML='⚔️ '">Traer los jugadores de otro mundo</h3>
+      <div class="note" style="margin-top:0">Copia el historial de todos al mundo que está activo ahora.
+        Sirve para estrenar mapa sin que nadie pierda lo suyo: el ranking del panel lee estos mismos
+        ficheros, así que la tabla sigue donde estaba.</div>
+      <div class="formrow" style="margin-top:12px">
+        <select id="mu-tr-origen" class="sunk" style="flex:1; min-width:200px"></select>
+        <button class="btn small warn" onclick="muTraer()">Traer al mundo activo</button>
+      </div>
+      <div class="chips">
+        <label class="chip"><input type="checkbox" id="mu-tr-logros" checked> Logros</label>
+        <label class="chip"><input type="checkbox" id="mu-tr-stats" checked> Estadísticas (bloques, muertes, distancias)</label>
+        <label class="chip"><input type="checkbox" id="mu-tr-inv"> Inventario y experiencia</label>
+      </div>
+      <div class="note">Lo que había se guarda antes de pisarlo. El inventario es el único con truco:
+        llegan con sus cosas, pero se les reescribe la posición al spawn del mundo nuevo — las
+        coordenadas del mundo viejo aquí pueden ser el interior de una montaña o el vacío.</div>
+    </div>
+
+    <div class="card">
+      <h3><img class="hico" src="/static/ui/s-brote.png?v=14" alt="" onerror="this.outerHTML='🌱 '">Estrenar un mundo</h3>
+      <div class="formrow">
+        <input id="mu-nn" style="flex:1; min-width:200px" placeholder="Nombre (ej: Temporada 2)" maxlength="48">
+        <input id="mu-semilla" placeholder="Semilla (opcional)" maxlength="48" style="max-width:200px">
+        <button class="btn small warn" onclick="muNuevo()">Estrenar</button>
+      </div>
+      <div class="note">El mundo de ahora se guarda entero en la lista de arriba y el servidor genera uno
+        desde cero. Se puede volver al de siempre con un clic.</div>
+    </div>
+  </section>
+</div>
+
+<!-- qué hacer con el mundo recién subido -->
+<div class="modal-bg" id="mu-modal" onclick="if(event.target.id==='mu-modal')cerrar('mu-modal')">
+  <div class="modal" style="max-width:560px" onclick="event.stopPropagation()">
+    <h3 style="margin-top:0">🌎 Mundo subido</h3>
+    <div class="note" id="mu-m-info" style="margin-top:0"></div>
+    <div class="err hidden" id="mu-m-aviso"></div>
+    <div id="mu-m-ops" style="margin-top:14px">
+      <label class="mopt"><input type="radio" name="mu-modo" value="reemplazar" checked
+        onchange="muModo()"><span><b>Es una versión nueva de <i id="mu-m-act">este mundo</i></b><br>
+        <span class="msub">Se queda con su mapa ya dibujado, así que solo se redibuja lo que cambiaste.
+        La versión de ahora se guarda por si acaso.</span></span></label>
+      <label class="mopt"><input type="radio" name="mu-modo" value="nuevo"
+        onchange="muModo()"><span><b>Es un mundo distinto</b><br>
+        <span class="msub">Entra en la lista sin activarse. Su mapa se dibuja entero desde cero
+        (una o dos horas) la primera vez que entres en él.</span></span></label>
+      <input id="mu-m-nombre" class="hidden" style="width:100%; margin-top:10px"
+             placeholder="Nombre para este mundo" maxlength="48">
+    </div>
+    <div class="mrow">
+      <button class="btn ghost" onclick="muCancelar()">Cancelar</button>
+      <button class="btn" id="mu-m-ok" onclick="muConfirmar()">Continuar</button>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1247,7 +1380,7 @@ const I18N = {
   hist_more:'Ver más atrás', hist_empty:'Todavía no hay nada por aquí.',
   hist_played:'jugó {0}', hist_online:'lleva {0} conectado',
   hist_cut:'la sesión se cortó al reiniciar el servidor',
-  hist_got:'consiguió', hist_hidden:'el sitio solo lo ve quien murió',
+  hist_killed:'mató a', hist_got:'consiguió', hist_hidden:'el sitio solo lo ve quien murió',
   hist_latest:'Lo último en el server', hist_seeall:'Ver toda la historia',
   hist_wait:'Armando la historia con los registros viejos…',
   hist_nomsg:'Falta generar las frases del juego en el servidor.',
@@ -1297,7 +1430,7 @@ const I18N = {
   hist_more:'Further back', hist_empty:'Nothing here yet.',
   hist_played:'played {0}', hist_online:'online for {0}',
   hist_cut:'the session was cut short by a server restart',
-  hist_got:'earned', hist_hidden:'only the player who died can see the spot',
+  hist_killed:'killed', hist_got:'earned', hist_hidden:'only the player who died can see the spot',
   hist_latest:'Latest on the server', hist_seeall:'See the whole history',
   hist_wait:'Building the history from the old logs…',
   hist_nomsg:'The game phrases still need to be generated on the server.',
@@ -1497,6 +1630,7 @@ const TABS = [
   ['backups',()=>'Copias',UI('copias'),'📦', () => hasPerm('backups')],
   ['plugins',()=>'Plugins',UI('plugins'),'🔌', () => ME&&ME.role==='admin'],
   ['users',()=>'Moderadores',UI('moderadores'),'👑', () => ME&&ME.role==='admin'],
+  ['mundo',()=>'Mundo',UI('s-mundo'),'🌎', () => ME&&ME.role==='admin'],
   ['sistema',()=>'Sistema',UI('sistema'),'⚙️', () => ME&&ME.role==='admin'],
 ];
 function buildTabs(){
@@ -1560,6 +1694,7 @@ function show(id){
   if (id==='plugins') loadPlugins();
   if (id==='users'){ loadUsers(); loadAudit(); }
   if (id==='sistema'){ loadSistema(); if(!window._sysT) window._sysT=setInterval(()=>{ if(!$('tab-sistema').classList.contains('hidden')) loadSistema(); },5000); }
+  if (id==='mundo') muCargar();
   window._curTab=id;
 }
 
@@ -2315,6 +2450,307 @@ async function uploadPlugin(f){
   toast(r.output||r.error||'Hecho'); loadPlugins();
 }
 
+/* ---------- mundos ----------
+   Cambiar de mundo, subir uno y descargar el de ahora. Todo lo pesado lo hace
+   scripts/mundos.py en el servidor; aquí solo se pide, se pinta en qué va y se
+   avisa bien claro de lo que pasa, porque cambiar de mundo tumba el servidor
+   un minuto y echa a todo el que esté dentro. */
+const MU_TROZO = 8 * 1024 * 1024;      // cachos de 8 MB
+let MU_T = null, MU_ULT = 0;
+
+function muPeso(n){
+  if (!n) return '—';
+  if (n >= 1073741824) return (n/1073741824).toFixed(2)+' GB';
+  if (n >= 1048576)    return Math.round(n/1048576)+' MB';
+  return Math.max(1, Math.round(n/1024))+' KB';
+}
+
+async function muCargar(){
+  let r; try{ r = await api('/api/mundos'); }catch(e){ return; }
+  if (!r.disponible){
+    $('mu-activo').innerHTML = '<div class="note">Falta <code>scripts/mundos.py</code> en el servidor. '+
+      'Haz Commit + Sync y espera a que el panel se reinicie.</div>';
+    $('mu-lista').innerHTML = ''; return;
+  }
+  // ── el trabajo en marcha
+  const tr = r.trabajo || {}, caja = $('mu-trabajo');
+  const trabajando = tr.estado === 'trabajando';
+  caja.classList.toggle('hidden', !trabajando);
+  if (trabajando){
+    $('mu-trabajo-t').textContent = tr.nombre || 'Trabajando…';
+    $('mu-trabajo-n').textContent = 'Puede tardar un rato. Puedes cerrar esta pestaña: sigue por su cuenta.';
+  } else if (tr.t && tr.t > MU_ULT && tr.mensaje){
+    MU_ULT = tr.t; toast(tr.mensaje);
+  }
+  // se sigue mirando solo mientras haya algo en marcha
+  clearTimeout(MU_T);
+  if (trabajando && window._curTab === 'mundo') MU_T = setTimeout(muCargar, 2500);
+
+  // ── el mundo activo
+  const act = (r.mundos||[]).find(m => m.activo);
+  $('mu-activo').innerHTML = act
+    ? `<div class="mfila mundo-activo"><div><div class="mn">${esc(act.nombre)}</div>
+        <div class="msub">${muPeso(act.bytes)} · ${act.tiene_mapa ? 'con mapa dibujado' : 'sin mapa todavía'}</div></div></div>`
+    : '<div class="note">No encuentro el mundo activo.</div>';
+
+  // ── la descarga preparada
+  const baja = $('mu-baja');
+  if (r.descarga){
+    baja.classList.remove('hidden');
+    baja.textContent = 'Descargar (' + muPeso(r.descarga.bytes) + ')';
+    baja.title = r.descarga.name;
+  } else baja.classList.add('hidden');
+  $('mu-prep').disabled = trabajando;
+
+  // ── los demás mundos
+  const otros = (r.mundos||[]).filter(m => !m.activo);
+  const wrap = $('mu-lista');
+  if (!otros.length){
+    wrap.innerHTML = '<div class="note" style="margin-top:0">Todavía no hay otros mundos guardados. '+
+      'Sube uno abajo, o estrena uno nuevo: el de ahora se guarda aquí, entero.</div>';
+  } else {
+    // los botones se enganchan por código y no con onclick="…": el nombre lo
+    // pone el usuario, y meterlo dentro de un atributo es pedir que una comilla
+    // rompa la fila entera
+    wrap.innerHTML = '';
+    for (const m of otros){
+      const fila = document.createElement('div'); fila.className = 'mfila';
+      fila.innerHTML = `<div><div class="mn">${esc(m.nombre)}</div>
+        <div class="msub">${muPeso(m.bytes)} · ${m.tiene_mapa ? 'mapa listo' : 'habrá que dibujar el mapa'}${
+          m.creado ? ' · guardado ' + ago(m.creado) : ''}</div></div>
+        <div class="space"></div><div class="mact"></div>`;
+      const acts = fila.querySelector('.mact');
+      const entrar = document.createElement('button');
+      entrar.className = 'btn small'; entrar.textContent = 'Entrar en este mundo';
+      entrar.disabled = trabajando;
+      entrar.onclick = () => muCambiar(m.slug, m.nombre, m.tiene_mapa);
+      const quitar = document.createElement('button');
+      quitar.className = 'btn small ghost'; quitar.textContent = 'Quitar';
+      quitar.disabled = trabajando;
+      quitar.onclick = () => muBorrar(m.slug, m.nombre);
+      acts.appendChild(entrar); acts.appendChild(quitar);
+      wrap.appendChild(fila);
+    }
+  }
+  // ── de qué mundo se pueden traer los jugadores
+  const traer = $('mu-traer'), sel = $('mu-tr-origen');
+  traer.classList.toggle('hidden', !otros.length);
+  if (otros.length){
+    const antes = sel.value;
+    sel.innerHTML = '';
+    for (const m of otros){
+      const o = document.createElement('option');
+      o.value = m.slug; o.textContent = m.nombre;
+      sel.appendChild(o);
+    }
+    if (otros.some(m => m.slug === antes)) sel.value = antes;
+  }
+
+  $('mu-disco').innerHTML = `Queda <b>${muPeso(r.libre)}</b> libres en el disco.` +
+    (r.papelera ? ` La papelera guarda ${muPeso(r.papelera)} de mundos quitados —
+      <a href="#" class="enlace" onclick="return muVaciar(event)">vaciarla</a>.` : '');
+}
+
+async function muPreparar(){
+  const r = await api('/api/mundos/preparar', {});
+  toast(r.output || r.error || 'Preparando'); muCargar();
+}
+
+async function muUltimaCopia(e){
+  e.preventDefault();
+  const r = await api('/api/backups');
+  if (!r.backups || !r.backups.length){ toast('Aún no hay ninguna copia de seguridad'); return false; }
+  location.href = '/api/backups/download/' + encodeURIComponent(r.backups[0].name);
+  return false;
+}
+
+async function muCambiar(slug, nombre, tieneMapa){
+  if (!confirm(`¿Entrar en «${nombre}»?\n\n`+
+    `· El servidor se apaga y vuelve: todo el que esté dentro sale.\n`+
+    `· El mundo de ahora se guarda entero, no se pierde nada.\n`+
+    (tieneMapa ? '· Su mapa ya estaba dibujado, vuelve tal cual.\n'
+               : '· Su mapa hay que dibujarlo desde cero: tarda horas y mientras el mapa se ve vacío.\n'))) return;
+  if (!confirm('Última confirmación: se apaga el servidor ahora mismo. ¿Seguimos?')) return;
+  const r = await api('/api/mundos/cambiar', {slug});
+  toast(r.output || r.error || 'Cambiando'); muCargar();
+}
+
+async function muBorrar(slug, nombre){
+  if (!confirm(`¿Quitar «${nombre}» de la lista?\n\nNo se borra del disco: se mueve a la papelera y `+
+               `desde ahí puedes vaciarla cuando quieras el espacio.`)) return;
+  const r = await api('/api/mundos/borrar', {slug});
+  toast(r.output || r.error || 'Hecho'); muCargar();
+}
+
+async function muVaciar(e){
+  e.preventDefault();
+  if (!confirm('¿Vaciar la papelera de mundos?\n\nEsto SÍ los borra del disco, para siempre.')) return false;
+  const r = await api('/api/mundos/vaciar_papelera', {});
+  toast(r.output || r.error || 'Hecho'); muCargar();
+  return false;
+}
+
+async function muNuevo(){
+  const nombre = ($('mu-nn').value || '').trim(), semilla = ($('mu-semilla').value || '').trim();
+  if (nombre.length < 2){ toast('Ponle un nombre al mundo'); return; }
+  if (!confirm(`¿Estrenar «${nombre}»?\n\n`+
+    `· El servidor se apaga y genera un mundo desde cero.\n`+
+    `· El mundo de ahora se guarda entero en la lista: puedes volver con un clic.\n`+
+    `· El mapa del nuevo se dibuja desde cero, tarda horas.`)) return;
+  const r = await api('/api/mundos/nuevo', {nombre, semilla});
+  toast(r.output || r.error || 'Creando');
+  $('mu-nn').value = ''; $('mu-semilla').value = ''; muCargar();
+}
+
+function muWire(){
+  const drop = $('mu-drop'), file = $('mu-file');
+  if (!drop) return;
+  drop.onclick = () => file.click();
+  file.onchange = () => { if (file.files[0]) muSubir(file.files[0]); file.value = ''; };
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+  drop.ondragleave = () => drop.classList.remove('over');
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over');
+    if (e.dataTransfer.files[0]) muSubir(e.dataTransfer.files[0]); };
+}
+
+/* Sube el archivo a cachos.
+   En una sola petición, un mundo de un giga se lo come el tiempo de espera del
+   servidor o del navegador a mitad de camino y no hay forma de saber por dónde
+   iba. A cachos hay barra de progreso, y si el servidor responde que va por
+   otro sitio (409) se sigue desde ahí en vez de empezar de cero. */
+async function muSubir(f){
+  if (!/\.(zip|tar|gz|tgz)$/i.test(f.name)){ toast('Tiene que ser un .zip o un .tar.gz'); return; }
+  const nombre = f.name.replace(/\.(tar\.gz|zip|tar|gz|tgz)$/i, '').slice(0, 48);
+  // si ya hay algo en marcha, mejor decirlo AHORA que después de subir un giga
+  try{
+    const y = await api('/api/mundos');
+    if ((y.trabajo||{}).estado === 'trabajando'){
+      toast('Espera a que termine: ' + (y.trabajo.nombre || 'lo que hay en marcha')); return;
+    }
+  }catch(e){}
+  const id = [...crypto.getRandomValues(new Uint8Array(8))]
+             .map(b => b.toString(16).padStart(2, '0')).join('');
+  const caja = $('mu-subiendo'), barra = $('mu-pc'), pct = $('mu-pct');
+  caja.classList.remove('hidden'); barra.style.width = '0%'; pct.textContent = '0 %';
+  $('mu-drop').style.pointerEvents = 'none';
+
+  let off = 0, fallos = 0;
+  while (off < f.size){
+    const fd = new FormData();
+    fd.append('id', id); fd.append('offset', String(off));
+    fd.append('trozo', f.slice(off, off + MU_TROZO), 'parte');
+    let r;
+    try { r = await api('/api/mundos/trozo', fd, true); }
+    catch (e){
+      if (++fallos > 3){ toast('Se cortó la subida — vuelve a intentarlo'); break; }
+      await new Promise(s => setTimeout(s, 1500 * fallos)); continue;
+    }
+    fallos = 0;
+    if (r.error === 'desincronizado'){ off = r.esperado; continue; }
+    if (!r.ok){ toast(r.error || 'Falló la subida'); break; }
+    off = r.recibido;
+    const p = Math.round(off * 100 / f.size);
+    barra.style.width = p + '%';
+    pct.textContent = p + ' % · ' + muPeso(off) + ' de ' + muPeso(f.size);
+  }
+  $('mu-drop').style.pointerEvents = '';
+  if (off < f.size){ caja.classList.add('hidden'); return; }
+
+  // El archivo ya está arriba. Antes de decidir nada se mira qué es: solo se
+  // lee su level.dat, así que responde al momento aunque pese un giga.
+  pct.textContent = 'Comprobando el mundo…';
+  const info = await api('/api/mundos/inspeccionar', {id});
+  caja.classList.add('hidden');
+  if (!info.ok){ toast(info.mensaje || info.error || 'Ese archivo no es un mundo'); return; }
+  MU_SUBIDO = {id, info, sugerido: nombre};
+  muAbrirModal();
+}
+
+/* Qué hacer con el mundo recién subido. Se pregunta AQUÍ y no antes de subir
+   porque hasta que no está arriba no se sabe de qué versión viene. */
+let MU_SUBIDO = null;
+
+function muAbrirModal(){
+  const {info, sugerido} = MU_SUBIDO;
+  $('mu-m-act').textContent = '«' + (info.activo_nombre || 'el mundo de ahora') + '»';
+  $('mu-m-info').textContent = info.legible
+    ? ('Mundo de Minecraft ' + info.version + ' · ' + muPeso(info.bytes) +
+       '. El servidor va por la ' + info.version_servidor + '.')
+    : ('Mundo de ' + muPeso(info.bytes) + '. No he podido leer de qué versión viene, ' +
+       'así que comprueba tú que sea la del servidor antes de cargarlo.');
+  const av = $('mu-m-aviso');
+  av.classList.toggle('hidden', !info.mas_nueva);
+  if (info.mas_nueva){
+    av.textContent = '⚠ Ese mundo viene de un Minecraft MÁS NUEVO que el del servidor. ' +
+      'Si lo cargas, el servidor no podrá abrirlo y se quedará sin arrancar. Ábrelo en la ' +
+      'versión del servidor y vuelve a subirlo.';
+  }
+  $('mu-m-ok').disabled = !!info.mas_nueva;
+  document.querySelector('input[name=mu-modo][value=reemplazar]').checked = true;
+  $('mu-m-nombre').value = sugerido || '';
+  muModo();
+  $('mu-modal').classList.add('open');
+}
+
+function muModo(){
+  const nuevo = document.querySelector('input[name=mu-modo]:checked').value === 'nuevo';
+  $('mu-m-nombre').classList.toggle('hidden', !nuevo);
+}
+
+async function muCancelar(){
+  cerrar('mu-modal');
+  const sub = MU_SUBIDO; MU_SUBIDO = null;
+  // el archivo ya está en el servidor: si se cancela, hay que soltarlo o se
+  // queda ocupando los mismos gigas hasta la limpieza del día siguiente
+  if (sub) { try{ await api('/api/mundos/descartar', {id: sub.id}); }catch(e){} }
+  toast('Subida descartada');
+}
+
+async function muConfirmar(){
+  if (!MU_SUBIDO) return;
+  const modo = document.querySelector('input[name=mu-modo]:checked').value;
+  const nombre = ($('mu-m-nombre').value || '').trim();
+  if (modo === 'nuevo' && nombre.length < 2){ toast('Ponle un nombre al mundo'); return; }
+  if (modo === 'reemplazar' &&
+      !confirm('Vas a poner esta versión encima de «' + (MU_SUBIDO.info.activo_nombre || '') +
+               '».\n\n· El servidor se apaga y vuelve: todo el que esté dentro sale.\n' +
+               '· La versión de ahora se guarda entera en la lista, no se pierde.\n' +
+               '· El mapa se conserva y solo se redibuja lo que cambiaste.')) return;
+  cerrar('mu-modal');
+  const pct = $('mu-pct'); $('mu-subiendo').classList.remove('hidden');
+  // Si justo hay otro trabajo en marcha, NO se tira la subida: ya está arriba
+  // entera y pueden ser diez minutos. Se espera y se reintenta.
+  let r;
+  for (let intento = 0; intento < 120; intento++){
+    r = await api('/api/mundos/importar', {id: MU_SUBIDO.id, nombre, modo});
+    if (!r.ocupado) break;
+    pct.textContent = 'Subido. Esperando a que termine ' + (r.output || 'lo que hay en marcha') + '…';
+    await new Promise(s => setTimeout(s, 5000));
+  }
+  $('mu-subiendo').classList.add('hidden');
+  MU_SUBIDO = null;
+  toast(r.output || r.error || 'Hecho');
+  muCargar();
+}
+
+async function muTraer(){
+  const origen = $('mu-tr-origen').value;
+  const que = [];
+  if ($('mu-tr-logros').checked) que.push('logros');
+  if ($('mu-tr-stats').checked)  que.push('stats');
+  if ($('mu-tr-inv').checked)    que.push('inventario');
+  if (!origen){ toast('Elige de qué mundo traerlos'); return; }
+  if (!que.length){ toast('Marca al menos una cosa'); return; }
+  const nom = $('mu-tr-origen').selectedOptions[0].textContent;
+  if (!confirm('¿Traer ' + que.length + ' cosas desde «' + nom + '» al mundo activo?\n\n' +
+      '· El servidor se apaga y vuelve.\n' +
+      '· Lo que haya ahora se guarda antes de pisarlo.' +
+      ($('mu-tr-inv').checked
+        ? '\n· Con el inventario, todos aparecerán en el spawn de este mundo.' : ''))) return;
+  const r = await api('/api/mundos/jugadores', {origen, que});
+  toast(r.output || r.error || 'Hecho'); muCargar();
+}
+
 /* ---------- usuarios ---------- */
 const PERM_LABELS={view_dashboard:'Ver el inicio', view_players:'Ver jugadores y estadísticas', view_console:'Ver la consola en vivo',
   whitelist:'Aceptar / quitar jugadores (whitelist)', ban:'Banear y desbanear', kick:'Expulsar jugadores',
@@ -2797,6 +3233,12 @@ function hiFila(e){
   } else if (e.k==='logro'){
     ico = hiIco('logro','🏅');
     txt = `<b>${nom}</b> ${t('hist_got')} <b>${esc(e.titulo||'')}</b>`;
+  } else if (e.k==='mobmuerto'){
+    /* muerte de un mob con nombre, la trae el datapack de vigilancia.
+       Se pinta como una muerte, no como un logro. */
+    cls=' muerte';
+    ico = hiIco('muerte','💀');
+    txt = `<b>${nom}</b> ${t('hist_killed')} <b>${esc(e.victima||'')}</b>`;
   } else {
     cls=' muerte';
     ico = hiIco('muerte','💀');
@@ -3196,7 +3638,7 @@ const LOGO_VARIANTS=['green','cyan','gold','red','blue','stone'].map(c=>`/static
 (async ()=>{
   try{ const b=await api('/api/branding'); BRAND=b.name||BRAND;
     $('brand').textContent=BRAND; $('brand-login').textContent=BRAND; document.title='Califree'; }catch(e){}
-  wireDrop(); wireMemUpload(); applyLang();
+  wireDrop(); wireMemUpload(); muWire(); applyLang();
   try{
     // fetch directo: sin sesión responde 401 y api() abriría el modal de login sobre la portada
     const rf=await fetch('/api/me',{headers:{'X-Panel':'1'}});
