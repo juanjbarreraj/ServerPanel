@@ -115,6 +115,21 @@ def mirar_disco():
 
 
 # ─────────────────────────────────────────────────────── 2. la semilla
+def buscar_clave(items, nombre, ruta="Data", profundidad=0):
+    """Busca una clave por nombre por todo el árbol NBT."""
+    if profundidad > 4:
+        return []
+    fuera = []
+    for k, t in items:
+        kk = k.decode("utf-8", "replace")
+        aqui = ruta + "." + kk
+        if kk.lower() == nombre:
+            fuera.append((aqui, t.v))
+        if t.t == nbt.TAG_COMPOUND and isinstance(t.v, list):
+            fuera += buscar_clave(t.v, nombre, aqui, profundidad + 1)
+    return fuera
+
+
 def leer_semilla():
     titulo("2 · la semilla del mundo")
     f = MC / "world" / "level.dat"
@@ -127,20 +142,46 @@ def leer_semilla():
     try:
         _, raiz, _ = nbt.load(str(f))
         datos = nbt.cget(raiz.v, "Data")
-        ws = nbt.cget(datos.v, "WorldGenSettings")
-        semilla = None
-        if ws is not None:
-            t = nbt.cget(ws.v, "seed")
-            semilla = t.v if t is not None else None
-        if semilla is None:                       # mundos viejos la tenían suelta
-            t = nbt.cget(datos.v, "RandomSeed")
-            semilla = t.v if t is not None else None
+        if datos is None:
+            print("  ⚠ no hay compuesto «Data». Raíz: %s" % nbt.ckeys(raiz.v)[:30])
+            return None
+
         ver = nbt.cget(datos.v, "Version")
         vnom = nbt.cget(ver.v, "Name") if ver is not None else None
-        print("  semilla:               %s" % semilla)
         print("  versión del mundo:     %s" % (vnom.v.decode() if vnom is not None else "?"))
-        print("  (compárala con la que tienes puesta en Chunkbase)")
-        return semilla
+
+        # buscar «seed» esté donde esté: en 1.16 se movió a WorldGenSettings y
+        # puede haberse vuelto a mover
+        hallazgos = buscar_clave(datos.v, "seed")
+        for r in ("randomseed", "worldseed"):
+            hallazgos += buscar_clave(datos.v, r)
+        if hallazgos:
+            for ruta, val in hallazgos:
+                print("  semilla:               %s   (en %s)" % (val, ruta))
+            print("  (compárala con la que tienes puesta en Chunkbase)")
+            return hallazgos[0][1]
+
+        # No está. Enseñar el mapa del terreno para saber dónde mirar.
+        print("  ✘ no encuentro ninguna clave «seed». Esto es lo que SÍ hay:")
+        print()
+        print("    Data: %s" % ", ".join(nbt.ckeys(datos.v)))
+        ws = nbt.cget(datos.v, "WorldGenSettings")
+        if ws is not None and isinstance(ws.v, list):
+            print()
+            print("    Data.WorldGenSettings: %s" % ", ".join(nbt.ckeys(ws.v)))
+            for k, t in ws.v:
+                kk = k.decode("utf-8", "replace")
+                if t.t == nbt.TAG_COMPOUND and isinstance(t.v, list):
+                    print("      .%s: %s" % (kk, ", ".join(nbt.ckeys(t.v))[:200]))
+                elif t.t in (nbt.TAG_LONG, nbt.TAG_INT, nbt.TAG_STRING):
+                    v = t.v.decode("utf-8", "replace") if isinstance(t.v, bytes) else t.v
+                    print("      .%s = %r" % (kk, v))
+        else:
+            print("    (no hay Data.WorldGenSettings)")
+        print()
+        print("  Mientras tanto la semilla se puede sacar con el comando /seed en la")
+        print("  consola del servidor — es vanilla y no hace falta parar nada.")
+        return None
     except Exception as e:
         print("  ⚠ no pude leerlo: %s" % e)
         return None
@@ -187,9 +228,24 @@ def mirar_nombres(version):
             print("  ⚠ Mojang no lista la versión %s" % version)
             return
         vjson = json.loads(bajar(url))
-        m = vjson.get("downloads", {}).get("server_mappings")
+        desc = vjson.get("downloads", {})
+        print("  descargas que publica Mojang para la %s:" % version)
+        for k in sorted(desc):
+            print("      %-22s %s" % (k, (desc[k].get("url") or "")[:96]))
+        print("  (claves del JSON de versión: %s)" % ", ".join(sorted(vjson.keys()))[:200])
+        # la clave se ha llamado de varias formas; se prueban todas
+        m = None
+        for clave in ("server_mappings", "server_mappings_official", "mappings_server",
+                      "server_map", "serverMappings"):
+            if desc.get(clave):
+                m = desc[clave]
+                print("  ✔ encontradas en «%s»" % clave)
+                break
         if not m:
-            print("  ✘ ESTA VERSIÓN NO PUBLICA EQUIVALENCIAS. Sin ellas el plan no sale.")
+            print()
+            print("  ✘ Ninguna de esas claves está. Si arriba no aparece nada que suene a")
+            print("    «mappings», Mojang ha dejado de publicarlas para esta versión y el")
+            print("    plan de los biomas hay que replantearlo.")
             return
         print("  equivalencias:         %.1f MB, bajando…" % (m.get("size", 0) / 2**20))
         texto = bajar(m["url"], timeout=300).decode("utf-8", "replace")

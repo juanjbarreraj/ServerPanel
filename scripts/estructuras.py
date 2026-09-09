@@ -132,6 +132,12 @@ def leer_del_jar(jar):
                 sal = col.get("salt")
                 if esp is None or sep is None or sal is None:
                     continue
+                # Los tesoros enterrados y las minas salieron del jar con
+                # espaciado 1 y sal 0: no van en rejilla, van por probabilidad en
+                # CADA chunk. La fórmula de aquí no los describe, y pintarlos
+                # daría un icono por chunk — millones de puntos falsos.
+                if esp <= 1 or col.get("probability") is not None and esp <= 2:
+                    continue
                 miembros = [e["structure"].split(":")[-1] for e in d.get("structures", [])
                             if isinstance(e, dict) and e.get("structure")]
                 fuera[n.rsplit("/", 1)[-1][:-5]] = (esp, sep, sal, miembros)
