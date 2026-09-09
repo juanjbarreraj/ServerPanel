@@ -42,31 +42,99 @@ echo "── usuario: $USUARIO   panel: $PANEL   minecraft: $MC"
 
 echo
 echo "── 1 · el compilador de Java ────────────────────────────────"
-if command -v javac >/dev/null 2>&1 || ls /usr/lib/jvm/*/bin/javac >/dev/null 2>&1; then
-  echo "  ya estaba"
+
+# QUÉ COMPILADOR, Y POR QUÉ ESTE Y NO «EL DE JAVA»
+#
+# Minecraft 26.2 está compilado para Java 25, y un compilador de Java 21 NO PUEDE
+# NI ABRIR ese jar: no entiende el formato. En Ubuntu 24.04 `default-jdk` es el
+# 21, así que instalarlo parece que funciona y luego no compila nada.
+#
+# Se instala el que hace juego con el `java` que ya está corriendo el servidor:
+# si Minecraft arranca, ese java sabe leer su jar, y su JDK también.
+# `java -version` dice  openjdk version "25.0.4"  y `javac -version` dice
+# javac 25.0.4 — dos formatos distintos. Y algunos entornos cuelan encima una
+# línea «Picked up JAVA_TOOL_OPTIONS». Se quita el ruido y se coge el primer
+# número, que en los dos casos es la versión mayor.
+version_java(){ "$1" -version 2>&1 | grep -v '^Picked up' | grep -oE '[0-9]+' | head -1; }
+
+# El mejor javac de la máquina, POR VERSIÓN y no por nombre de carpeta:
+# ordenar /usr/lib/jvm por texto pone «openjdk-21» al final y elegiría el 21.
+mejor_javac(){
+  local mejor="" mejorv=0 v c
+  for c in $(command -v javac 2>/dev/null) /usr/lib/jvm/*/bin/javac /opt/*/bin/javac; do
+    [ -x "$c" ] || continue
+    v=$(version_java "$c") || continue
+    [ -z "$v" ] && continue
+    if [ "$v" -gt "$mejorv" ]; then mejorv=$v; mejor=$c; fi
+  done
+  printf '%s' "$mejor"
+}
+
+NECESARIA=$(version_java "$(command -v java || echo /usr/bin/java)" 2>/dev/null || echo 25)
+[ -z "$NECESARIA" ] && NECESARIA=25
+echo "  el servidor corre con Java $NECESARIA"
+
+JAVAC=$(mejor_javac)
+TENGO=0; [ -n "$JAVAC" ] && TENGO=$(version_java "$JAVAC")
+
+if [ -n "$JAVAC" ] && [ "$TENGO" -ge "$NECESARIA" ]; then
+  echo "  ya estaba: $JAVAC (Java $TENGO)"
 else
-  # Ubuntu instala solo las actualizaciones de seguridad, y mientras lo hace
-  # tiene apt cogido. Correr esto justo en ese momento fallaba con «Could not
-  # get lock» y se acababa el guion a medias. Con DPkg::Lock::Timeout apt
-  # ESPERA su turno en vez de rendirse: son un par de minutos, y desatendido no
-  # hay nadie para volver a lanzarlo.
-  ESPERA="-o DPkg::Lock::Timeout=600"
-  if fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1; then
-    echo "  Ubuntu está instalando sus propias actualizaciones. Espero a que"
-    echo "  termine (hasta 10 minutos) — no hace falta que hagas nada."
+  if [ -n "$JAVAC" ]; then
+    echo "  hay un compilador de Java $TENGO, pero no sabe leer un jar de Java $NECESARIA"
   fi
-  if ! apt-get $ESPERA update -qq; then
-    echo "  ⚠ no pude refrescar la lista de paquetes; pruebo a instalar igual"
-  fi
-  if ! apt-get $ESPERA install -y -qq default-jdk-headless; then
+  PAQUETE="openjdk-${NECESARIA}-jdk-headless"
+  echo "  instalando $PAQUETE…"
+
+  # Ubuntu instala solo sus actualizaciones de seguridad y mientras tanto tiene
+  # apt cogido. `DPkg::Lock::Timeout` NO cubre el candado de las listas, así que
+  # hay que esperar a mano. Y si `update` no llega a correr, no se instala nada:
+  # con la lista vieja apt pide paquetes que ya no existen en el espejo y falla
+  # con un 404 que no dice nada de lo que pasa de verdad.
+  ok=1
+  for intento in $(seq 1 30); do
+    if apt-get -o DPkg::Lock::Timeout=120 update -qq 2>/tmp/apt-biomas.err; then ok=0; break; fi
+    if ! grep -q "Could not get lock\|Unable to lock" /tmp/apt-biomas.err; then
+      cat /tmp/apt-biomas.err; break
+    fi
+    [ "$intento" = "1" ] && echo "  apt está ocupado con las actualizaciones de Ubuntu; espero…"
+    sleep 20
+  done
+  if [ "$ok" != "0" ]; then
     echo
-    echo "  ✘ No se pudo instalar el compilador."
-    echo "    Casi siempre es que apt seguía ocupado. Mira si aún lo está:"
-    echo "        ps -eo pid,comm | grep -E 'apt|dpkg|unattended'"
-    echo "    y cuando no salga nada, vuelve a correr este mismo comando."
+    echo "  ✘ apt sigue ocupado después de 10 minutos. Mira quién lo tiene:"
+    echo "        ps -eo pid,etime,args | grep -E 'apt|dpkg|unattended' | grep -v grep"
+    echo "    Cuando termine, vuelve a correr este mismo comando."
     exit 1
   fi
-  echo "  instalado: $(javac -version 2>&1)"
+
+  if ! apt-get -o DPkg::Lock::Timeout=600 install -y -qq "$PAQUETE"; then
+    echo
+    echo "  ✘ No se pudo instalar $PAQUETE."
+    echo "    Prueba a ver si existe con otro nombre:"
+    echo "        apt-cache search openjdk | grep jdk-headless"
+    exit 1
+  fi
+  JAVAC=$(mejor_javac)
+  echo "  instalado: $JAVAC ($("$JAVAC" -version 2>&1))"
+fi
+
+# La prueba de verdad no es que exista javac, es que sepa abrir ESTE jar. Si
+# esto falla, mejor enterarse ahora que dentro de un rato viendo el mapa vacío.
+JAR=$(ls -t "$MC"/versions/*/server-*.jar 2>/dev/null | head -1)
+if [ -n "$JAR" ]; then
+  if "$JAVAC" -version >/dev/null 2>&1 && \
+     "$JAVAC" -nowarn -cp "$JAR" -d /tmp/biomas-prueba "$PANEL/scripts/Biomas.java" >/tmp/javac-biomas.err 2>&1; then
+    echo "  ✔ compila contra $(basename "$JAR")"
+  elif grep -qi "class file version\|unsupported class file" /tmp/javac-biomas.err; then
+    echo "  ✘ este compilador NO sabe leer $(basename "$JAR"):"
+    sed 's/^/     /' /tmp/javac-biomas.err | head -3
+    exit 1
+  else
+    # Faltan las librerías en el classpath: normal, aquí solo se prueba el jar.
+    echo "  ✔ el compilador entiende el jar"
+  fi
+  rm -rf /tmp/biomas-prueba
 fi
 
 echo

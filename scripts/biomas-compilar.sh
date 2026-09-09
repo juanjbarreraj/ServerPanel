@@ -36,7 +36,10 @@ if [ -z "$JAVAC" ]; then
   echo "  Dos caminos; elige tú:"
   echo
   echo "  A) Instalar el compilador (lo más simple):"
-  echo "       sudo apt install -y default-jdk-headless"
+  echo "       sudo bash ~/panel/scripts/biomas-instalar.sh"
+  echo "     OJO: tiene que ser el JDK de la misma versión de Java con la que"
+  echo "     corre Minecraft (hoy, el 25). El `default-jdk` de Ubuntu 24.04 es"
+  echo "     el 21 y ni siquiera sabe abrir el jar."
   echo "     Es una herramienta de la máquina, NO un mod: no entra en el"
   echo "     servidor, no toca el mundo, no cambia nada de Minecraft. Y como el"
   echo "     panel se actualiza solo de versión, tenerlo permite recompilar"

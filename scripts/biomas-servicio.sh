@@ -43,14 +43,25 @@ CP="$JAR:$LIBS"
 # ── 2 · ¿hace falta compilar? ────────────────────────────────────────────
 FIRMA="$(stat -c '%n %Y %s' "$JAR" 2>/dev/null) | $(stat -c '%Y' "$PANEL/scripts/Biomas.java" 2>/dev/null)"
 if [ ! -f "$CLASES/califree/Biomas.class" ] || [ "$(cat "$SELLO" 2>/dev/null)" != "$FIRMA" ]; then
-  JAVAC=$(command -v javac 2>/dev/null)
-  [ -z "$JAVAC" ] && JAVAC=$(ls -1 /usr/lib/jvm/*/bin/javac 2>/dev/null | tail -1)
+  # El compilador se elige POR VERSIÓN, no por nombre de carpeta. Ordenando
+  # /usr/lib/jvm por texto, «openjdk-21» queda el último y se elegiría el 21 —
+  # que no sabe ni abrir un jar de Java 25 y fallaría con un error críptico
+  # sobre versiones de fichero de clase.
+  JAVAC=""; MEJOR=0
+  for c in $(command -v javac 2>/dev/null) /usr/lib/jvm/*/bin/javac /opt/*/bin/javac; do
+    [ -x "$c" ] || continue
+    v=$("$c" -version 2>&1 | grep -v '^Picked up' | grep -oE '[0-9]+' | head -1)
+    [ -z "$v" ] && continue
+    if [ "$v" -gt "$MEJOR" ]; then MEJOR=$v; JAVAC=$c; fi
+  done
   if [ -z "$JAVAC" ]; then
     if [ -f "$CLASES/califree/Biomas.class" ]; then
       decir "no hay compilador; sigo con lo compilado de antes (puede no valer para $JAR)"
     else
       decir "no hay compilador de Java y no hay nada compilado."
-      decir "instálalo con:  sudo apt install -y default-jdk-headless"
+      decir "instálalo con:  sudo bash ~/panel/scripts/biomas-instalar.sh"
+      decir "(tiene que ser el JDK de la MISMA versión de Java con la que corre"
+      decir " Minecraft; el default-jdk de Ubuntu 24.04 es el 21 y no sirve)"
       exit 1
     fi
   else
@@ -106,7 +117,17 @@ mkdir -p "$(dirname "$CACHE_SEMILLA")"
 printf '%s\n' "$SEMILLA" > "$CACHE_SEMILLA"
 
 # ── 4 · a escuchar ───────────────────────────────────────────────────────
-JAVA=$(command -v java || echo /usr/bin/java)
+# El java que ejecuta tiene que ser al menos tan nuevo como el javac que
+# compiló, o se queja de la versión del fichero de clase. Se elige por versión
+# por el mismo motivo que el compilador.
+JAVA=""; MEJORJ=0
+for c in $(command -v java 2>/dev/null) /usr/lib/jvm/*/bin/java /opt/*/bin/java; do
+  [ -x "$c" ] || continue
+  v=$("$c" -version 2>&1 | grep -v '^Picked up' | grep -oE '[0-9]+' | head -1)
+  [ -z "$v" ] && continue
+  if [ "$v" -gt "$MEJORJ" ]; then MEJORJ=$v; JAVA=$c; fi
+done
+[ -z "$JAVA" ] && JAVA=/usr/bin/java
 decir "semilla $SEMILLA · puerto $PUERTO · $HILOS hilo(s)"
 exec "$JAVA" "-Xmx$MEMORIA" -cp "$CP:$CLASES" califree.Biomas \
      "$SEMILLA" --servicio --puerto "$PUERTO" --hilos "$HILOS"
