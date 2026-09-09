@@ -38,7 +38,7 @@ DEFAULT_PERMS = {
 }
 ALL_PERMS = ["view_dashboard", "view_players", "view_console", "whitelist",
              "ban", "kick", "restart", "backups", "say", "player_actions",
-             "memories", "memories_upload", "markers_add"]
+             "memories", "memories_upload", "markers_add", "mapa_semilla"]
 DEFAULT_PERMS["mod"]["player_actions"] = True
 DEFAULT_PERMS["viewer"]["player_actions"] = False
 DEFAULT_PERMS["mod"]["memories"] = True         # ver memorias
@@ -47,6 +47,13 @@ DEFAULT_PERMS["viewer"]["memories"] = True
 DEFAULT_PERMS["viewer"]["memories_upload"] = False
 DEFAULT_PERMS["mod"]["markers_add"] = True      # poner lugares en el mapa
 DEFAULT_PERMS["viewer"]["markers_add"] = True
+# El mapa del mundo entero enseña TODAS las estructuras, también las de sitios
+# donde nadie ha estado. Eso es una herramienta de admin, no una vista más:
+# dárselo a todos de entrada le destriparía la exploración a los demás sin que
+# nadie lo haya decidido. Arranca apagado y se enciende por persona en la
+# pestaña de Moderadores.
+DEFAULT_PERMS["mod"]["mapa_semilla"] = False
+DEFAULT_PERMS["viewer"]["mapa_semilla"] = False
 # vista pública (entra con el PIN compartido): mirar, subir a memorias y
 # marcar lugares en el mapa — borrarlos sigue siendo de moderadores y admin
 DEFAULT_PERMS["public"] = {"view_dashboard": True, "view_players": True,
@@ -3112,7 +3119,11 @@ def api_mundos_cambiar():
     slug = (request.get_json(silent=True) or {}).get("slug") or ""
     if not _slug_ok(slug):
         return jsonify(error="mundo inválido"), 400
-    ok, por = _mundos_run("cambiar a %s" % slug, ["cambiar", slug], timeout=3 * 3600)
+    # Otro mundo es otra semilla: lo que el mapa del mundo entero tenía
+    # calculado ya no vale, y el lector de biomas tiene que volver a
+    # arrancar con la nueva.
+    ok, por = _mundos_run("cambiar a %s" % slug, ["cambiar", slug], timeout=3 * 3600,
+                          al_acabar=lambda bien, d: _m2_olvidar())
     audit(u["name"], f"cambió el mundo activo a {slug}")
     return jsonify(ok=ok, output="Parando el servidor y cambiando de mundo…" if ok else por)
 
@@ -3126,7 +3137,8 @@ def api_mundos_nuevo():
         return jsonify(error="Ponle un nombre al mundo"), 400
     semilla = re.sub(r"[^\w -]", "", (body.get("semilla") or ""))[:48]
     args = ["nuevo", "--nombre", nombre] + (["--semilla", semilla] if semilla else [])
-    ok, por = _mundos_run("estrenar «%s»" % nombre, args, timeout=2 * 3600)
+    ok, por = _mundos_run("estrenar «%s»" % nombre, args, timeout=2 * 3600,
+                          al_acabar=lambda bien, d: _m2_olvidar())
     audit(u["name"], f"estrenó un mundo nuevo: {nombre}")
     return jsonify(ok=ok, output="Guardando el mundo de ahora y generando el nuevo…"
                    if ok else por)
@@ -3284,6 +3296,277 @@ def api_act_deshacer():
     return jsonify(ok=ok, output="Devolviendo el jar anterior…" if ok else por)
 
 
+
+# ══════════════════════════════════════════ el mapa del mundo entero (semilla)
+#
+# El otro mapa (BlueMap) enseña lo que la gente ha explorado, en 3D. Este
+# enseña el mundo ENTERO —biomas y estructuras— calculado desde la semilla, sin
+# haber pisado nada. Es lo que hace Chunkbase, pero con el generador de verdad:
+# el que viene dentro del server.jar, así que no puede desviarse ni quedarse
+# atrás cuando Minecraft se actualice.
+#
+# Las cuentas las hace un servicio aparte (scripts/Biomas.java, arrancado por
+# systemd) que escucha solo en 127.0.0.1. Si está caído, esta pestaña avisa y
+# el resto del panel sigue igual.
+BIOMAS_URL = os.environ.get("BIOMAS_URL", "http://127.0.0.1:25580")
+_M2 = {"mods": None, "srv": None}
+_m2_lock = threading.Lock()
+# Como mucho tres azulejos calculándose a la vez. El servidor de Minecraft vive
+# en la misma máquina de dos núcleos y no puede notar que alguien abrió el mapa.
+_m2_turno = threading.Semaphore(3)
+_m2_est = {}                    # (semilla, celda_x, celda_z) → estructuras
+_M2_CELDA = 8192                # se calcula por trozos y se guarda lo calculado
+
+
+def _m2_mods():
+    """Carga scripts/biomas.py y scripts/estructuras.py una sola vez."""
+    if _M2["mods"] is None:
+        import sys as _sys
+        ruta = str(PANEL_DIR / "scripts")
+        if ruta not in _sys.path:
+            _sys.path.insert(0, ruta)
+        import biomas as _b, estructuras as _e
+        _e.cargar(str(_mc_jar() or ""))
+        _e.cargar_estructuras(str(_mc_jar() or ""))
+        _M2["mods"] = (_b, _e)
+        _M2["srv"] = _b.Servicio(BIOMAS_URL)
+    return _M2["mods"]
+
+
+def _mc_jar():
+    for p in sorted((MC_DIR / "versions").glob("*/server-*.jar"), reverse=True):
+        return p
+    p = MC_DIR / "server.jar"
+    return p if p.exists() else None
+
+
+def _m2_srv():
+    _m2_mods()
+    return _M2["srv"]
+
+
+def _m2_olvidar():
+    """Se cambió de mundo: fuera todo lo calculado para la semilla de antes."""
+    with _m2_lock:
+        _m2_est.clear()
+        _M2["mods"] = None
+        _M2["srv"] = None
+    try:
+        (DATA_DIR / "semilla.txt").unlink()
+    except OSError:
+        pass
+    try:
+        subprocess.Popen(["sudo", "-n", "systemctl", "restart", "biomas"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def _m2_estructuras(x0, z0, x1, z1):
+    """Las estructuras de ese rectángulo, calculando por celdas y guardándolas.
+
+    Al arrastrar el mapa las peticiones se solapan casi del todo. Calculando por
+    celdas de 8192 bloques, mover un poco el mapa reaprovecha lo de antes y solo
+    cuesta lo que entra nuevo.
+    """
+    b, e = _m2_mods()
+    srv = _m2_srv()
+    semilla = srv.salud()["semilla"]
+    conjuntos = e.conjuntos_de("overworld")
+    fuera = []
+    for cz in range(z0 // _M2_CELDA, z1 // _M2_CELDA + 1):
+        for cx in range(x0 // _M2_CELDA, x1 // _M2_CELDA + 1):
+            clave = (semilla, cx, cz)
+            with _m2_lock:
+                hecho = _m2_est.get(clave)
+            if hecho is None:
+                hecho = e.confirmar(srv, semilla,
+                                    cx * _M2_CELDA, cz * _M2_CELDA,
+                                    (cx + 1) * _M2_CELDA - 1, (cz + 1) * _M2_CELDA - 1,
+                                    conjuntos)
+                for s in hecho:
+                    s["k"] = e.tipo_de(s["tipo"])
+                with _m2_lock:
+                    if len(_m2_est) > 400:          # no crecer sin freno
+                        _m2_est.clear()
+                    _m2_est[clave] = hecho
+            for s in hecho:
+                if x0 <= s["x"] <= x1 and z0 <= s["z"] <= z1 and s["k"]:
+                    fuera.append(s)
+    return fuera
+
+
+@app.get("/api/mapa2/estado")
+def api_m2_estado():
+    """Todo lo que la pestaña necesita para dibujarse: colores, tipos, estado."""
+    require("mapa_semilla")
+    try:
+        b, e = _m2_mods()
+    except Exception as ex:
+        return jsonify(ok=False, motivo="no puedo cargar los guiones: %s" % ex), 200
+    srv = _m2_srv()
+    try:
+        salud = srv.salud()
+    except Exception:
+        return jsonify(ok=False, motivo="apagado",
+                       ayuda="El lector de biomas no está corriendo. Instálalo una vez con: "
+                             "sudo bash ~/panel/scripts/biomas-instalar.sh"), 200
+    cat = biomas_catalogo()
+
+    def nombres(bid):
+        corto = bid.split(":")[-1]
+        ent = cat.get(bid) or cat.get(corto) or {}
+        guapo = b.bonito(bid)
+        return ent.get("es") or guapo, ent.get("en") or corto.replace("_", " ").title()
+
+    leyenda = {}
+    for i, bid in srv.leyenda().items():
+        r, g, az = b.color(bid)
+        es, en = nombres(bid)
+        leyenda[i] = {"id": bid, "es": es, "en": en, "c": "#%02x%02x%02x" % (r, g, az)}
+    # Cada cuántos bloques va, como mucho, una de cada tipo. Sale de la propia
+    # rejilla con la que Minecraft las coloca, así que no hay que ajustarlo a
+    # mano nunca: es lo que le permite al mapa saber cuándo dibujar un tipo
+    # taparía el mapa entero de iconos.
+    paso = {}
+    for c, datos in e.CONJUNTOS.items():
+        for m in (datos[3] or [c]):
+            k = e.tipo_de(m)
+            if k:
+                paso[k] = min(paso.get(k, 1 << 30), datos[0] * 16)
+    tipos = []
+    for k in sorted(e.TIPOS, key=lambda k: e.TIPOS[k][5]):
+        icono, es, en, _dist, oculto, orden = e.TIPOS[k]
+        tipos.append({"k": k, "icono": icono, "es": es, "en": en,
+                      "oculto": oculto, "paso": paso.get(k, 512)})
+    return jsonify(ok=True, semilla=str(salud["semilla"]), y=salud.get("y"),
+                   niveles=b.NIVELES, tam=b.TAM, leyenda=leyenda, tipos=tipos)
+
+
+# signed=True o Flask no acepta coordenadas negativas y media mitad del
+# mundo daría 404 sin decir por qué.
+@app.get("/api/mapa2/azulejo/<int:bpp>/<int(signed=True):tx>/<int(signed=True):tz>.png")
+def api_m2_azulejo(bpp, tx, tz):
+    require("mapa_semilla")
+    b, _ = _m2_mods()
+    if bpp not in b.NIVELES or max(abs(tx), abs(tz)) > 4096:
+        abort(404)
+    if not _m2_turno.acquire(timeout=25):
+        return jsonify(error="ocupado"), 429
+    try:
+        crudo = b.azulejo(_m2_srv(), bpp, tx, tz)
+    except b.NoDisponible:
+        abort(503)
+    except Exception:
+        abort(500)
+    finally:
+        _m2_turno.release()
+    from flask import Response
+    r = Response(crudo, mimetype="image/png")
+    # La semilla no cambia y el generador tampoco, así que este dibujo vale para
+    # siempre. Que el navegador no lo vuelva a pedir nunca.
+    r.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return r
+
+
+@app.get("/api/mapa2/estructuras")
+def api_m2_estructuras():
+    require("mapa_semilla")
+
+    def num(k, por_defecto):
+        try:
+            return int(float(request.args.get(k, por_defecto)))
+        except (TypeError, ValueError):
+            return por_defecto
+
+    x0, z0 = num("x0", -2000), num("z0", -2000)
+    x1, z1 = num("x1", 2000), num("z1", 2000)
+    x0, x1 = min(x0, x1), max(x0, x1)
+    z0, z1 = min(z0, z1), max(z0, z1)
+    if max(abs(x0), abs(x1), abs(z0), abs(z1)) > 3_000_000:
+        return jsonify(error="fuera del mundo"), 400
+    # Un rectángulo enorme sería medio millón de iconos que el navegador no puede
+    # dibujar. Se corta aquí y la pestaña avisa de que hay que acercarse.
+    if (x1 - x0) > 200_000 or (z1 - z0) > 200_000:
+        return jsonify(ok=True, demasiado=True, estructuras=[])
+    try:
+        halladas = _m2_estructuras(x0, z0, x1, z1)
+    except Exception as ex:
+        return jsonify(ok=False, motivo=str(ex)[:200]), 200
+    return jsonify(ok=True, demasiado=False,
+                   estructuras=[[s["k"], s["x"], s["z"]] for s in halladas])
+
+
+@app.get("/api/mapa2/bioma")
+def api_m2_bioma():
+    """El bioma de un punto cualquiera, esté explorado o no."""
+    require("mapa_semilla")
+    try:
+        x = int(float(request.args.get("x", 0)))
+        z = int(float(request.args.get("z", 0)))
+    except (TypeError, ValueError):
+        return jsonify(error="coordenadas inválidas"), 400
+    b, _ = _m2_mods()
+    try:
+        d = _m2_srv().bioma(x, z)
+    except Exception:
+        return jsonify(ok=False), 200
+    cat = biomas_catalogo()
+    bid = d.get("bioma", "")
+    corto = bid.split(":")[-1]
+    ent = cat.get(bid) or cat.get(corto) or {}
+    return jsonify(ok=True, x=x, z=z, id=bid,
+                   es=ent.get("es") or b.bonito(bid),
+                   en=ent.get("en") or corto.replace("_", " ").title())
+
+
+@app.post("/api/mapa2/reiniciar")
+def api_m2_reiniciar():
+    u = _require_admin()
+    _m2_olvidar()
+    audit(u["name"], "reiniciar el lector de biomas")
+    return jsonify(ok=True, output="Reiniciando el lector de biomas — tarda ~1 minuto")
+
+
+
+def _bucle_precalentar():
+    """Deja dibujado de antemano el mapa visto de lejos.
+
+    Un azulejo tarda un par de segundos en calcularse la primera vez. Los
+    niveles alejados son pocos —340 azulejos cubren 131.000 bloques a la
+    redonda— y son justo los que se ven al abrir la pestaña. Haciéndolos de
+    madrugada, en segundo plano, abrir el mapa es instantáneo desde el primer
+    día en vez de un rato de cuadros grises.
+
+    Va despacio y de uno en uno a propósito: Minecraft manda en esta máquina.
+    """
+    time.sleep(600)                       # que el panel y el servidor arranquen
+    hechos = 0
+    while True:
+        try:
+            b, _ = _m2_mods()
+            srv = _m2_srv()
+            if srv.vivo():
+                for bpp in (512, 256, 128, 64):
+                    n = 65536 // (b.TAM * bpp)          # azulejos a cada lado
+                    for tz in range(-n, n):
+                        for tx in range(-n, n):
+                            destino = (b.carpeta_cache(b.nombre_mundo(srv), bpp)
+                                       / ("%d_%d.png" % (tx, tz)))
+                            if destino.is_file():
+                                continue
+                            with _m2_turno:
+                                b.azulejo(srv, bpp, tx, tz)
+                            hechos += 1
+                            time.sleep(1.0)             # sin prisa
+                if hechos:
+                    _syslog("[mapa2] precalentados %d azulejos" % hechos)
+                    hechos = 0
+        except Exception:
+            pass
+        time.sleep(6 * 3600)              # y de vez en cuando, por si cambió el mundo
+
+
 def _bucle_actualizar():
     """Mira si hay versión nueva, y si el mapa puede descongelarse ya.
 
@@ -3316,6 +3599,7 @@ def _bucle_actualizar():
 
 
 threading.Thread(target=_bucle_actualizar, daemon=True).start()
+threading.Thread(target=_bucle_precalentar, daemon=True).start()
 
 # ============================================================ feed del servidor
 #

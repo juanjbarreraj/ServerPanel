@@ -340,6 +340,26 @@ def tareas_de_despues():
                            text=True, timeout=900)
         decir("vigilancia %s" % ("al día" if r.returncode == 0 else "FALLÓ"))
 
+    # El lector de biomas está COMPILADO CONTRA EL JAR de antes. Con el jar
+    # nuevo hay que recompilarlo, y eso lo hace él solo al arrancar: aquí basta
+    # con reiniciarlo. Si no se hiciera, el mapa del mundo entero seguiría
+    # dibujando los biomas de la versión vieja sin decir nada — que es
+    # exactamente la clase de error que no se ve.
+    if (PANEL / "scripts" / "biomas-servicio.sh").exists():
+        decir("reiniciando el lector de biomas (se recompila con el jar nuevo)…")
+        r = subprocess.run(["sudo", "-n", "systemctl", "restart", "biomas"],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode == 0:
+            decir("lector de biomas reiniciado")
+        else:
+            decir("el lector de biomas no se pudo reiniciar (%s). "
+                  "Si nunca lo instalaste, es normal: "
+                  "sudo bash ~/panel/scripts/biomas-instalar.sh"
+                  % (r.stderr or "").strip()[:120])
+    # Los azulejos ya dibujados del mapa de biomas no hay que tocarlos a mano:
+    # se guardan bajo la huella del generador, y si la versión nueva cambiara
+    # cómo se reparten los biomas, la huella cambia y se dibujan de nuevo solos.
+
 
 def deshacer():
     """Devuelve el jar anterior. El MUNDO no se deshace: para eso está la copia

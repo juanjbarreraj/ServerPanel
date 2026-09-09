@@ -46,48 +46,10 @@ def region_dir(dim):
 
 DIMS = [(d, region_dir(d)) for d in ("overworld", "nether", "end")]
 
-# id del juego -> (icono, nombre en español, nombre en inglés, distancia máxima, oculto por defecto)
-#
-# Los nombres en español son los OFICIALES de la wiki en español de Minecraft
-# (es.minecraft.wiki), no traducciones propias.
-#
-# max_dist = a qué distancia de cámara deja de dibujarse el marcador. Es lo que
-# evita que al alejar el mapa se junten cientos de iconos: los hitos grandes se
-# ven de lejos, lo común solo de cerca. Menos iconos en pantalla = sin lag.
-#
-# oculto = la capa arranca apagada (las estructuras que salen a cientos).
-STRUCT_MAP = {
-    #                    icono              español                inglés                  max_dist  oculto  orden
-    "ancient_city":     ("ancient_city",    "Ciudad antigua",      "Ancient City",          100000, False, 10),
-    "mansion":          ("mansion",         "Mansión del bosque",  "Woodland Mansion",      100000, False, 11),
-    "monument":         ("monument",        "Monumento oceánico",  "Ocean Monument",        100000, False, 12),
-    "stronghold":       ("stronghold",      "Fortaleza",           "Stronghold",            100000, False, 13),
-    "end_city":         ("end_city",        "Ciudad del End",      "End City",              100000, False, 14),
-    "bastion_remnant":  ("bastion_remnant", "Bastión en ruinas",   "Bastion Remnant",       100000, False, 15),
-    "fortress":         ("nether_fortress", "Fortaleza del Nether","Nether Fortress",       100000, False, 16),
-    "trial_chambers":   ("trial_chambers",  "Cámaras de desafío",  "Trial Chambers",         20000, False, 17),
-    "village":          ("village",         "Aldea",               "Village",                20000, False, 20),
-    "pillager_outpost": ("outpost",         "Puesto de saqueadores","Pillager Outpost",      20000, False, 21),
-    "desert_pyramid":   ("desert_temple",   "Pirámide del desierto","Desert Pyramid",         8000, False, 30),
-    "jungle_pyramid":   ("jungle_temple",   "Templo de jungla",    "Jungle Temple",           8000, False, 31),
-    "swamp_hut":        ("witch_hut",       "Cabaña de pantano",   "Swamp Hut",               8000, False, 32),
-    "igloo":            ("igloo",           "Iglú",                "Igloo",                   8000, False, 33),
-    "trail_ruins":      ("trail_ruins",     "Sendero en ruinas",   "Trail Ruins",             8000, False, 34),
-    "shipwreck":        ("shipwreck",       "Naufragio",           "Shipwreck",               3000, True,  40),
-    "buried_treasure":  ("buried_treasure", "Tesoro enterrado",    "Buried Treasure",         3000, True,  41),
-    "ruined_portal":    ("ruined_portal",   "Portal en ruinas",    "Ruined Portal",           3000, True,  42),
-    "mineshaft":        ("mineshaft",       "Mina abandonada",     "Mineshaft",               3000, True,  43),
-}
-
-def struct_kind(sid):
-    """minecraft:village_plains -> village ; minecraft:ruined_portal_desert -> ruined_portal"""
-    s = sid.split(":", 1)[-1]
-    if s in STRUCT_MAP:
-        return s
-    for k in STRUCT_MAP:                      # variantes con sufijo/prefijo
-        if s.startswith(k + "_") or s.endswith("_" + k):
-            return k
-    return None
+# La tabla de iconos y nombres vive en estructuras.py, que la comparten este
+# programa y el mapa del mundo entero del panel. Estuvo duplicada y era
+# cuestión de tiempo que se separaran.
+from estructuras import TIPOS as STRUCT_MAP, tipo_de as struct_kind
 
 # ---------------------------------------------------------------- región (.mca)
 def read_region(path):
@@ -276,23 +238,21 @@ def detalle_html(es, en, x, y, z):
             f'</div>')
 
 def build_block(structs, manual, dim):
-    """Una capa por tipo de estructura, para poder encender y apagar cada una."""
+    """Lo que se pinta encima del mapa 3D.
+
+    SOLO los lugares que pone la gente (base, peligro, granja, tienda).
+
+    Los iconos de estructuras —aldeas, monumentos, ciudades antiguas…— ya NO
+    van aquí: se fueron al mapa del mundo entero, donde salen todas y no solo
+    las del terreno explorado, y donde se pueden encender y apagar por tipo sin
+    recargar nada. Tenerlos en los dos sitios era pedir que un día dijeran
+    cosas distintas.
+
+    `structs` se sigue recibiendo porque el escaneo del mundo se sigue
+    haciendo: es lo que comprueba que el cálculo por semilla acierta (ver
+    probar-estructuras.py).
+    """
     out = [BEGIN + "\n", "marker-sets: {\n"]
-    por_tipo = {}
-    for s in structs:
-        por_tipo.setdefault(s["kind"], []).append(s)
-    for kind in sorted(por_tipo, key=lambda k: STRUCT_MAP[k][5]):
-        icon, es, en, max_dist, oculto, orden = STRUCT_MAP[kind]
-        items = por_tipo[kind]
-        # con muchísimos marcadores, no llenamos también la lista lateral
-        listed = len(items) <= 60
-        out.append(f'  est_{kind}: {{\n    label: "{esc(es)} ({len(items)})"\n'
-                   f'    toggleable: true\n    default-hidden: {"true" if oculto else "false"}\n'
-                   f'    sorting: {orden}\n    markers: {{\n')
-        for i, s in enumerate(items):
-            out.append(poi(f"e_{kind}_{i}", es, s["x"], s["y"], s["z"], icon,
-                           detalle_html(es, en, s["x"], s["y"], s["z"]), max_dist, listed))
-        out.append("    }\n  }\n")
     mine = [m for m in manual if m.get("dim", "overworld") == dim]
     if mine:
         out.append('  lugares: {\n    label: "Lugares del server"\n    toggleable: true\n'

@@ -114,6 +114,56 @@ CONJUNTOS_RESPALDO = {
 }
 
 
+# ───────────────────────────────────────────── cómo se enseña cada estructura
+#
+# Esta tabla la comparten el mapa 3D (scan-structures.py, que lee el mundo de
+# verdad) y el mapa del mundo entero (el panel, que lo calcula de la semilla).
+# Estaba duplicada en los dos y era cuestión de tiempo que se separaran: se
+# añade una estructura nueva en un sitio y en el otro sale sin icono.
+#
+# Los nombres en español son los OFICIALES de la wiki en español de Minecraft
+# (es.minecraft.wiki), no traducciones propias.
+#
+# max_dist = a qué distancia de cámara deja de dibujarse en BlueMap.
+# oculto   = la capa arranca apagada (las que salen a cientos).
+TIPOS = {
+    #                    icono              español                 inglés                 max_dist  oculto  orden
+    "ancient_city":     ("ancient_city",    "Ciudad antigua",       "Ancient City",         100000, False, 10),
+    "mansion":          ("mansion",         "Mansión del bosque",   "Woodland Mansion",     100000, False, 11),
+    "monument":         ("monument",        "Monumento oceánico",   "Ocean Monument",       100000, False, 12),
+    "stronghold":       ("stronghold",      "Fortaleza",            "Stronghold",           100000, False, 13),
+    "end_city":         ("end_city",        "Ciudad del End",       "End City",             100000, False, 14),
+    "bastion_remnant":  ("bastion_remnant", "Bastión en ruinas",    "Bastion Remnant",      100000, False, 15),
+    "fortress":         ("nether_fortress", "Fortaleza del Nether", "Nether Fortress",      100000, False, 16),
+    "trial_chambers":   ("trial_chambers",  "Cámaras de desafío",   "Trial Chambers",        20000, False, 17),
+    "village":          ("village",         "Aldea",                "Village",               20000, False, 20),
+    "pillager_outpost": ("outpost",         "Puesto de saqueadores", "Pillager Outpost",     20000, False, 21),
+    "desert_pyramid":   ("desert_temple",   "Pirámide del desierto", "Desert Pyramid",        8000, False, 30),
+    "jungle_pyramid":   ("jungle_temple",   "Templo de jungla",     "Jungle Temple",          8000, False, 31),
+    "swamp_hut":        ("witch_hut",       "Cabaña de pantano",    "Swamp Hut",              8000, False, 32),
+    "igloo":            ("igloo",           "Iglú",                 "Igloo",                  8000, False, 33),
+    "trail_ruins":      ("trail_ruins",     "Sendero en ruinas",    "Trail Ruins",            8000, False, 34),
+    "ocean_ruin":       ("ocean_ruin",      "Ruinas oceánicas",     "Ocean Ruins",            3000, True,  39),
+    "shipwreck":        ("shipwreck",       "Naufragio",            "Shipwreck",              3000, True,  40),
+    "buried_treasure":  ("buried_treasure", "Tesoro enterrado",     "Buried Treasure",        3000, True,  41),
+    "ruined_portal":    ("ruined_portal",   "Portal en ruinas",     "Ruined Portal",          3000, True,  42),
+    "mineshaft":        ("mineshaft",       "Mina abandonada",      "Mineshaft",              3000, True,  43),
+}
+
+
+def tipo_de(sid):
+    """minecraft:village_plains → village ; ruined_portal_desert → ruined_portal"""
+    s = str(sid).split(":", 1)[-1]
+    if s in TIPOS:
+        return s
+    # de más largo a más corto: si no, `mineshaft_mesa` podría casar antes con
+    # algo más corto y acabar en el cajón equivocado
+    for k in sorted(TIPOS, key=len, reverse=True):
+        if s.startswith(k + "_") or s.endswith("_" + k):
+            return k
+    return None
+
+
 def leer_del_jar(jar):
     """Saca los conjuntos del server.jar. Es JSON plano: nada de ofuscación."""
     import zipfile
@@ -191,16 +241,231 @@ def candidatas_en(semilla, conjunto, x0, z0, x1, z1):
     return fuera
 
 
+# ══════════════════════════════════════════ el segundo paso: ¿le vale el bioma?
+#
+# La cuenta de arriba dice dónde PODRÍA ir cada conjunto. Minecraft, además,
+# mira el bioma de ese sitio y solo la coloca si le vale: una pirámide necesita
+# desierto, un monumento necesita océano profundo. Sin este paso, el mapa
+# saldría con cinco veces más iconos de los que hay de verdad.
+#
+# Qué biomas le valen a cada estructura está EN EL JAR, en JSON, en
+# `data/minecraft/worldgen/structure/<nombre>.json`, en el campo `biomes`. Suele
+# ser una etiqueta (`#minecraft:has_structure/village_plains`) que a su vez
+# vive en `data/minecraft/tags/worldgen/biome/…` y puede apuntar a otras
+# etiquetas, así que se resuelve en cadena.
+#
+# Se lee del jar del servidor, no de una tabla mía: cuando salga la 26.3 y
+# Mojang cambie dónde puede aparecer algo, esto se entera solo.
+
+Y_SUPERFICIE = 128
+
+
+def _resolver_etiqueta(z, dentro, nombre, visto=None):
+    """Una etiqueta de biomas → el conjunto de biomas, siguiendo la cadena."""
+    visto = visto if visto is not None else set()
+    if nombre in visto:
+        return set()                       # etiquetas que se citan entre sí
+    visto.add(nombre)
+    espacio, _, camino = nombre.partition(":")
+    if not camino:
+        espacio, camino = "minecraft", espacio
+    ruta = "data/%s/tags/worldgen/biome/%s.json" % (espacio, camino)
+    if ruta not in dentro:
+        return set()
+    fuera = set()
+    for v in json.loads(z.read(ruta)).get("values", []):
+        if isinstance(v, dict):
+            v = v.get("id", "")
+        if not isinstance(v, str) or not v:
+            continue
+        if v.startswith("#"):
+            fuera |= _resolver_etiqueta(z, dentro, v[1:], visto)
+        else:
+            fuera.add(v if ":" in v else "minecraft:" + v)
+    return fuera
+
+
+def _altura_de(d):
+    """A qué altura mira Minecraft el bioma de esa estructura.
+
+    Los biomas son tridimensionales. Una ciudad antigua se coloca a y=-27 y su
+    bioma (deep_dark) SOLO existe allí abajo: si se preguntase en la superficie
+    no se confirmaría ni una sola y el mapa se quedaría sin ciudades antiguas.
+    """
+    h = d.get("start_height")
+    if isinstance(h, dict):
+        if "absolute" in h:
+            return int(h["absolute"])
+        lo = (h.get("min_inclusive") or {}).get("absolute")
+        hi = (h.get("max_inclusive") or {}).get("absolute")
+        if lo is not None and hi is not None:
+            return int((lo + hi) // 2)
+    return Y_SUPERFICIE
+
+
+ESTRUCTURAS = {}
+BIOMAS_DIMENSION = {}          # 'overworld' → set de biomas de esa dimensión
+
+
+def leer_estructuras(jar):
+    """nombre → {'biomas': set, 'y': int}. Del jar, sin adivinar nada."""
+    import zipfile
+    fuera = {}
+    with zipfile.ZipFile(jar) as z:
+        dentro = set(z.namelist())
+        for n in dentro:
+            if not n.startswith("data/minecraft/worldgen/structure/") or \
+               not n.endswith(".json"):
+                continue
+            try:
+                d = json.loads(z.read(n))
+            except Exception:
+                continue
+            b = d.get("biomes")
+            if isinstance(b, str):
+                biomas = _resolver_etiqueta(z, dentro, b[1:]) if b.startswith("#") \
+                         else {b if ":" in b else "minecraft:" + b}
+            elif isinstance(b, list):
+                biomas = {x if ":" in x else "minecraft:" + x
+                          for x in b if isinstance(x, str)}
+            else:
+                biomas = set()
+            fuera[n.rsplit("/", 1)[-1][:-5]] = {"biomas": biomas, "y": _altura_de(d)}
+        for dim in ("overworld", "nether", "end"):
+            BIOMAS_DIMENSION[dim] = _resolver_etiqueta(z, dentro, "is_" + dim)
+    return fuera
+
+
+def conjuntos_de(dimension="overworld"):
+    """Los conjuntos que pueden salir en esa dimensión.
+
+    Sin esto, dibujar el mapa del overworld gastaría el 93% del trabajo
+    preguntando el bioma de fósiles del Nether, que van cada 2 chunks: 131.000
+    puntos para confirmar cero. Se descartan de golpe mirando si ALGÚN miembro
+    del conjunto puede vivir en un bioma de esta dimensión.
+    """
+    suyos = BIOMAS_DIMENSION.get(dimension)
+    if not suyos or not ESTRUCTURAS:
+        return sorted(CONJUNTOS)
+    fuera = []
+    for c, datos in CONJUNTOS.items():
+        for m in (datos[3] or [c]):
+            info = ESTRUCTURAS.get(m)
+            if info and info["biomas"] & suyos:
+                fuera.append(c)
+                break
+    return sorted(fuera)
+
+
+def cargar_estructuras(jar=None):
+    global ESTRUCTURAS
+    if jar and Path(jar).exists():
+        leidas = leer_estructuras(jar)
+        if leidas:
+            ESTRUCTURAS = leidas
+    return ESTRUCTURAS
+
+
+def confirmar(srv, semilla, x0, z0, x1, z1, conjuntos=None, progreso=None):
+    """Candidatas → estructuras de verdad, preguntando el bioma de cada una.
+
+    Devuelve [{'conjunto', 'tipo', 'x', 'z', 'bioma'}]. `tipo` es el miembro
+    concreto: de un conjunto «villages» sale village_desert o village_snowy
+    según el bioma, igual que en el juego, y así el icono es el correcto.
+
+    Si no hay servicio de biomas devuelve las candidatas SIN confirmar, marcadas
+    como tales — más vale un mapa que avisa de que está adivinando que un mapa
+    vacío.
+    """
+    conjuntos = conjuntos or sorted(CONJUNTOS)
+    if not ESTRUCTURAS:
+        return [{"conjunto": c, "tipo": (CONJUNTOS[c][3] or [c])[0],
+                 "x": x, "z": z, "bioma": None, "seguro": False}
+                for c in conjuntos if c in CONJUNTOS
+                for x, z in candidatas_en(semilla, c, x0, z0, x1, z1)]
+
+    # Agrupadas por altura: todas las de superficie en una tanda, las
+    # subterráneas en la suya. Así son dos o tres viajes y no cien mil.
+    por_altura = {}
+    for c in conjuntos:
+        if c not in CONJUNTOS:
+            continue
+        miembros = CONJUNTOS[c][3] or [c]
+        alturas = {ESTRUCTURAS.get(m, {}).get("y", Y_SUPERFICIE) for m in miembros}
+        for x, z in candidatas_en(semilla, c, x0, z0, x1, z1):
+            for y in alturas:
+                por_altura.setdefault(y, []).append((c, x, z))
+
+    fuera = []
+    hechas, total = 0, sum(len(v) for v in por_altura.values())
+    biomas_de = {}                          # (y, x, z) → bioma
+    for y, lista in por_altura.items():
+        for i in range(0, len(lista), 2000):
+            trozo = lista[i:i + 2000]
+            nombres = srv.puntos([(x, z) for _, x, z in trozo], y=y)
+            for (c, x, z), b in zip(trozo, nombres):
+                biomas_de[(y, x, z)] = b
+            hechas += len(trozo)
+            if progreso:
+                progreso(hechas, total)
+
+    vistas = set()
+    for y, lista in por_altura.items():
+        for c, x, z in lista:
+            if (c, x, z) in vistas:
+                continue
+            for m in (CONJUNTOS[c][3] or [c]):
+                info = ESTRUCTURAS.get(m)
+                if not info:
+                    continue
+                b = biomas_de.get((info["y"], x, z))
+                if b and b in info["biomas"]:
+                    fuera.append({"conjunto": c, "tipo": m, "x": x, "z": z,
+                                  "bioma": b, "seguro": True})
+                    vistas.add((c, x, z))
+                    break
+    return fuera
+
+
 def main():
     if len(sys.argv) < 6:
         print(__doc__)
         print("Uso: estructuras.py <semilla> <x0> <z0> <x1> <z1> [tipo…]")
+        print("     --confirmar   pregunta el bioma y descarta las que no valen")
         return 2
     semilla = int(sys.argv[1])
     x0, z0, x1, z1 = (int(a) for a in sys.argv[2:6])
     jar = os.environ.get("MC_JAR")
-    cargar(jar if jar and Path(jar).exists() else None)
-    tipos = sys.argv[6:] or sorted(CONJUNTOS)
+    jar = jar if jar and Path(jar).exists() else None
+    cargar(jar)
+    tipos = [a for a in sys.argv[6:] if not a.startswith("--")] or sorted(CONJUNTOS)
+
+    if "--confirmar" in sys.argv:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import biomas
+        cargar_estructuras(jar)
+        srv = biomas.Servicio()
+        if not srv.vivo():
+            print("✘ el servicio de biomas no responde", file=sys.stderr)
+            return 1
+        if "--confirmar" in sys.argv and not [a for a in sys.argv[6:] if not a.startswith("--")]:
+            tipos = conjuntos_de("overworld")
+        import time
+        t = time.time()
+        halladas = confirmar(srv, semilla, x0, z0, x1, z1, tipos)
+        cuenta = {}
+        for e in halladas:
+            cuenta[e["tipo"]] = cuenta.get(e["tipo"], 0) + 1
+        candidatas = sum(len(candidatas_en(semilla, c, x0, z0, x1, z1))
+                         for c in tipos if c in CONJUNTOS)
+        print("%d candidatas → %d confirmadas en %.1f s"
+              % (candidatas, len(halladas), time.time() - t), file=sys.stderr)
+        for k in sorted(cuenta, key=lambda k: -cuenta[k]):
+            print("  %-24s %d" % (k, cuenta[k]), file=sys.stderr)
+        print(json.dumps({"semilla": semilla, "estructuras": halladas},
+                         ensure_ascii=False))
+        return 0
+
     fuera = {t: candidatas_en(semilla, t, x0, z0, x1, z1)
              for t in tipos if t in CONJUNTOS}
     print(json.dumps({"semilla": semilla, "candidatas": fuera,

@@ -463,6 +463,48 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   font-size:.8rem; font-weight:700; background:var(--slotbg);
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.09)}
 
+/* ============ mapa del mundo entero (biomas + estructuras) ============ */
+/* Dos lienzos encima del otro: abajo los biomas, arriba los iconos. No es por
+   capricho — al pasar el ratón se lee el color del píxel de abajo para decir el
+   bioma sin pedirle nada al servidor, y si los iconos estuvieran pintados en el
+   mismo lienzo taparían ese color. */
+.m2-lienzo{position:relative; width:100%; height:calc(100vh - 300px); min-height:min(420px, 62vh);
+  border-radius:8px; overflow:hidden; background:#04060a; touch-action:none; cursor:grab}
+.m2-lienzo.arrastrando{cursor:grabbing}
+.m2-lienzo canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
+.m2-top{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:0 2px 9px}
+.m2-donde{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.82rem; color:var(--ink3);
+  background:var(--slotbg); padding:6px 10px; border-radius:5px; min-width:0; flex:1 1 220px;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.m2-donde b{color:var(--ink); font-weight:700}
+.m2-ir{width:150px; flex:0 0 auto}
+.m2-capas{display:flex; flex-wrap:wrap; gap:7px; margin:10px 2px 0}
+.m2-cap{display:inline-flex; align-items:center; gap:7px; padding:6px 11px 6px 8px; border-radius:5px;
+  font-size:.76rem; font-weight:700; cursor:pointer; user-select:none; border:0; color:var(--ink3);
+  background:var(--slotbg); transition:all .18s var(--spring);
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
+.m2-cap img{width:19px; height:19px; image-rendering:pixelated; opacity:.45; transition:opacity .18s}
+.m2-cap.on{color:var(--ink)}
+.m2-cap.on img{opacity:1}
+.m2-cap .n{opacity:.5; font-weight:400}
+.m2-cap.lejos{opacity:.5}
+.m2-cap.lejos::after{content:'🔍'; font-size:.7rem; margin-left:1px}
+.m2-globo{position:absolute; z-index:5; transform:translate(-50%,-100%); pointer-events:none;
+  background:#181c21; color:#e8edf3; padding:8px 12px; border-radius:6px; font-size:.78rem; line-height:1.4;
+  white-space:nowrap; box-shadow:0 6px 22px rgba(0,0,0,.55); margin-top:-12px}
+.m2-globo b{display:block; font-size:.9rem; margin-bottom:2px}
+.m2-globo .c{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; opacity:.65; font-size:.74rem}
+.m2-aviso{position:absolute; left:50%; bottom:12px; transform:translateX(-50%); z-index:4;
+  background:rgba(10,13,17,.86); color:var(--ink3); padding:6px 13px; border-radius:20px; font-size:.74rem;
+  pointer-events:none; transition:opacity .25s}
+.m2-cruz{position:absolute; z-index:3; pointer-events:none; width:15px; height:15px; margin:-8px 0 0 -8px;
+  border:2px solid rgba(255,255,255,.85); border-radius:50%; box-shadow:0 0 0 2px rgba(0,0,0,.5)}
+@media (max-width:640px){
+  .m2-lienzo{height:calc(100vh - 340px); min-height:56vh}
+  .m2-ir{width:110px}
+}
+
 /* ============ mundos ============ */
 /* La barra de progreso es de las pocas cosas del panel que se mira fijamente
    mientras dura, así que se le pone la misma piel hundida que a los huecos del
@@ -989,6 +1031,42 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
           <button class="btn small ghost" onclick="mkScan()"><img class="bico" src="/static/ui/mapa.png?v=14" alt="" onerror="this.outerHTML='🔎 '">Volver a dibujar el mapa entero</button>
         </div>
         <div class="note"><b>Los iconos</b> busca aldeas, cámaras de desafío, ciudades antiguas y demás en lo que ya exploraron y las pone en el mapa: tarda segundos, o unos minutos la primera vez. <b>Volver a dibujar</b> además repinta el terreno y tarda más de una hora — normalmente no hace falta, porque el mapa se actualiza solo cada noche.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MAPA DEL MUNDO ENTERO — biomas y estructuras calculados de la semilla -->
+  <section id="tab-mapa2" class="hidden">
+    <div class="card hidden" id="m2-apagado" style="margin-bottom:14px">
+      <h3><img class="hico" src="/static/ui/mapa.png?v=14" alt="" onerror="this.outerHTML='🧭 '">El explorador no está encendido</h3>
+      <div class="note" id="m2-apagado-n" style="margin-top:0"></div>
+    </div>
+
+    <div class="card hidden" id="m2-caja" style="padding:10px">
+      <div class="m2-top">
+        <div class="m2-donde" id="m2-donde">Mueve el ratón por el mapa</div>
+        <input class="m2-ir" id="m2-ir" placeholder="Ir a:  x z" inputmode="numeric"
+               onkeydown="if(event.key==='Enter')m2Ir()">
+        <button class="btn small ghost" id="m2-btn-ir" onclick="m2Ir()">Ir</button>
+        <button class="btn small ghost" id="m2-btn-mas" onclick="m2Zoom(2)" title="Acercar">+</button>
+        <button class="btn small ghost" id="m2-btn-menos" onclick="m2Zoom(.5)" title="Alejar">−</button>
+      </div>
+
+      <div class="m2-lienzo" id="m2-lienzo">
+        <canvas id="m2-bio"></canvas>
+        <canvas id="m2-ico"></canvas>
+        <div class="m2-cruz hidden" id="m2-cruz"></div>
+        <div class="m2-globo hidden" id="m2-globo"></div>
+        <div class="m2-aviso hidden" id="m2-aviso"></div>
+      </div>
+
+      <div class="m2-capas" id="m2-capas"></div>
+
+      <div class="note" style="margin:12px 4px 2px">
+        Todo el mundo, no solo lo explorado: los biomas y las estructuras salen de la <b>semilla</b>, calculados
+        con el generador que trae el propio servidor. Arrastra para moverte, rueda para acercar, y haz clic en un
+        icono o en cualquier sitio para ver qué hay. Las estructuras están donde el juego las pondrá, aunque nadie
+        haya ido nunca — <b>ojo con destriparle la exploración a los demás</b>.
       </div>
     </div>
   </section>
@@ -1643,6 +1721,7 @@ const TABS = [
   ['dash',()=>t('tab_dash'),UI('inicio'),'🏠', () => hasPerm('view_dashboard')],
   ['players',()=>t('tab_players'),UI('jugadores'),'⚔️', () => hasPerm('view_players')],
   ['map',()=>t('tab_map'),UI('mapa'),'🗺️', () => hasPerm('view_dashboard')],
+  ['mapa2',()=>'Explorar',UI('explorar'),'🧭', () => hasPerm('mapa_semilla')],
   ['historia',()=>t('tab_hist'),UI('historia'),'🕰️', () => hasPerm('view_dashboard')],
   ['mod',()=>'Moderación',UI('moderacion'),'🔨', () => hasPerm('whitelist')||hasPerm('ban')||hasPerm('say')],
   ['memories',()=>t('tab_mem'),UI('memorias'),'🖼️', () => hasPerm('memories')],
@@ -1716,6 +1795,7 @@ function show(id){
   if (id==='users'){ loadUsers(); loadAudit(); }
   if (id==='sistema'){ loadSistema(); verCargar(); if(!window._sysT) window._sysT=setInterval(()=>{ if(!$('tab-sistema').classList.contains('hidden')) loadSistema(); },5000); }
   if (id==='mundo') muCargar();
+  if (id==='mapa2') m2Cargar();
   window._curTab=id;
 }
 
@@ -2849,12 +2929,426 @@ async function muTraer(){
   toast(r.output || r.error || 'Hecho'); muCargar();
 }
 
+/* ================== mapa del mundo entero (biomas + estructuras) ==================
+   El otro mapa enseña lo que se ha explorado, en 3D. Este enseña el mundo entero,
+   plano y por colores, calculado desde la semilla: es lo mismo que hace Chunkbase,
+   pero preguntándole al generador que viene dentro del propio server.jar.
+
+   CÓMO SE DIBUJA
+   Igual que cualquier mapa de los que se arrastran: el mundo está partido en
+   azulejos de 256 px y solo se piden los que se ven. Cada nivel de zoom es una
+   cantidad de bloques por píxel (4, 8, 16… 512) y los azulejos de cada nivel se
+   guardan en el servidor para siempre — la semilla no cambia, así que un trozo
+   calculado una vez no hay que volver a calcularlo nunca.
+
+   MIENTRAS LLEGA EL AZULEJO BUENO se estira el del nivel de más arriba, que casi
+   siempre ya está en memoria. Por eso al acercarse se ve borroso un instante y
+   luego nítido, en vez de verse un agujero negro. */
+const M2 = {
+  est:null,                 // lo que contesta /api/mapa2/estado
+  cx:0, cz:0,               // qué punto del mundo está en el centro
+  esc:1/8,                  // píxeles de pantalla por bloque
+  azulejos:new Map(),       // "bpp/tx/tz" → Image | 'cargando' | {falla:t}
+  pidiendo:0,
+  iconos:new Map(),         // tipo → Image
+  apagados:new Set(),       // los que el usuario apagó
+  forzados:new Set(),       // los que pidió ver aunque el mapa esté muy abierto
+  estructuras:[], cuenta:{}, recorte:null,
+  porColor:new Map(),       // "r,g,b" → bioma, para decir el bioma sin pedir nada
+  pintando:false, listo:false, tEstr:0, aviso:'',
+};
+const M2_MAX_ICONOS = 3000;
+
+/* Con el mapa muy abierto hay miles de naufragios y de ruinas: dibujarlos
+   taparía el mapa entero de iconos y no se vería ni un bioma.
+
+   La regla no es una lista de "este sí, este no" que haya que ir ajustando:
+   cada estructura va en una rejilla de tantos bloques (`paso`, que sale del
+   propio juego), así que sus iconos caerían a `paso × escala` píxeles unos de
+   otros. Si eso es menos que un icono y medio, ese tipo se calla hasta que te
+   acerques. Las raras (mansiones, ciudades antiguas) tienen la rejilla enorme y
+   por eso se ven de lejos, sin que nadie lo haya decidido a mano. */
+/* CUÁNTOS ICONOS CABEN
+   Al alejar el mapa, cada tipo por separado sigue estando "bien repartido" —y
+   sin embargo el mapa entero se convierte en una alfombra de iconos, porque son
+   veinte tipos a la vez. Lo que sobra es el TOTAL, no cada uno.
+
+   Así que hay un presupuesto de iconos por pantalla (uno cada ~41×41 px, que es
+   más o menos como se ve Chunkbase) y se reparte empezando por los que menos
+   hay: las mansiones y las ciudades antiguas entran siempre, y los naufragios,
+   que salen a miles, solo cuando ya te has acercado lo bastante como para que
+   quepan. No hay ni una constante por tipo: se decide con lo que de verdad hay
+   en el trozo de mundo que se está mirando.
+
+   Los tipos que se quedan fuera salen en su casilla con una lupa, y pulsándola
+   se ven igual — la regla decide por defecto, no manda. */
+function m2Presupuesto(){ return Math.max(120, Math.round(M2.w*M2.h/1700)); }
+
+function m2Decidir(){
+  if (!M2.est || !M2.areaPedida) return;
+  const enPantalla = (M2.w/M2.esc) * (M2.h/M2.esc) / M2.areaPedida;
+  for (const t of M2.est.tipos) t.enVista = Math.round((M2.cuenta[t.k]||0) * enPantalla);
+  const orden = M2.est.tipos.slice().sort((a,b)=>(a.enVista||0)-(b.enVista||0));
+  let usado = 0, tope = m2Presupuesto();
+  for (const t of orden){
+    t.cabe = (usado + (t.enVista||0)) <= tope;
+    if (t.cabe) usado += (t.enVista||0);
+  }
+}
+
+function m2SaleAhora(tipo){
+  if (M2.apagados.has(tipo.k)) return false;
+  if (M2.forzados.has(tipo.k)) return true;
+  return tipo.cabe !== false;
+}
+
+async function m2Cargar(){
+  if (M2.listo) { m2Medir(); m2Pinta(); return; }
+  let d=null;
+  try{ d = await api('/api/mapa2/estado'); }catch(_){}
+  const caja=$('m2-caja'), off=$('m2-apagado');
+  if (!d || !d.ok){
+    off.classList.remove('hidden'); caja.classList.add('hidden');
+    $('m2-apagado-n').innerHTML = d && d.ayuda
+      ? esc(d.ayuda).replace(/(sudo bash[^\s]*[^\.]*)/, '<code>$1</code>')
+      : 'No consigo hablar con el lector de biomas. ' + esc((d&&d.motivo)||'');
+    return;
+  }
+  off.classList.add('hidden'); caja.classList.remove('hidden');
+  M2.est = d; M2.listo = true;
+  for (const k in d.leyenda){
+    const b=d.leyenda[k], c=b.c;
+    M2.porColor.set(parseInt(c.slice(1),16), b);
+  }
+  for (const t of d.tipos){
+    if (t.oculto) M2.apagados.add(t.k);
+    const im=new Image(); im.src = MK_ICON(t.icono);
+    im.onload=()=>{ t.hay=true; m2Iconos(); };
+    M2.iconos.set(t.k, im);
+  }
+  try{
+    const g = JSON.parse(localStorage.getItem('panel_m2') || '{}');
+    if (typeof g.cx==='number'){ M2.cx=g.cx; M2.cz=g.cz; M2.esc=g.esc||M2.esc; }
+    if (Array.isArray(g.off)) M2.apagados = new Set(g.off);
+    if (Array.isArray(g.on)) M2.forzados = new Set(g.on);
+  }catch(_){}
+  m2Capas(); m2Enganchar(); m2Medir(); m2Pinta(); m2PideEstructuras();
+}
+
+function m2Guardar(){
+  try{ localStorage.setItem('panel_m2', JSON.stringify(
+    {cx:Math.round(M2.cx), cz:Math.round(M2.cz), esc:M2.esc,
+     off:[...M2.apagados], on:[...M2.forzados]})); }catch(_){}
+}
+
+/* ---------- tamaño del lienzo ---------- */
+function m2Medir(){
+  const caja=$('m2-lienzo'); if (!caja) return;
+  const r=caja.getBoundingClientRect(), d=Math.min(2, window.devicePixelRatio||1);
+  M2.w=r.width; M2.h=r.height; M2.dpr=d;
+  for (const id of ['m2-bio','m2-ico']){
+    const c=$(id);
+    if (c.width!==Math.round(r.width*d) || c.height!==Math.round(r.height*d)){
+      c.width=Math.round(r.width*d); c.height=Math.round(r.height*d);
+    }
+  }
+}
+
+/* ---------- de mundo a pantalla y al revés ---------- */
+const m2ax = x => (x - M2.cx)*M2.esc + M2.w/2;
+const m2az = z => (z - M2.cz)*M2.esc + M2.h/2;
+const m2dex = p => (p - M2.w/2)/M2.esc + M2.cx;
+const m2dez = p => (p - M2.h/2)/M2.esc + M2.cz;
+
+/* Qué nivel de detalle toca: el más fino cuyos píxeles no haya que encoger
+   mucho. Pedir uno más fino de la cuenta multiplica por cuatro el trabajo del
+   servidor para que luego el navegador tire la mitad de los píxeles. */
+function m2Nivel(){
+  const q = 1/M2.esc, ns = M2.est.niveles;
+  let mejor = ns[0];
+  for (const b of ns) if (b <= q*1.35) mejor = b;
+  return mejor;
+}
+
+function m2Pinta(){
+  if (M2.pintando) return;
+  M2.pintando = true;
+  requestAnimationFrame(()=>{ M2.pintando=false; m2Dibuja(); m2Iconos(); });
+}
+
+/* ---------- los biomas ---------- */
+function m2Dibuja(){
+  if (!M2.listo) return;
+  const c=$('m2-bio'), g=c.getContext('2d'), TAM=M2.est.tam, d=M2.dpr;
+  g.setTransform(d,0,0,d,0,0);
+  g.imageSmoothingEnabled=false;          // que los bordes de bioma queden secos
+  g.fillStyle='#04060a'; g.fillRect(0,0,M2.w,M2.h);
+
+  const bpp=m2Nivel(), paso=TAM*bpp, lado=paso*M2.esc;
+  const t0x=Math.floor(m2dex(0)/paso), t1x=Math.floor(m2dex(M2.w)/paso);
+  const t0z=Math.floor(m2dez(0)/paso), t1z=Math.floor(m2dez(M2.h)/paso);
+  const faltan=[];
+  for (let tz=t0z; tz<=t1z; tz++) for (let tx=t0x; tx<=t1x; tx++){
+    const x=m2ax(tx*paso), y=m2az(tz*paso);
+    const im=M2.azulejos.get(bpp+'/'+tx+'/'+tz);
+    if (im instanceof Image){
+      g.drawImage(im, x, y, lado, lado);
+      continue;
+    }
+    const p=m2Padre(bpp,tx,tz);           // mientras llega, el de arriba estirado
+    if (p) g.drawImage(p.im, p.ox*TAM/p.f, p.oz*TAM/p.f, TAM/p.f, TAM/p.f, x, y, lado, lado);
+    faltan.push([tx,tz, Math.abs(x+lado/2-M2.w/2)+Math.abs(y+lado/2-M2.h/2)]);
+  }
+  faltan.sort((a,b)=>a[2]-b[2]);          // del centro hacia fuera
+  for (const [tx,tz] of faltan) m2PideAzulejo(bpp,tx,tz);
+  m2Limpiar();
+}
+
+function m2Padre(bpp,tx,tz){
+  const ns=M2.est.niveles;
+  let f=1;
+  for (const b of ns){
+    if (b < bpp) continue;
+    if (b > bpp) f = b/bpp;
+    const px=Math.floor(tx/f), pz=Math.floor(tz/f);
+    const im=M2.azulejos.get(b+'/'+px+'/'+pz);
+    if (im instanceof Image) return {im, f, ox:tx-px*f, oz:tz-pz*f};
+  }
+  return null;
+}
+
+function m2PideAzulejo(bpp,tx,tz){
+  const k=bpp+'/'+tx+'/'+tz, y=M2.azulejos.get(k);
+  if (y instanceof Image || y==='cargando') return;
+  if (y && y.falla && Date.now()-y.falla < 6000) return;   // no machacar al servidor
+  if (M2.pidiendo >= 4) return;
+  M2.azulejos.set(k,'cargando'); M2.pidiendo++;
+  const im=new Image();
+  im.onload =()=>{ M2.pidiendo--; M2.azulejos.set(k,im); m2Pinta(); };
+  im.onerror=()=>{ M2.pidiendo--; M2.azulejos.set(k,{falla:Date.now()}); m2Pinta(); };
+  im.src=`/api/mapa2/azulejo/${bpp}/${tx}/${tz}.png`;
+}
+
+/* La memoria no es infinita: al pasear mucho se acumulan miles de azulejos. */
+function m2Limpiar(){
+  if (M2.azulejos.size < 700) return;
+  let n=0;
+  for (const k of M2.azulejos.keys()){
+    if (n++ > 300) break;
+    if (M2.azulejos.get(k) !== 'cargando') M2.azulejos.delete(k);
+  }
+}
+
+/* ---------- los iconos ---------- */
+function m2Iconos(){
+  if (!M2.listo) return;
+  const c=$('m2-ico'), g=c.getContext('2d'), d=M2.dpr;
+  g.setTransform(d,0,0,d,0,0);
+  g.clearRect(0,0,M2.w,M2.h);
+  const t = Math.max(14, Math.min(26, 15 + Math.log2(M2.esc*64)*2)) || 18;
+  let dibujados=0;
+  M2.enPantalla=[];
+  m2Decidir();
+  const salen=new Set(M2.est.tipos.filter(m2SaleAhora).map(t=>t.k));
+  for (const [k,x,z] of M2.estructuras){
+    if (!salen.has(k)) continue;
+    const px=m2ax(x), py=m2az(z);
+    if (px<-t || py<-t || px>M2.w+t || py>M2.h+t) continue;
+    if (++dibujados > M2_MAX_ICONOS) break;
+    const im=M2.iconos.get(k);
+    if (im && im.complete && im.naturalWidth){
+      g.drawImage(im, px-t/2, py-t/2, t, t);
+    } else {                              // sin icono, un punto: nunca un hueco
+      g.beginPath(); g.arc(px,py,t/3,0,6.284);
+      g.fillStyle='#ffd35c'; g.fill();
+      g.lineWidth=1.5; g.strokeStyle='rgba(0,0,0,.65)'; g.stroke();
+    }
+    M2.enPantalla.push([k,x,z,px,py]);
+  }
+  const falta = M2.recorte ? 'Acércate para ver las estructuras'
+              : (dibujados > M2_MAX_ICONOS ? 'Hay más de los que caben — acércate' : M2.aviso);
+  const a=$('m2-aviso');
+  a.textContent = falta || '';
+  a.classList.toggle('hidden', !falta);
+}
+
+/* ---------- las estructuras del trozo que se ve ---------- */
+let m2TimerEstr=null;
+function m2PideEstructuras(){
+  clearTimeout(m2TimerEstr);
+  m2TimerEstr = setTimeout(async ()=>{
+    if (!M2.listo) return;
+    const mx=(m2dex(M2.w)-m2dex(0))*0.25, mz=(m2dez(M2.h)-m2dez(0))*0.25;
+    const q = `x0=${Math.floor(m2dex(0)-mx)}&z0=${Math.floor(m2dez(0)-mz)}`
+            + `&x1=${Math.ceil(m2dex(M2.w)+mx)}&z1=${Math.ceil(m2dez(M2.h)+mz)}`;
+    let d=null;
+    try{ d = await api('/api/mapa2/estructuras?'+q); }catch(_){}
+    if (!d || !d.ok) return;
+    M2.recorte = !!d.demasiado;
+    M2.estructuras = d.estructuras || [];
+    M2.cuenta = {};
+    for (const [k] of M2.estructuras) M2.cuenta[k]=(M2.cuenta[k]||0)+1;
+    M2.areaPedida = Math.abs((m2dex(M2.w)-m2dex(0)+2*mx) * (m2dez(M2.h)-m2dez(0)+2*mz)) || 1;
+    M2.ciclo = (M2.ciclo||0) + 1;      // sube cada vez que llegan estructuras
+    m2Decidir(); m2Capas(); m2Iconos();
+  }, 220);
+}
+
+/* ---------- las casillas de encender y apagar ---------- */
+function m2Capas(){
+  const w=$('m2-capas'); if (!w || !M2.est) return;
+  w.innerHTML='';
+  for (const t of M2.est.tipos){
+    const n=M2.cuenta[t.k]||0;
+    if (!n && M2.apagados.has(t.k)) continue;      // ni existe aquí ni la quiere ver
+    const sale=m2SaleAhora(t);
+    const lejos=!sale && !M2.apagados.has(t.k);    // apagado por el zoom, no por nadie
+    const b=document.createElement('button');
+    b.className='m2-cap'+(sale?' on':'')+(lejos?' lejos':'');
+    b.id='m2cap-'+t.k;
+    if (lejos) b.title='Muy lejos para dibujarlos todos — pulsa para verlos igual';
+    b.onclick=()=>{
+      if (lejos) M2.forzados.add(t.k);
+      else if (M2.apagados.has(t.k)){ M2.apagados.delete(t.k); M2.forzados.delete(t.k); }
+      else { M2.apagados.add(t.k); M2.forzados.delete(t.k); }
+      m2Guardar(); m2Capas(); m2Iconos();
+    };
+    const im=document.createElement('img'); im.src=MK_ICON(t.icono); im.alt='';
+    im.onerror=()=>{ im.style.visibility='hidden'; };
+    b.appendChild(im);
+    b.appendChild(document.createTextNode(t.es));
+    const c=document.createElement('span'); c.className='n'; c.textContent=' '+n;
+    b.appendChild(c);
+    w.appendChild(b);
+  }
+}
+
+/* ---------- ratón, dedo y rueda ---------- */
+function m2Enganchar(){
+  const caja=$('m2-lienzo');
+  if (caja.dataset.listo) return;
+  caja.dataset.listo='1';
+  const punteros=new Map();
+  let arrastrando=false, movido=0, pinza=0;
+
+  caja.addEventListener('pointerdown', ev=>{
+    caja.setPointerCapture(ev.pointerId);
+    punteros.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+    arrastrando=true; movido=0; caja.classList.add('arrastrando');
+    $('m2-globo').classList.add('hidden');
+  });
+
+  caja.addEventListener('pointermove', ev=>{
+    const r=caja.getBoundingClientRect();
+    if (!arrastrando){ m2Mirar(ev.clientX-r.left, ev.clientY-r.top); return; }
+    const p=punteros.get(ev.pointerId); if (!p) return;
+    const dx=ev.clientX-p.x, dy=ev.clientY-p.y;
+    p.x=ev.clientX; p.y=ev.clientY;
+    if (punteros.size>=2){
+      const [a,b]=[...punteros.values()];
+      const dist=Math.hypot(a.x-b.x,a.y-b.y);
+      if (pinza) m2Escalar(dist/pinza, (a.x+b.x)/2-r.left, (a.y+b.y)/2-r.top);
+      pinza=dist;
+    } else {
+      M2.cx -= dx/M2.esc; M2.cz -= dy/M2.esc;
+      movido += Math.abs(dx)+Math.abs(dy);
+      m2Pinta();
+    }
+  });
+
+  const soltar = ev=>{
+    punteros.delete(ev.pointerId);
+    if (punteros.size<2) pinza=0;
+    if (punteros.size===0){
+      arrastrando=false; caja.classList.remove('arrastrando');
+      m2Guardar(); m2PideEstructuras();
+      if (movido < 5){
+        const r=caja.getBoundingClientRect();
+        m2Clic(ev.clientX-r.left, ev.clientY-r.top);
+      }
+    }
+  };
+  caja.addEventListener('pointerup', soltar);
+  caja.addEventListener('pointercancel', soltar);
+  caja.addEventListener('pointerleave', ()=>{ $('m2-cruz').classList.add('hidden'); });
+
+  caja.addEventListener('wheel', ev=>{
+    ev.preventDefault();
+    const r=caja.getBoundingClientRect();
+    m2Escalar(Math.pow(1.0015, -ev.deltaY), ev.clientX-r.left, ev.clientY-r.top);
+  }, {passive:false});
+
+  caja.addEventListener('dblclick', ev=>{
+    const r=caja.getBoundingClientRect();
+    m2Escalar(2, ev.clientX-r.left, ev.clientY-r.top);
+  });
+
+  addEventListener('resize', ()=>{ m2Medir(); m2Pinta(); });
+}
+
+/* Al acercar o alejar, el punto bajo el cursor se queda quieto: es lo que hace
+   que el zoom se sienta como agarrar el mapa y no como saltar de sitio. */
+function m2Escalar(f, px, pz){
+  const antes=M2.esc;
+  M2.esc = Math.max(1/512, Math.min(1, M2.esc*f));
+  if (M2.esc===antes) return;
+  const wx=(px-M2.w/2)/antes + M2.cx, wz=(pz-M2.h/2)/antes + M2.cz;
+  M2.cx = wx - (px-M2.w/2)/M2.esc;
+  M2.cz = wz - (pz-M2.h/2)/M2.esc;
+  m2Pinta(); m2Guardar(); m2PideEstructuras(); m2Capas();
+}
+function m2Zoom(f){ m2Escalar(f, M2.w/2, M2.h/2); }
+
+function m2Ir(){
+  const v=($('m2-ir').value||'').match(/-?\d+/g);
+  if (!v || v.length<2) return;
+  M2.cx=parseInt(v[0]); M2.cz=parseInt(v[v.length-1]);
+  if (M2.esc < 1/32) M2.esc = 1/16;
+  $('m2-ir').value='';
+  m2Pinta(); m2Guardar(); m2PideEstructuras();
+}
+
+/* ---------- decir qué hay debajo del ratón ---------- */
+/* El nombre del bioma sale de LEER EL COLOR del píxel ya dibujado y buscarlo en
+   la leyenda. Cada bioma tiene un color distinto, así que es exacto — y no
+   cuesta ni una petición, que es lo que permite que se actualice al mover el
+   ratón sin ahogar al servidor. */
+function m2Mirar(px,py){
+  const cr=$('m2-cruz');
+  cr.classList.remove('hidden'); cr.style.left=px+'px'; cr.style.top=py+'px';
+  const x=Math.floor(m2dex(px)), z=Math.floor(m2dez(py));
+  let nombre='';
+  try{
+    const g=$('m2-bio').getContext('2d', {willReadFrequently:true});
+    const d=g.getImageData(Math.round(px*M2.dpr), Math.round(py*M2.dpr), 1, 1).data;
+    const b=M2.porColor.get((d[0]<<16)|(d[1]<<8)|d[2]);
+    if (b) nombre = LANG==='en' ? b.en : b.es;
+  }catch(_){}
+  $('m2-donde').innerHTML = `<b>X ${x}</b> &nbsp; <b>Z ${z}</b>` + (nombre? ' &nbsp;·&nbsp; '+esc(nombre) : '');
+}
+
+function m2Clic(px,py){
+  const globo=$('m2-globo');
+  for (const [k,x,z,ix,iy] of (M2.enPantalla||[])){
+    if (Math.abs(ix-px)<13 && Math.abs(iy-py)<13){
+      const t=M2.est.tipos.find(t=>t.k===k) || {es:k,en:k};
+      globo.innerHTML = `<b>${esc(LANG==='en'?t.en:t.es)}</b><span class="c">X ${x}&nbsp;&nbsp;Z ${z}</span>`;
+      globo.style.left=ix+'px'; globo.style.top=iy+'px';
+      globo.classList.remove('hidden');
+      return;
+    }
+  }
+  globo.classList.add('hidden');
+  m2Mirar(px,py);
+}
+
 /* ---------- usuarios ---------- */
 const PERM_LABELS={view_dashboard:'Ver el inicio', view_players:'Ver jugadores y estadísticas', view_console:'Ver la consola en vivo',
   whitelist:'Aceptar / quitar jugadores (whitelist)', ban:'Banear y desbanear', kick:'Expulsar jugadores',
   restart:'Reiniciar el servidor', backups:'Ver y hacer copias', say:'Enviar anuncios', player_actions:'Curar / alimentar / matar jugadores',
   memories:'Ver y subir fotos a Memorias', memories_upload:'Subir fotos a Memorias',
-  markers_add:'Marcar lugares en el mapa'};
+  markers_add:'Marcar lugares en el mapa',
+  mapa_semilla:'Explorar el mundo entero (destripa dónde está todo)'};
 async function loadUsers(){
   const r=await api('/api/users');
   const wrap=$('users-list'); wrap.innerHTML='';
