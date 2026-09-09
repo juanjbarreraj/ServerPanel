@@ -2723,8 +2723,24 @@ def _automatismos():
     añadir("feed", "Historia (lee el log cada 20 s)",
            f.get("t"), 300, "" if f.get("ok", True) else f.get("nota", ""))
 
-    añadir("mapa", "Mapa de BlueMap (cada noche)",
-           _mtime(Path.home() / "bluemap/render.log"), 36 * 3600)
+    if MAPA_CONGELADO.exists():
+        # No es que el mapa lleve dormido: está parado a propósito porque
+        # Minecraft cambió de versión. Pintarlo en rojo haría creer que algo se
+        # ha roto justo cuando todo va bien.
+        try:
+            c = json.loads(MAPA_CONGELADO.read_text())
+        except Exception:
+            c = {}
+        salidas.append({"id": "mapa", "nombre": "Mapa de BlueMap (en pausa)",
+                        "ultimo": c.get("desde") or 0,
+                        "edad": (ahora - c["desde"]) if c.get("desde") else None,
+                        "ok": True, "pausa": True, "margen": 0,
+                        "nota": "Minecraft pasó a la %s. El mapa se queda como estaba "
+                                "hasta que BlueMap la soporte — se reintenta solo cada "
+                                "día." % (c.get("version") or "nueva versión")})
+    else:
+        añadir("mapa", "Mapa de BlueMap (cada noche)",
+               _mtime(Path.home() / "bluemap/render.log"), 36 * 3600)
     añadir("estructuras", "Iconos de estructuras (cada noche)",
            _mtime(DATA_DIR / "structures-cache.json"), 36 * 3600)
 
@@ -2834,7 +2850,7 @@ def _mundos_ocupado(timeout=3 * 3600):
     return None
 
 
-def _mundos_run(nombre, args, timeout=3 * 3600, al_acabar=None):
+def _mundos_run(nombre, args, timeout=3 * 3600, al_acabar=None, guion=None):
     """Lanza mundos.py en segundo plano y guarda su respuesta.
 
     Se le pasa siempre --json y se lee la ÚLTIMA línea: el script escribe su
@@ -2848,7 +2864,7 @@ def _mundos_run(nombre, args, timeout=3 * 3600, al_acabar=None):
 
     def worker():
         try:
-            r = subprocess.run(["python3", str(MUNDOS_PY)] + args + ["--json"],
+            r = subprocess.run(["python3", str(guion or MUNDOS_PY)] + args + ["--json"],
                                capture_output=True, text=True, timeout=timeout)
             datos, salida = {}, (r.stdout or "").strip()
             for ln in reversed(salida.splitlines()):
@@ -3156,6 +3172,150 @@ def api_mundos_vaciar():
     audit(u["name"], "vació la papelera de mundos")
     return jsonify(ok=ok, output="Borrando del disco…" if ok else por)
 
+
+
+# ============================================================ versión de Minecraft
+#
+# El servidor se mantiene solo al día, y el mapa se protege mientras BlueMap se
+# pone al día con la versión nueva. Toda la maña está en scripts/actualizar.py;
+# aquí se le llama y se guarda cada cuánto mirar.
+#
+# Comparte cerrojo con los mundos a propósito: los dos paran Minecraft, y
+# solaparlos dejaría el mundo a medio mover con el jar cambiándose debajo.
+ACTUALIZAR_PY = PANEL_DIR / "scripts" / "actualizar.py"
+MAPA_CONGELADO = DATA_DIR / "mapa-congelado.json"
+_ver_estado = {"t": 0, "datos": {}}
+
+
+def _act_run(args, timeout=120):
+    try:
+        r = subprocess.run(["python3", str(ACTUALIZAR_PY)] + args + ["--json"],
+                           capture_output=True, text=True, timeout=timeout)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception as e:
+        return {"ok": False, "mensaje": str(e)[:200]}
+
+
+def _act_estado(refrescar=False):
+    """Estado cacheado: preguntar a Mojang y a GitHub en cada carga de Sistema
+    sería una llamada de red por cada pestaña abierta cada cinco segundos."""
+    if not refrescar and time.time() - _ver_estado["t"] < 1800 and _ver_estado["datos"]:
+        return _ver_estado["datos"]
+    d = _act_run(["comprobar"], timeout=90)
+    m = _act_run(["mapa-estado"], timeout=90)
+    d["bluemap"] = m.get("bluemap")
+    d["bluemap_ultima"] = m.get("bluemap_ultima")
+    d["hay_bluemap_nuevo"] = m.get("hay_bluemap_nuevo")
+    d["congelado"] = m.get("congelado") or d.get("congelado")
+    _ver_estado.update(t=time.time(), datos=d)
+    return d
+
+
+def _auto_update_on():
+    return get_settings().get("auto_update", True) is not False
+
+
+@app.get("/api/actualizar/estado")
+def api_act_estado():
+    u = require()
+    if u["role"] != "admin":
+        abort(403)
+    d = dict(_act_estado("refrescar" in request.args))
+    # El estado del mapa se lee del disco SIEMPRE, nunca de la caché: es un
+    # fichero local y no cuesta nada, y cachearlo abría una carrera — el trabajo
+    # se marcaba terminado un instante antes de invalidar la caché, y si la
+    # pestaña preguntaba justo ahí se quedaba sin enseñar el aviso de pausa
+    # hasta la siguiente media hora.
+    try:
+        d["congelado"] = json.loads(MAPA_CONGELADO.read_text())
+    except Exception:
+        d["congelado"] = None
+    d["auto"] = _auto_update_on()
+    d["disponible"] = ACTUALIZAR_PY.exists()
+    with _mundo_lock:
+        t = dict(_mundo_job)
+    t.pop("datos", None)
+    d["trabajo"] = t
+    return jsonify(d)
+
+
+@app.post("/api/actualizar/auto")
+def api_act_auto():
+    u = _require_admin()
+    body = request.get_json(silent=True) or {}
+    s = get_settings()
+    s["auto_update"] = bool(body.get("auto"))
+    SETTINGS_F.write_text(json.dumps(s))
+    audit(u["name"], "auto-actualización de Minecraft: %s" % ("SÍ" if s["auto_update"] else "NO"))
+    return jsonify(ok=True, output="Se actualizará solo" if s["auto_update"]
+                   else "Ya no se actualizará solo")
+
+
+@app.post("/api/actualizar/ahora")
+def api_act_ahora():
+    u = _require_admin()
+    ok, por = _mundos_run("actualizar Minecraft", ["actualizar"],
+                          timeout=2 * 3600, guion=ACTUALIZAR_PY,
+                          al_acabar=lambda bien, d: _ver_estado.update(t=0))
+    audit(u["name"], "actualización de Minecraft a mano")
+    return jsonify(ok=ok, output="Copia de seguridad, descarga y reinicio — unos minutos"
+                   if ok else por)
+
+
+@app.post("/api/actualizar/mapa")
+def api_act_mapa():
+    """Intenta poner el mapa al día con la versión de Minecraft actual."""
+    u = _require_admin()
+    ok, por = _mundos_run("poner el mapa al día", ["mapa-al-dia"],
+                          timeout=6 * 3600, guion=ACTUALIZAR_PY,
+                          al_acabar=lambda bien, d: _ver_estado.update(t=0))
+    audit(u["name"], "descongelar el mapa")
+    return jsonify(ok=ok, output="Probando con el BlueMap más nuevo — mira el registro"
+                   if ok else por)
+
+
+@app.post("/api/actualizar/deshacer")
+def api_act_deshacer():
+    u = _require_admin()
+    ok, por = _mundos_run("volver a la versión anterior", ["deshacer"],
+                          timeout=3600, guion=ACTUALIZAR_PY,
+                          al_acabar=lambda bien, d: _ver_estado.update(t=0))
+    audit(u["name"], "volver a la versión anterior de Minecraft")
+    return jsonify(ok=ok, output="Devolviendo el jar anterior…" if ok else por)
+
+
+def _bucle_actualizar():
+    """Mira si hay versión nueva, y si el mapa puede descongelarse ya.
+
+    Va en un hilo del panel y no en cron a propósito: así se despliega con el
+    resto del panel y no hace falta tocar nada en la máquina.
+    """
+    time.sleep(180)                      # que el panel arranque tranquilo
+    while True:
+        try:
+            if ACTUALIZAR_PY.exists():
+                d = _act_estado(refrescar=True)
+                if d.get("hay_nueva") and _auto_update_on():
+                    _syslog("[version] hay Minecraft %s, actualizando solo" % d.get("ultima"))
+                    _mundos_run("actualizar Minecraft a la %s" % d.get("ultima"),
+                                ["actualizar"], timeout=2 * 3600, guion=ACTUALIZAR_PY,
+                                al_acabar=lambda bien, x: _ver_estado.update(t=0))
+                elif MAPA_CONGELADO.exists():
+                    # se reintenta solo una vez al día: el día que BlueMap se
+                    # ponga al día, el mapa vuelve sin que nadie haga nada
+                    _syslog("[version] el mapa sigue congelado; pruebo a ponerlo al día")
+                    _mundos_run("poner el mapa al día", ["mapa-al-dia"],
+                                timeout=6 * 3600, guion=ACTUALIZAR_PY,
+                                al_acabar=lambda bien, x: _ver_estado.update(t=0))
+        except Exception as e:
+            try:
+                _syslog("[version] ERROR: %s" % e)
+            except Exception:
+                pass
+        time.sleep(6 * 3600)
+
+
+threading.Thread(target=_bucle_actualizar, daemon=True).start()
 
 # ============================================================ feed del servidor
 #

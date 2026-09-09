@@ -94,6 +94,16 @@ def main():
     # mundos.py lee el nbt.py del panel para saber la versión de un mundo; sin
     # él la comprobación se queda muda y la prueba no probaría nada
     shutil.copy(REPO / "nbt.py", panel / "nbt.py")
+    shutil.copy(REPO / "scripts" / "actualizar.py", panel / "scripts" / "actualizar.py")
+    # un Mojang de mentira: si apuntara al de verdad, la prueba dependería de
+    # internet y de qué versión haya sacado Mojang esta semana
+    import importlib.util as _iu2
+    _sp = _iu2.spec_from_file_location("pa", AQUI / "probar-actualizar.py")
+    _pa = _iu2.module_from_spec(_sp); _sp.loader.exec_module(_pa)
+    _pa.escribir(mc / "server.jar", "JAR 26.2")
+    _pa.escribir(mc / "versions" / "26.2" / "server-26.2.jar", "JAR 26.2")
+    manif = _pa.publicar_version(base, "26.3")
+    bmrel = _pa.publicar_bluemap(base, "5.23")
     # el panel sirve su propio static/: se le da el real
     (panel / "static").mkdir(exist_ok=True)
     for f in (REPO / "static").iterdir():
@@ -104,7 +114,9 @@ def main():
         MC_DIR=str(mc), PANEL_DIR=str(panel), BLUEMAP_WEB=str(web),
         ESTADO=str(base / "estado"), RENDER_LOG=str(base / "render.log"),
         PATH="%s:%s" % (base / "bin", os.environ["PATH"]),
-        PANEL_SECRET="secreto-de-prueba-0123456789")
+        PANEL_SECRET="secreto-de-prueba-0123456789",
+        BLUEMAP_DIR=str(base / "bluemap"),
+        MC_MANIFIESTO=manif, BLUEMAP_RELEASES=bmrel)
 
     spec2 = importlib.util.spec_from_file_location("srv", REPO / "server.py")
     srv = importlib.util.module_from_spec(spec2)
@@ -306,9 +318,39 @@ def main():
         ok(_j.loads((mc / "world" / "advancements" / (u + ".json")).read_text())["marca"] == "ORIGINAL",
            "y los logros también")
 
+        # ── 5d. la versión de Minecraft y el mapa en pausa ───────────────────
+        titulo("5d · versión de Minecraft")
+        page.click("#tabbtn-sistema")
+        ok(esperar_texto(page, "#ver-kv", "26.2", 60), "Sistema dice qué versión hay puesta")
+        ok("26.3" in page.locator("#ver-kv").inner_text(), "y que hay una 26.3 esperando")
+        ok(page.locator("#ver-ahora").is_visible(), "sale el botón de actualizar")
+        ok(page.is_checked("#ver-auto"), "y la casilla de actualizarse solo viene marcada")
+
+        avisos.clear()
+        page.click("#ver-ahora")
+        page.wait_for_timeout(600)
+        ok(len(avisos) == 1 and "NO tiene vuelta atrás" in avisos[0],
+           "avisa de que convertir el mundo no se deshace")
+        ok(esperar_texto(page, "#ver-kv", "26.3", 120), "actualiza a la 26.3")
+
+        titulo("5e · el mapa se queda en pausa, no se pierde")
+        ok(esperar_texto(page, "#ver-nota", "en pausa", 120),
+           "Sistema dice que el mapa está en pausa")
+        ok(esperar_texto(page, "#sys-auto", "en pausa", 30),
+           "y el semáforo lo pinta como pausa, no como avería")
+        page.click("#tabbtn-map")
+        ok(esperar_texto(page, "#mapa-congelado", "todavía no la soporta", 60, visible=True),
+           "en la pestaña Mapa sale el aviso explicando por qué")
+        ok("mapa de antes, completo" in page.locator("#mapa-congelado-n").inner_text(),
+           "y deja claro que el mapa que se ve sigue entero")
+        ok(page.locator("#mapa-congelado-b").is_visible(), "con su botón para intentarlo")
+
         # ── 6. nada roto por el camino ───────────────────────────────────────
         titulo("6 · la consola del navegador")
-        graves = [e for e in errores if "404" not in e and "ERR_FAILED" not in e]
+        # el iframe del mapa apunta a un BlueMap que aquí no existe, así que
+        # carga el propio panel y su CSP lo rechaza: ruido del escenario, no del panel
+        graves = [e for e in errores if "404" not in e and "ERR_FAILED" not in e
+                  and "frame-ancestors" not in e]
         ok(not graves, "ni un error de JavaScript en toda la sesión: %s" % (graves[:2] or ""))
 
         # La captura va por CDP y no por page.screenshot(): las fuentes de la

@@ -31,6 +31,21 @@ SELLO="$BM/.ultimo-escaneo"
 
 cd "$BM" 2>/dev/null || { echo "no encuentro $BM"; exit 1; }
 
+# ---- ¿está el mapa congelado a propósito? ------------------------------------
+# Al actualizar Minecraft, el mundo pasa a un formato que BlueMap puede tardar
+# semanas en soportar. Si se le dejara correr contra un mundo que no entiende,
+# escribiría azulejos malos ENCIMA de los buenos y se perdería el mapa que ya
+# había. Por eso actualizar.py deja esta nota y aquí se para en seco.
+#
+# El mapa se sigue viendo: los azulejos de antes están intactos. Se descongela
+# desde el botón del panel («Actualizar el mapa a la X»), que prueba con el
+# BlueMap más nuevo y solo quita la nota si el render sale bien.
+CONGELADO="$PANEL/data/mapa-congelado.json"
+if [ -f "$CONGELADO" ] && [ "$1" != "--descongelar" ]; then
+  echo "[$(date '+%F %T')] mapa congelado ($(cat "$CONGELADO" | tr -d '\n' | cut -c1-160)); no dibujo nada" >> "$LOG"
+  exit 0
+fi
+
 # ---- un solo render a la vez -------------------------------------------------
 # Sin esto, el cron y el botón de Sistema podían solaparse y dejar los tiles a
 # medias. flock lo garantiza incluso entre procesos distintos.

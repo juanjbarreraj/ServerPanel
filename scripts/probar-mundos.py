@@ -154,7 +154,10 @@ echo "$orden" >> "$ESTADO/consola.log"
 case "$orden" in *stop*) rm -f "$ESTADO/vivo" ;; esac
 exit 0
 """)
-    # sudo systemctl restart: revive, y genera el mundo si no hay ninguno
+    # sudo systemctl restart: revive, genera el mundo si no hay ninguno, y
+    # escribe el «Done» del log. Eso último parece de adorno y no lo es:
+    # actualizar.py espera a ver ese «Done» para dar un arranque por bueno, así
+    # que un escenario sin log lo deja esperando siete minutos.
     escribir(bin_ / "sudo", """#!/bin/bash
 args="$*"
 echo "$args" >> "$ESTADO/sudo.log"
@@ -166,7 +169,21 @@ case "$args" in
       cp "$ESTADO/plantilla-level.dat" "$MC_DIR/world/level.dat"
       echo "region generada" > "$MC_DIR/world/region/r.0.0.mca"
     fi
-    touch "$ESTADO/vivo"
+    mkdir -p "$MC_DIR/logs"
+    if [ -f "$MC_DIR/server.jar" ]; then
+      VER=$(sed -n 's/^JAR //p' "$MC_DIR/server.jar")
+      if [ -n "$VER" ]; then
+        mkdir -p "$MC_DIR/versions/$VER"
+        echo "JAR $VER" > "$MC_DIR/versions/$VER/server-$VER.jar"
+      fi
+    fi
+    if [ -f "$ESTADO/arranque-falla" ]; then
+      echo "[10:00:00] [main/ERROR]: Failed to start the minecraft server" > "$MC_DIR/logs/latest.log"
+      rm -f "$ESTADO/vivo"
+    else
+      echo "[10:00:00] [Server thread/INFO]: Done (9.9s)!" > "$MC_DIR/logs/latest.log"
+      touch "$ESTADO/vivo"
+    fi
     ;;
 esac
 exit 0

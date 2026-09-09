@@ -956,6 +956,11 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 
   <!-- MAPA -->
   <section id="tab-map" class="hidden">
+    <div class="card hidden" id="mapa-congelado" style="margin-bottom:14px">
+      <h3><img class="hico" src="/static/ui/s-reiniciar.png?v=14" alt="" onerror="this.outerHTML='⏸️ '">El mapa está en pausa</h3>
+      <div class="note" id="mapa-congelado-n" style="margin-top:0"></div>
+      <button class="btn small warn hidden" id="mapa-congelado-b" onclick="verMapa()">Actualizar el mapa</button>
+    </div>
     <div class="card" style="padding:10px">
       <iframe id="map-frame" title="Mapa del mundo" style="width:100%; height:calc(100vh - 250px); min-height:min(480px, 70vh); border:0; border-radius:8px; background:#04060a"></iframe>
       <div class="note" style="margin:8px 4px 2px" data-i18n="map_note">El mundo real en 3D — arrastra para girar, rueda para acercar. Se actualiza cada noche con lo que construyeron en el día.</div>
@@ -1133,6 +1138,21 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <div id="sys-2fa">cargando…</div>
       </div>
     </div>
+    <div class="card" style="margin-bottom:14px">
+      <h3><img class="hico" src="/static/ui/s-mundo.png?v=14" alt="" onerror="this.outerHTML='🌎 '">Versión de Minecraft</h3>
+      <div id="ver-kv">cargando…</div>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn small hidden" id="ver-ahora" onclick="verAhora()">Actualizar ahora</button>
+        <button class="btn small warn hidden" id="ver-mapa" onclick="verMapa()">Actualizar el mapa</button>
+        <button class="btn small ghost" onclick="verCargar(true)">Volver a mirar</button>
+        <button class="btn small ghost danger" onclick="verDeshacer()">Volver a la anterior</button>
+      </div>
+      <label class="chip" style="margin-top:12px; cursor:pointer">
+        <input type="checkbox" id="ver-auto" onchange="verAuto()"> Actualizarse solo en cuanto salga una versión
+      </label>
+      <div class="note" id="ver-nota"></div>
+    </div>
+
     <div class="card" style="margin-bottom:14px">
       <h3><img class="hico" src="/static/ui/s-reiniciar.png?v=14" alt="" onerror="this.outerHTML='🔄 '">Lo que se actualiza solo</h3>
       <div id="sys-auto" class="note">cargando…</div>
@@ -1684,7 +1704,8 @@ function show(id){
     if (btn) btn.classList.toggle('on', t===id);
   }
   if (id==='players'){ closePView(); loadPlayers(); }
-  if (id==='map'){ const f=$('map-frame'); if(f && !f.src) f.src=MAP_SRC; loadMarkers(); }
+  if (id==='map'){ const f=$('map-frame'); if(f && !f.src) f.src=MAP_SRC; loadMarkers();
+    if (ME && ME.role==='admin') verCargar(); }
   if (id==='historia') hiCargar(true);
   if (id==='dash') hiMini();
   if (id==='mod'){ loadWhitelist(); loadJoinReq(); }
@@ -1693,7 +1714,7 @@ function show(id){
   if (id==='backups') loadBackups();
   if (id==='plugins') loadPlugins();
   if (id==='users'){ loadUsers(); loadAudit(); }
-  if (id==='sistema'){ loadSistema(); if(!window._sysT) window._sysT=setInterval(()=>{ if(!$('tab-sistema').classList.contains('hidden')) loadSistema(); },5000); }
+  if (id==='sistema'){ loadSistema(); verCargar(); if(!window._sysT) window._sysT=setInterval(()=>{ if(!$('tab-sistema').classList.contains('hidden')) loadSistema(); },5000); }
   if (id==='mundo') muCargar();
   window._curTab=id;
 }
@@ -2450,6 +2471,83 @@ async function uploadPlugin(f){
   toast(r.output||r.error||'Hecho'); loadPlugins();
 }
 
+/* ---------- versión de Minecraft ----------
+   El server se actualiza solo. Lo que se cuida aquí es el MAPA: al cambiar de
+   versión se congela a propósito (BlueMap tarda días o semanas en soportar una
+   versión nueva) y se sigue viendo el de antes hasta que se puede rehacer. */
+let VER_T = null;
+
+async function verCargar(refrescar){
+  let r; try{ r = await api('/api/actualizar/estado' + (refrescar ? '?refrescar=1' : '')); }
+  catch(e){ return; }
+  if (!r.disponible){
+    $('ver-kv').innerHTML = '<span class="note">Falta <code>scripts/actualizar.py</code> — haz Commit + Sync.</span>';
+    return;
+  }
+  const c = r.congelado, trabajando = (r.trabajo||{}).estado === 'trabajando';
+  $('ver-kv').innerHTML =
+    `Instalada: <b>${esc(r.instalada||'?')}</b> · ` +
+    `Última de Mojang: <b>${esc(r.ultima||'?')}</b> · ` +
+    `BlueMap: <b>${esc(r.bluemap||'?')}</b>` +
+    (r.hay_nueva ? ' · <span style="color:var(--warn)">hay versión nueva</span>' : ' ✓');
+  $('ver-auto').checked = !!r.auto;
+  $('ver-ahora').classList.toggle('hidden', !r.hay_nueva);
+  $('ver-ahora').disabled = trabajando;
+  $('ver-mapa').classList.toggle('hidden', !c);
+  $('ver-mapa').disabled = trabajando;
+  $('ver-nota').textContent = trabajando
+    ? ('En marcha: ' + ((r.trabajo||{}).nombre || '') + '. Puede tardar unos minutos.')
+    : (c ? 'El mapa está en pausa desde que se actualizó a la ' + (c.version||'?') +
+           '. Se reintenta solo una vez al día; el botón lo prueba ahora.'
+         : 'Al actualizar se hace copia de seguridad antes, y si la versión nueva no arranca ' +
+           'se devuelve la anterior sola.');
+
+  // el aviso de la pestaña Mapa
+  const caja = $('mapa-congelado');
+  if (caja){
+    caja.classList.toggle('hidden', !c);
+    if (c){
+      $('mapa-congelado-n').textContent =
+        'El servidor pasó a Minecraft ' + (c.version||'?') + ' y BlueMap todavía no la soporta. ' +
+        'Lo que ves es el mapa de antes, completo — solo deja de añadirse el terreno nuevo. ' +
+        'El panel lo reintenta solo cada día.';
+      $('mapa-congelado-b').classList.toggle('hidden', !(ME && ME.role === 'admin'));
+    }
+  }
+  clearTimeout(VER_T);
+  if (trabajando) VER_T = setTimeout(()=>verCargar(false), 4000);
+}
+
+async function verAuto(){
+  const r = await api('/api/actualizar/auto', {auto: $('ver-auto').checked});
+  toast(r.output || r.error || 'Hecho');
+}
+
+async function verAhora(){
+  if (!confirm('¿Actualizar Minecraft ahora?\n\n' +
+    '· Se hace copia de seguridad antes.\n' +
+    '· El servidor se apaga y vuelve: todos salen.\n' +
+    '· El mundo se convierte a la versión nueva y eso NO tiene vuelta atrás ' +
+    '(solo restaurando la copia).\n' +
+    '· Tus amigos tendrán que poner esa versión en su launcher para entrar.')) return;
+  const r = await api('/api/actualizar/ahora', {});
+  toast(r.output || r.error || 'Actualizando'); verCargar();
+}
+
+async function verMapa(){
+  const r = await api('/api/actualizar/mapa', {});
+  toast(r.output || r.error || 'Probando'); verCargar();
+}
+
+async function verDeshacer(){
+  if (!confirm('¿Volver a la versión anterior de Minecraft?\n\n' +
+    'OJO: esto devuelve el programa, pero NO el mundo. Si el mundo ya se convirtió, ' +
+    'el servidor viejo no podrá abrirlo y habrá que restaurar una copia de seguridad ' +
+    'de antes de actualizar.')) return;
+  const r = await api('/api/actualizar/deshacer', {});
+  toast(r.output || r.error || 'Hecho'); verCargar();
+}
+
 /* ---------- mundos ----------
    Cambiar de mundo, subir uno y descargar el de ahora. Todo lo pesado lo hace
    scripts/mundos.py en el servidor; aquí solo se pide, se pinta en qué va y se
@@ -3078,12 +3176,15 @@ function sysAuto(lista){
     return 'hace '+Math.round(s/86400)+' días';
   };
   caja.innerHTML = lista.map(a=>{
-    const col = a.ok ? 'var(--good)' : 'var(--crit)';
-    const nota = a.nota ? ` — <span style="color:var(--crit)">${esc(a.nota)}</span>` : '';
+    // «pausa» no es avería: algo parado a propósito en rojo hace pensar que se
+    // ha roto justo cuando todo va bien
+    const col = a.pausa ? 'var(--warn)' : (a.ok ? 'var(--good)' : 'var(--crit)');
+    const cnota = a.pausa ? 'var(--ink3)' : 'var(--crit)';
+    const nota = a.nota ? ` — <span style="color:${cnota}">${esc(a.nota)}</span>` : '';
     return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0">
       <span class="dot" style="background:${col};margin:0"></span>
       <span style="flex:1;min-width:0">${esc(a.nombre)}</span>
-      <span style="color:${a.ok?'var(--ink3)':'var(--crit)'};white-space:nowrap">${cuando(a.edad)}</span>
+      <span style="color:${a.pausa||a.ok?'var(--ink3)':'var(--crit)'};white-space:nowrap">${a.pausa?'en pausa':cuando(a.edad)}</span>
       </div>${nota?`<div style="padding-left:18px">${nota}</div>`:''}`;
   }).join('');
 }
