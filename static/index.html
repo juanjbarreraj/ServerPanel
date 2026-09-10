@@ -491,8 +491,38 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
    veinte tipos, una fila que se dobla sola es imposible de recorrer con la
    vista. En rejilla siempre están en el mismo sitio. Y van ENCIMA del mapa,
    como en Chunkbase: es lo que se toca, y estando debajo obligaba a bajar. */
-.m2-capas{display:grid; grid-template-columns:repeat(auto-fill, minmax(205px, 1fr));
-  gap:7px; margin:0 2px 10px}
+/* Dos formas de ver las capas, como en Chunkbase: una TIRA horizontal de
+   iconos grandes que se arrastra, y la LISTA de siempre con el nombre al lado.
+   La tira es la de entrada porque cabe en una línea y deja el mapa más alto;
+   el botón de la derecha cambia de una a otra. */
+.m2-capas-caja{display:flex; align-items:flex-start; gap:8px; margin:0 2px 10px}
+.m2-capas{flex:1; min-width:0}
+
+.m2-capas.tira{display:flex; gap:6px; overflow-x:auto; overflow-y:hidden;
+  padding:0 2px 9px; scroll-behavior:smooth}
+.m2-capas.tira .m2-cap{flex:0 0 auto; width:48px; height:48px; padding:0;
+  justify-content:center; position:relative}
+.m2-capas.tira .m2-cap .et{display:none}
+.m2-capas.tira .m2-cap img{width:32px; height:32px; flex:0 0 32px}
+/* la cuenta, en una esquina: en la tira no cabe al lado del nombre */
+.m2-capas.tira .m2-cap .n{position:absolute; right:3px; bottom:1px; font-size:.58rem;
+  font-weight:700; opacity:.75}
+/* La barra de arrastre A LA VISTA. Escondida (que es como la pinta el
+   navegador por defecto en Mac) nadie sabe que hay más iconos a la derecha. */
+.m2-capas.tira{scrollbar-width:thin; scrollbar-color:#4a5158 var(--slotbg)}
+.m2-capas.tira::-webkit-scrollbar{height:9px}
+.m2-capas.tira::-webkit-scrollbar-track{background:var(--slotbg); border-radius:5px}
+.m2-capas.tira::-webkit-scrollbar-thumb{background:#4a5158; border-radius:5px}
+.m2-capas.tira::-webkit-scrollbar-thumb:hover{background:var(--slime-dark)}
+
+.m2-capas.lista{display:grid; grid-template-columns:repeat(auto-fill, minmax(205px, 1fr));
+  gap:7px}
+.m2-modo{flex:0 0 auto; width:34px; height:48px; border:0; border-radius:5px; cursor:pointer;
+  background:var(--slotbg); color:var(--ink3); font-size:.9rem; line-height:1;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
+.m2-modo:hover{color:var(--slime2)}
+.m2-modo.on{color:var(--ink); box-shadow:inset 2px 2px 0 rgba(0,0,0,.45),
+  inset -2px -2px 0 rgba(255,255,255,.06), 0 0 0 2px var(--slime) inset}
 .m2-cap{display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:5px;
   font-size:.76rem; font-weight:700; cursor:pointer; user-select:none; border:0; color:var(--ink3);
   background:var(--slotbg); transition:all .18s var(--spring); text-align:left; width:100%;
@@ -528,11 +558,19 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   box-shadow:0 2px 8px rgba(0,0,0,.5)}
 .m2-zoom button:hover{background:rgba(111,212,78,.9); color:#0a0d11}
 
-.m2-globo{position:absolute; z-index:5; transform:translate(-50%,-100%); pointer-events:none;
+.m2-globo{position:absolute; z-index:5; transform:translate(-50%,-100%); pointer-events:auto;
   background:#181c21; color:#e8edf3; padding:8px 12px; border-radius:6px; font-size:.78rem; line-height:1.4;
   white-space:nowrap; box-shadow:0 6px 22px rgba(0,0,0,.55); margin-top:-12px}
 .m2-globo b{display:block; font-size:.9rem; margin-bottom:2px}
 .m2-globo .c{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; opacity:.65; font-size:.74rem}
+/* «Ya fui aquí»: la marca la ve TODO el server, así que debajo va quién la puso.
+   Sin el nombre, un tic puesto por error no hay forma de saber de quién es. */
+.m2-hecha{display:flex; align-items:center; gap:7px; margin-top:8px; cursor:pointer;
+  font-size:.78rem; font-weight:700; color:var(--ink3); user-select:none}
+.m2-hecha input{width:15px; height:15px; accent-color:var(--slime); cursor:pointer; margin:0}
+.m2-hecha.si{color:var(--slime2)}
+.m2-globo .quien{display:block; font-size:.68rem; opacity:.6; margin-top:3px;
+  font-weight:400; white-space:nowrap}
 .m2-aviso{position:absolute; left:50%; bottom:12px; transform:translateX(-50%); z-index:4;
   background:rgba(10,13,17,.86); color:var(--ink3); padding:6px 13px; border-radius:20px; font-size:.74rem;
   pointer-events:none; transition:opacity .25s}
@@ -1089,7 +1127,11 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <div class="m2-dato"><label>Dimensión</label><div class="v" id="m2-dimension">Overworld</div></div>
       </div>
 
-      <div class="m2-capas" id="m2-capas"></div>
+      <div class="m2-capas-caja">
+        <div class="m2-capas tira" id="m2-capas"></div>
+        <button class="m2-modo" id="m2-modo" onclick="m2Modo()"
+                title="Ver los nombres de cada capa">▾</button>
+      </div>
       <div class="m2-marcar">
         <button onclick="m2Todas(true)">Marcar todo</button>
         <button onclick="m2Todas(false)">Desmarcar todo</button>
@@ -3003,6 +3045,9 @@ const M2 = {
   slime:null,               // {cx, cz, n, datos} del trozo pedido
   verSlime:false, verAparicion:true,
   porColor:new Map(),       // "r,g,b" → bioma, para decir el bioma sin pedir nada
+  hechas:{},                // "tipo:x:z" → {por, t}: lo que ya visitó alguien
+  modo:'tira',              // 'tira' (iconos) o 'lista' (icono + nombre)
+  lejosDensas:false,        // tesoros y minas piden estar cerca
   pintando:false, listo:false, aviso:'',
 };
 const M2_MAX_ICONOS = 3000;
@@ -3048,7 +3093,9 @@ async function m2Cargar(){
     if (Array.isArray(g.on)) M2.forzados = new Set(g.on);
     if (typeof g.slime==='boolean') M2.verSlime = g.slime;
     if (typeof g.apar==='boolean') M2.verAparicion = g.apar;
+    if (g.modo==='lista' || g.modo==='tira') M2.modo = g.modo;
   }catch(_){}
+  m2PideHechas();
   m2Capas(); m2Enganchar(); m2Medir(); m2Pinta(); m2PideEstructuras(); m2PideSlime();
 }
 
@@ -3078,7 +3125,7 @@ function m2Guardar(){
   try{ localStorage.setItem('panel_m2', JSON.stringify(
     {cx:Math.round(M2.cx), cz:Math.round(M2.cz), esc:M2.esc,
      off:[...M2.apagados], on:[...M2.forzados],
-     slime:M2.verSlime, apar:M2.verAparicion})); }catch(_){}
+     slime:M2.verSlime, apar:M2.verAparicion, modo:M2.modo})); }catch(_){}
 }
 
 /* ---------- tamaño del lienzo ---------- */
@@ -3308,13 +3355,28 @@ function m2Iconos(){
     const px=m2ax(x), py=m2az(z);
     if (px<-t || py<-t || px>M2.w+t || py>M2.h+t) continue;
     if (++dibujados > M2_MAX_ICONOS) break;
+    const hecha = M2.hechas && M2.hechas[m2Clave(k,x,z)];
     const im=M2.iconos.get(k);
+    // Lo ya visitado se apaga a medias en vez de desaparecer: sigue estando
+    // ahí, y quien quiera volver tiene que poder verlo.
+    if (hecha) g.globalAlpha = 0.38;
     if (im && im.complete && im.naturalWidth){
       g.drawImage(im, px-t/2, py-t/2, t, t);
     } else {                              // sin icono, un punto: nunca un hueco
       g.beginPath(); g.arc(px,py,t/3,0,6.284);
       g.fillStyle='#ffd35c'; g.fill();
       g.lineWidth=1.5; g.strokeStyle='rgba(0,0,0,.65)'; g.stroke();
+    }
+    g.globalAlpha = 1;
+    if (hecha){
+      const r=Math.max(4, t*0.30), cx=px+t/2-r*0.5, cy=py-t/2+r*0.5;
+      g.beginPath(); g.arc(cx,cy,r,0,6.284);
+      g.fillStyle='#6fd44e'; g.fill();
+      g.lineWidth=Math.max(1, r*0.28); g.strokeStyle='#0a0d11'; g.stroke();
+      g.beginPath();
+      g.moveTo(cx-r*0.45, cy); g.lineTo(cx-r*0.1, cy+r*0.4); g.lineTo(cx+r*0.5, cy-r*0.42);
+      g.lineWidth=Math.max(1.2, r*0.32); g.strokeStyle='#0a0d11';
+      g.lineCap='round'; g.lineJoin='round'; g.stroke();
     }
     M2.enPantalla.push([k,x,z,px,py]);
   }
@@ -3336,6 +3398,7 @@ function m2Iconos(){
   }
   m2Reglas(g);
   const falta = M2.recorte ? 'Acércate para ver las estructuras'
+              : M2.lejosDensas ? 'Acércate para ver los tesoros y las minas'
               : (dibujados > M2_MAX_ICONOS ? 'Hay más de los que caben — acércate' : M2.aviso);
   const a=$('m2-aviso');
   a.textContent = falta || '';
@@ -3349,12 +3412,17 @@ function m2PideEstructuras(){
   m2TimerEstr = setTimeout(async ()=>{
     if (!M2.listo) return;
     const mx=(m2dex(M2.w)-m2dex(0))*0.25, mz=(m2dez(M2.h)-m2dez(0))*0.25;
+    // Los tesoros y las minas cuestan mucho de calcular (una tirada de dado en
+    // CADA chunk), así que solo se piden si alguien tiene esa capa encendida.
+    const densas = (M2.est.tipos||[]).some(t => t.densa && !M2.apagados.has(t.k));
     const q = `x0=${Math.floor(m2dex(0)-mx)}&z0=${Math.floor(m2dez(0)-mz)}`
-            + `&x1=${Math.ceil(m2dex(M2.w)+mx)}&z1=${Math.ceil(m2dez(M2.h)+mz)}`;
+            + `&x1=${Math.ceil(m2dex(M2.w)+mx)}&z1=${Math.ceil(m2dez(M2.h)+mz)}`
+            + (densas ? '&densas=1' : '');
     let d=null;
     try{ d = await api('/api/mapa2/estructuras?'+q); }catch(_){}
     if (!d || !d.ok) return;
     M2.recorte = !!d.demasiado;
+    M2.lejosDensas = !!d.lejos_densas;
     M2.estructuras = (d.estructuras || []).concat(M2.fortalezas || []);
     M2.cuenta = {};
     for (const [k] of M2.estructuras) M2.cuenta[k]=(M2.cuenta[k]||0)+1;
@@ -3365,12 +3433,32 @@ function m2PideEstructuras(){
 }
 
 /* ---------- las casillas de encender y apagar ---------- */
+/* Tira de iconos ↔ lista con nombres. La preferencia se guarda: es de las
+   cosas que se eligen una vez y molestan si vuelven solas a lo de antes. */
+function m2Modo(){
+  M2.modo = (M2.modo==='tira') ? 'lista' : 'tira';
+  m2Guardar(); m2Capas();
+}
+
 function m2Capas(){
   const w=$('m2-capas'); if (!w || !M2.est) return;
+  const modo = M2.modo==='lista' ? 'lista' : 'tira';
+  w.className = 'm2-capas ' + modo;
+  const bm=$('m2-modo');
+  if (bm){
+    bm.textContent = modo==='lista' ? '✓' : '▾';
+    bm.classList.toggle('on', modo==='lista');
+    bm.title = modo==='lista' ? 'Volver a la tira de iconos'
+                              : 'Ver los nombres de cada capa';
+  }
+  const izq = w.scrollLeft;            // no perder el sitio al repintar la tira
   w.innerHTML='';
   const chip=(id, activo, etq, icono, cuenta)=>{
     const b=document.createElement('button');
     b.className='m2-cap'+(activo?' on':''); b.id='m2cap-'+id;
+    // En la tira no hay nombre a la vista, así que el nombre va en el título:
+    // sin esto, veinte cuadraditos sin explicación.
+    b.title = etq + (cuenta!==undefined ? ' · '+cuenta+' a la vista' : '');
     if (icono){ const im=document.createElement('img'); im.src=icono; im.alt='';
       im.onerror=()=>{ im.style.visibility='hidden'; }; b.appendChild(im); }
     const e=document.createElement('span'); e.className='et'; e.textContent=etq;
@@ -3407,13 +3495,22 @@ function m2Capas(){
     const n=M2.cuenta[t.k]||0;
     const b=chip(t.k, m2SaleAhora(t), t.es, MK_ICON(t.icono), n);
     b.onclick=()=>{
-      if (M2.apagados.has(t.k)){ M2.apagados.delete(t.k); M2.forzados.add(t.k); }
-      else if (!m2SaleAhora(t)){ M2.forzados.add(t.k); }
+      // A las densas NO se las fuerza aunque el zoom diga que no caben: hay una
+      // mina cada 250 chunks y un tesoro cada 100, así que forzarlas de lejos
+      // tapa el mapa entero con el mismo icono repetido. Se encienden igual,
+      // pero solo se dibujan cuando de verdad caben, y el cartel de abajo dice
+      // que hay que acercarse.
+      if (M2.apagados.has(t.k)){ M2.apagados.delete(t.k); if (!t.densa) M2.forzados.add(t.k); }
+      else if (!m2SaleAhora(t)){ if (!t.densa) M2.forzados.add(t.k); }
       else { M2.apagados.add(t.k); M2.forzados.delete(t.k); }
-      m2Guardar(); m2Capas(); m2Iconos();
+      // Tesoros y minas no vienen si nadie los pide: al encender una de esas
+      // capas hay que volver a preguntar, o la casilla se enciende y no aparece
+      // nada — que es exactamente lo que hacía pensar que estaba rota.
+      m2Guardar(); m2Capas(); if (t.densa) m2PideEstructuras(); m2Iconos();
     };
     w.appendChild(b);
   }
+  w.scrollLeft = izq;
 }
 
 /* Marcar o desmarcar todas las capas de golpe. Al marcar todo se fuerzan
@@ -3423,7 +3520,7 @@ function m2Todas(encender){
   if (!M2.est) return;
   M2.apagados.clear(); M2.forzados.clear();
   for (const t of M2.est.tipos){
-    if (encender) M2.forzados.add(t.k);
+    if (encender){ if (!t.densa) M2.forzados.add(t.k); }
     else M2.apagados.add(t.k);
   }
   M2.verSlime = encender && M2.esc >= M2_SLIME_DESDE;
@@ -3561,15 +3658,79 @@ async function m2PreguntaBioma(x, z){
   }catch(_){}
 }
 
+/* ---------- «ya fui aquí»: una marca por sitio, compartida ---------- */
+/* La clave es el SITIO (tipo + coordenadas), no un identificador: las
+   estructuras se calculan de la semilla y no tienen uno propio. Mismo sitio,
+   misma marca, para todos. */
+function m2Clave(k,x,z){ return k+':'+x+':'+z; }
+
+async function m2PideHechas(){
+  try{
+    const d = await api('/api/mapa2/hechas');
+    if (d && d.ok) M2.hechas = d.hechas || {};
+  }catch(_){ }
+  m2Iconos();
+}
+
+async function m2Marcar(k,x,z,quiero){
+  const clave=m2Clave(k,x,z);
+  const antes = M2.hechas[clave];
+  // se pinta ya y se corrige si el server dice que no: esperar medio segundo a
+  // que vuelva la respuesta hace que la casilla parezca que no responde
+  if (quiero) M2.hechas[clave]={por:(ME&&ME.name)||'?', t:Math.floor(Date.now()/1000)};
+  else delete M2.hechas[clave];
+  m2Iconos();
+  let d=null;
+  try{ d = await api('/api/mapa2/hecha', {k, x, z, hecha:quiero}); }catch(_){}
+  if (!d || !d.ok){
+    if (antes) M2.hechas[clave]=antes; else delete M2.hechas[clave];
+    toast((d&&d.error) || 'No se pudo guardar la marca');
+  } else if (d.marca) M2.hechas[clave]=d.marca;
+  m2Iconos();
+  if (!$('m2-globo').classList.contains('hidden')) m2Globo(k,x,z);
+}
+
+function m2Globo(k,x,z){
+  const globo=$('m2-globo');
+  const t=(k==='__aparicion') ? {es:'Punto de aparición', en:'World spawn'}
+          : (M2.est.tipos.find(t=>t.k===k) || {es:k,en:k});
+  let html = `<b>${esc(LANG==='en'?t.en:t.es)}</b><span class="c">X ${x}&nbsp;&nbsp;Z ${z}</span>`;
+  if (k!=='__aparicion'){
+    const m = M2.hechas[m2Clave(k,x,z)];
+    html += `<label class="m2-hecha${m?' si':''}">
+        <input type="checkbox" ${m?'checked':''}
+               onchange="m2Marcar('${esc(k)}',${x},${z},this.checked)">
+        <span>${m ? 'Ya fue alguien' : '¿Ya fuiste? márcalo'}</span></label>`
+      + (m ? `<span class="quien">${esc(m.por||'?')}${m.t?' · '+new Date(m.t*1000).toLocaleDateString():''}</span>` : '');
+  }
+  globo.innerHTML = html;
+}
+
+/* El globo sale ENCIMA del icono, y en un icono pegado al borde de arriba se
+   salía del mapa: media tarjeta cortada y la casilla sin poder pulsarse. Si no
+   cabe arriba, se pone debajo; y a los lados se mete para dentro. */
+function m2ColocaGlobo(ix, iy){
+  const g=$('m2-globo');
+  g.style.transform='translate(-50%,-100%)'; g.style.marginTop='-12px';
+  const r=g.getBoundingClientRect(), caja=$('m2-lienzo').getBoundingClientRect();
+  if (r.top < caja.top + 4){
+    g.style.transform='translate(-50%,0)'; g.style.marginTop='14px';
+  }
+  const r2=g.getBoundingClientRect();
+  let x=ix;
+  if (r2.left < caja.left + 6) x += (caja.left + 6) - r2.left;
+  if (r2.right > caja.right - 6) x -= r2.right - (caja.right - 6);
+  g.style.left=x+'px';
+}
+
 function m2Clic(px,py){
   const globo=$('m2-globo');
   for (const [k,x,z,ix,iy] of (M2.enPantalla||[])){
     if (Math.abs(ix-px)<13 && Math.abs(iy-py)<13){
-      const t=(k==='__aparicion') ? {es:'Punto de aparición', en:'World spawn'}
-              : (M2.est.tipos.find(t=>t.k===k) || {es:k,en:k});
-      globo.innerHTML = `<b>${esc(LANG==='en'?t.en:t.es)}</b><span class="c">X ${x}&nbsp;&nbsp;Z ${z}</span>`;
+      m2Globo(k,x,z);
       globo.style.left=ix+'px'; globo.style.top=iy+'px';
       globo.classList.remove('hidden');
+      m2ColocaGlobo(ix, iy);
       return;
     }
   }

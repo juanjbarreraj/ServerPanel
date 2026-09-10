@@ -76,6 +76,18 @@ class JavaRandom:
         v &= (1 << 64) - 1
         return v - (1 << 64) if v >= (1 << 63) else v
 
+    # Los tres de abajo hacen falta para las estructuras que NO van en rejilla
+    # (tesoros, minas, puestos de saqueadores): esas se deciden chunk a chunk
+    # con una tirada de probabilidad, y cada una usa un dado distinto.
+    def sembrar(self, s):
+        self.s = (s ^ MULT) & MASCARA
+
+    def next_float(self):
+        return self.next(24) / float(1 << 24)
+
+    def next_double(self):
+        return ((self.next(26) << 27) + self.next(27)) * (2.0 ** -53)
+
 
 # ─────────────────────────────────────────────────── de dónde salen los datos
 #
@@ -190,16 +202,27 @@ def leer_del_jar(jar):
                 sal = col.get("salt")
                 if esp is None or sep is None or sal is None:
                     continue
-                # Los tesoros enterrados y las minas salieron del jar con
-                # espaciado 1 y sal 0: no van en rejilla, van por probabilidad en
-                # CADA chunk. La fórmula de aquí no los describe, y pintarlos
-                # daría un icono por chunk — millones de puntos falsos.
-                if esp <= 1 or col.get("probability") is not None and esp <= 2:
-                    continue
                 miembros = [e["structure"].split(":")[-1] for e in d.get("structures", [])
                             if isinstance(e, dict) and e.get("structure")]
                 reparto = str(col.get("spread_type") or "linear").split(":")[-1]
-                fuera[n.rsplit("/", 1)[-1][:-5]] = (esp, sep, sal, miembros, reparto)
+                # Lo que faltaba y hacía sobrar iconos: la rejilla dice DÓNDE
+                # podría ir, pero Minecraft además tira un dado en ese chunk
+                # (`frequency`) y descarta si hay otra cosa cerca
+                # (`exclusion_zone`). Sin esto, los puestos de saqueadores se
+                # dibujaban CINCO veces de más — el dado es 1 de cada 5 — y sin
+                # respetar que no pueden estar a menos de 10 chunks de una aldea.
+                frec = col.get("frequency")
+                metodo = str(col.get("frequency_reduction_method") or "default").split(":")[-1]
+                ex = col.get("exclusion_zone") or None
+                if ex:
+                    ex = (str(ex.get("other_set", "")).split(":")[-1],
+                          int(ex.get("chunk_count", 0)))
+                # `locate_offset` es dónde cae de verdad dentro del chunk. Para
+                # un cofre enterrado importa: son 9 bloques, no el centro.
+                lo = col.get("locate_offset") or None
+                lo = (int(lo[0]), int(lo[2])) if isinstance(lo, list) and len(lo) >= 3 else None
+                fuera[n.rsplit("/", 1)[-1][:-5]] = (esp, sep, sal, miembros, reparto,
+                                                    frec, metodo, ex, lo)
             except Exception:
                 continue
     return fuera
@@ -222,9 +245,115 @@ def region_de(chunk, espaciado):
     return chunk // espaciado if chunk >= 0 else -((-chunk + espaciado - 1) // espaciado)
 
 
-def _reparto(conjunto):
+def _campo(conjunto, i, por_defecto=None):
+    """Un campo de CONJUNTOS que puede no estar (el respaldo son tuplas cortas)."""
     d = CONJUNTOS.get(conjunto)
-    return d[4] if d and len(d) > 4 else "linear"
+    if not d or len(d) <= i or d[i] is None:
+        return por_defecto
+    return d[i]
+
+
+def _reparto(conjunto):
+    return _campo(conjunto, 4, "linear")
+
+
+def _frecuencia(conjunto):
+    return _campo(conjunto, 5)
+
+
+def _metodo(conjunto):
+    return _campo(conjunto, 6, "default")
+
+
+def _exclusion(conjunto):
+    return _campo(conjunto, 7)
+
+
+def _dentro_del_chunk(conjunto):
+    """Dónde cae dentro de su chunk, en bloques."""
+    return _campo(conjunto, 8, (8, 8))
+
+
+def por_probabilidad(conjunto):
+    """¿Va chunk a chunk en vez de en rejilla? (tesoros, minas)"""
+    return _campo(conjunto, 0, 32) <= 1
+
+
+# ══════════════════════════════════ el dado: `frequency` y su método
+#
+# Sacado del jar, no de la memoria: `StructurePlacement.isStructureChunk` es
+#   isPlacementChunk (la rejilla)  &&  el dado  &&  la zona de exclusión
+# y el dado tiene CUATRO variantes distintas, cada una sembrando el generador a
+# su manera. Están en `StructurePlacement$FrequencyReductionMethod`:
+#
+#   default        → setLargeFeatureWithSalt(semilla, sal, cx, cz)  · nextFloat()  < f
+#   legacy_type_1  → el de los puestos de saqueadores: nextInt(1/f) == 0
+#   legacy_type_2  → setLargeFeatureWithSalt(semilla, cx, cz, 10387320) · nextFloat() < f
+#   legacy_type_3  → setLargeFeatureSeed(semilla, cx, cz) · nextDouble() < f
+#
+# Comprobado contra un servidor 26.2 de verdad con la semilla de Juan: 12 de 12
+# tesoros y 12 de 12 minas que dio /locate caen en un chunk que estas cuentas
+# marcan. Sin esto, los puestos de saqueadores salían CINCO veces de más.
+def _s64(v):
+    v &= (1 << 64) - 1
+    return v - (1 << 64) if v >= (1 << 63) else v
+
+
+def _s32(v):
+    v &= 0xFFFFFFFF
+    return v - (1 << 32) if v >= (1 << 31) else v
+
+
+def _con_sal(r, semilla, a, b, sal):
+    r.sembrar(_s64(a * 341873128712 + b * 132897987541 + semilla + sal))
+
+
+def _grande(r, semilla, x, z):
+    r.sembrar(semilla)
+    l1 = r.next_long()
+    l2 = r.next_long()
+    r.sembrar(_s64(_s64(x * l1) ^ _s64(z * l2) ^ semilla))
+
+
+def pasa_el_dado(semilla, conjunto, cx, cz):
+    f = _frecuencia(conjunto)
+    if f is None or f >= 1.0:
+        return True
+    metodo = _metodo(conjunto)
+    sal = _campo(conjunto, 2, 0)
+    r = JavaRandom(0)
+    if metodo == "legacy_type_1":
+        # el de los puestos: la semilla se hace con el chunk dividido entre 16
+        i, j = cx >> 4, cz >> 4
+        r.sembrar(_s64(_s32(i ^ _s32(j << 4)) ^ semilla))
+        r.next_int()
+        return r.next_int(int(1.0 / f)) == 0
+    if metodo == "legacy_type_2":
+        _con_sal(r, semilla, cx, cz, 10387320)
+        return r.next_float() < f
+    if metodo == "legacy_type_3":
+        _grande(r, semilla, cx, cz)
+        return r.next_double() < f
+    _con_sal(r, semilla, sal, cx, cz)
+    return r.next_float() < f
+
+
+def pasa_la_exclusion(semilla, conjunto, cx, cz):
+    """`exclusion_zone`: nada de puestos a menos de 10 chunks de una aldea."""
+    ex = _exclusion(conjunto)
+    if not ex:
+        return True
+    otro, radio = ex
+    if otro not in CONJUNTOS or por_probabilidad(otro):
+        return True
+    esp = _campo(otro, 0, 32)
+    for rz in range(region_de(cz - radio, esp), region_de(cz + radio, esp) + 1):
+        for rx in range(region_de(cx - radio, esp), region_de(cx + radio, esp) + 1):
+            ox, oz = candidata(semilla, otro, rx, rz)
+            if abs(ox - cx) <= radio and abs(oz - cz) <= radio \
+                    and pasa_el_dado(semilla, otro, ox, oz):
+                return False
+    return True
 
 
 def candidata(semilla, conjunto, region_x, region_z):
@@ -253,18 +382,47 @@ def candidata(semilla, conjunto, region_x, region_z):
     return (region_x * esp + dx, region_z * esp + dz)
 
 
+# Cuántos chunks se aceptan mirar de uno en uno para las de probabilidad. Un
+# rectángulo de 8192 bloques son 262 144 chunks y cada uno cuesta varias tiradas;
+# más allá de esto no se calcula y se avisa, en vez de tardar medio minuto.
+TOPE_CHUNKS = 400_000
+
+
 def candidatas_en(semilla, conjunto, x0, z0, x1, z1):
-    """Todas las candidatas de un conjunto dentro de un rectángulo, en bloques."""
-    esp = CONJUNTOS[conjunto][0]
+    """Todas las candidatas de un conjunto dentro de un rectángulo, en bloques.
+
+    Tres filtros, en el mismo orden que `StructurePlacement.isStructureChunk`:
+    la rejilla, el dado de `frequency` y la zona de exclusión. Los dos últimos
+    faltaban y por eso sobraban iconos.
+    """
+    esp = _campo(conjunto, 0, 32)
+    dx, dz = _dentro_del_chunk(conjunto)
     c0x, c0z = x0 >> 4, z0 >> 4
     c1x, c1z = x1 >> 4, z1 >> 4
     fuera = []
+
+    if esp <= 1:
+        # Sin rejilla: cada chunk se juega su tirada. Son los tesoros enterrados
+        # (1 de cada 100) y las minas (4 de cada 1000).
+        if (c1x - c0x + 1) * (c1z - c0z + 1) > TOPE_CHUNKS:
+            return fuera
+        for cz in range(c0z, c1z + 1):
+            for cx in range(c0x, c1x + 1):
+                if pasa_el_dado(semilla, conjunto, cx, cz):
+                    fuera.append([cx * 16 + dx, cz * 16 + dz])
+        return fuera
+
     for rz in range(region_de(c0z, esp), region_de(c1z, esp) + 1):
         for rx in range(region_de(c0x, esp), region_de(c1x, esp) + 1):
             cx, cz = candidata(semilla, conjunto, rx, rz)
-            bx, bz = cx * 16 + 8, cz * 16 + 8
-            if x0 <= bx <= x1 and z0 <= bz <= z1:
-                fuera.append([bx, bz])
+            bx, bz = cx * 16 + dx, cz * 16 + dz
+            if not (x0 <= bx <= x1 and z0 <= bz <= z1):
+                continue
+            if not pasa_el_dado(semilla, conjunto, cx, cz):
+                continue
+            if not pasa_la_exclusion(semilla, conjunto, cx, cz):
+                continue
+            fuera.append([bx, bz])
     return fuera
 
 

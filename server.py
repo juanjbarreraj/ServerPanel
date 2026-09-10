@@ -3478,7 +3478,7 @@ def _m2_estructuras(x0, z0, x1, z1):
     b, e = _m2_mods()
     srv = _m2_srv()
     semilla = srv.salud()["semilla"]
-    conjuntos = e.conjuntos_de("overworld")
+    conjuntos = [c for c in e.conjuntos_de("overworld") if not e.por_probabilidad(c)]
     fuera = []
     for cz in range(z0 // _M2_CELDA, z1 // _M2_CELDA + 1):
         for cx in range(x0 // _M2_CELDA, x1 // _M2_CELDA + 1):
@@ -3496,6 +3496,127 @@ def _m2_estructuras(x0, z0, x1, z1):
                     if len(_m2_est) > 400:          # no crecer sin freno
                         _m2_est.clear()
                     _m2_est[clave] = hecho
+            for s in hecho:
+                if x0 <= s["x"] <= x1 and z0 <= s["z"] <= z1 and s["k"]:
+                    fuera.append(s)
+    return fuera
+
+
+# ══════════════════════════════════════ «ya fui aquí»: lo comparte todo el server
+#
+# Un tic por estructura, visible para todos, para que nadie se pegue el viaje a
+# un templo que ya vaciaron. Se guarda por SEMILLA: si se cambia de mundo, las
+# marcas del anterior no se mezclan con las del nuevo — y si se vuelve a él,
+# siguen ahí.
+#
+# La clave es tipo:x:z, o sea el sitio, no un id: las estructuras se calculan de
+# la semilla y no tienen identidad propia. Mismo sitio, misma marca.
+HECHO_FILE = DATA_DIR / "estructuras-hechas.json"
+_hecho_lock = threading.Lock()
+HECHO_MAX = 20000               # por semilla; pasado eso deja de aceptar marcas
+
+
+def _hecho_cargar():
+    try:
+        d = json.loads(HECHO_FILE.read_text())
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _hecho_guardar(d):
+    HECHO_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = HECHO_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d))
+    tmp.replace(HECHO_FILE)     # atómico: nunca queda a medias
+
+
+@app.get("/api/mapa2/hechas")
+def api_m2_hechas():
+    """Las marcas de esta semilla. Van todas de una: son cuatro cifras como mucho."""
+    require("mapa_semilla")
+    try:
+        semilla = str(_m2_srv().salud()["semilla"])
+    except Exception:
+        return jsonify(ok=False, hechas={}), 200
+    with _hecho_lock:
+        mias = (_hecho_cargar().get(semilla) or {})
+    return jsonify(ok=True, hechas=mias)
+
+
+@app.post("/api/mapa2/hecha")
+def api_m2_hecha():
+    """Marcar o desmarcar una estructura como visitada."""
+    u = require("mapa_semilla")
+    if not _csrf_ok():
+        abort(403)
+    b = request.get_json(silent=True) or {}
+    k = re.sub(r"[^a-z_]", "", str(b.get("k", ""))[:40])
+    try:
+        x, z = int(b.get("x")), int(b.get("z"))
+    except (TypeError, ValueError):
+        return jsonify(error="coordenadas malas"), 400
+    if not k or max(abs(x), abs(z)) > 30_000_000:
+        return jsonify(error="datos malos"), 400
+    quiero = bool(b.get("hecha"))
+    try:
+        semilla = str(_m2_srv().salud()["semilla"])
+    except Exception:
+        return jsonify(error="el explorador no está encendido"), 503
+    clave = "%s:%d:%d" % (k, x, z)
+    with _hecho_lock:
+        todo = _hecho_cargar()
+        mias = todo.setdefault(semilla, {})
+        if quiero:
+            if len(mias) >= HECHO_MAX and clave not in mias:
+                return jsonify(error="demasiadas marcas guardadas"), 400
+            mias[clave] = {"por": u["name"], "t": int(time.time())}
+        else:
+            mias.pop(clave, None)
+        _hecho_guardar(todo)
+        marca = mias.get(clave)
+    audit(u["name"], "%s %s en %d,%d" % ("marca" if quiero else "desmarca", k, x, z))
+    return jsonify(ok=True, clave=clave, marca=marca)
+
+
+_m2_densas = {}                 # (semilla, celda_x, celda_z) → estructuras densas
+_M2_CELDA_DENSA = 2048          # celdas pequeñas: son miles por celda grande
+_M2_VENTANA_DENSA = 24576       # más allá de esto no se calculan, se avisa
+
+
+def _m2_estructuras_densas(x0, z0, x1, z1):
+    """Tesoros y minas: una tirada de dado en CADA chunk, no una rejilla.
+
+    Van por su cuenta y no dentro de `_m2_estructuras` a propósito. Un cuadro de
+    8192 bloques son 262 144 chunks; calcular eso en cada celda le costaría un
+    segundo largo a TODO el mundo, también a quien nunca encienda esas dos
+    capas. Aquí se calculan solo si alguien las pide, en celdas de 2048 y con
+    una ventana máxima: de lejos hay decenas de miles y no se pueden dibujar.
+    """
+    b, e = _m2_mods()
+    srv = _m2_srv()
+    semilla = srv.salud()["semilla"]
+    conjuntos = [c for c in e.conjuntos_de("overworld") if e.por_probabilidad(c)]
+    if not conjuntos:
+        return []
+    fuera = []
+    for cz in range(z0 // _M2_CELDA_DENSA, z1 // _M2_CELDA_DENSA + 1):
+        for cx in range(x0 // _M2_CELDA_DENSA, x1 // _M2_CELDA_DENSA + 1):
+            clave = (semilla, cx, cz)
+            with _m2_lock:
+                hecho = _m2_densas.get(clave)
+            if hecho is None:
+                hecho = e.confirmar(srv, semilla,
+                                    cx * _M2_CELDA_DENSA, cz * _M2_CELDA_DENSA,
+                                    (cx + 1) * _M2_CELDA_DENSA - 1,
+                                    (cz + 1) * _M2_CELDA_DENSA - 1,
+                                    conjuntos)
+                for s in hecho:
+                    s["k"] = e.tipo_de(s["tipo"])
+                with _m2_lock:
+                    if len(_m2_densas) > 600:
+                        _m2_densas.clear()
+                    _m2_densas[clave] = hecho
             for s in hecho:
                 if x0 <= s["x"] <= x1 and z0 <= s["z"] <= z1 and s["k"]:
                     fuera.append(s)
@@ -3670,11 +3791,14 @@ def api_m2_estado():
     # También se caen las que no se calculan (fortalezas, minas, tesoros), que
     # van por otra cuenta y saldrían siempre a cero.
     posibles = set()
+    densas = set()
     for c in e.conjuntos_de("overworld"):
         for m in (e.CONJUNTOS[c][3] or [c]):
             k = e.tipo_de(m)
             if k:
                 posibles.add(k)
+                if e.por_probabilidad(c):
+                    densas.add(k)
     # Las fortalezas no salen de la rejilla: se le preguntan al servidor y se
     # guardan. Solo se ofrecen como capa si de verdad tenemos alguna.
     fortalezas = []
@@ -3690,7 +3814,8 @@ def api_m2_estado():
             continue
         icono, es, en, _dist, oculto, orden = e.TIPOS[k]
         tipos.append({"k": k, "icono": icono, "es": es, "en": en,
-                      "oculto": oculto, "paso": paso.get(k, 512)})
+                      "oculto": oculto, "paso": paso.get(k, 512),
+                      "densa": k in densas, "cerca": _M2_VENTANA_DENSA if k in densas else 0})
     return jsonify(ok=True, semilla=str(salud["semilla"]), y=salud.get("y"),
                    niveles=b.NIVELES, tam=b.TAM, leyenda=leyenda, tipos=tipos,
                    aparicion=punto_de_aparicion(), version=mc_version(),
@@ -3747,7 +3872,18 @@ def api_m2_estructuras():
         halladas = _m2_estructuras(x0, z0, x1, z1)
     except Exception as ex:
         return jsonify(ok=False, motivo=str(ex)[:200]), 200
-    return jsonify(ok=True, demasiado=False,
+    # Tesoros y minas solo si alguien los pide y solo de cerca: hay uno cada
+    # cien chunks y de lejos son decenas de miles de puntos.
+    lejos_densas = False
+    if request.args.get("densas") in ("1", "true", "si"):
+        if (x1 - x0) > _M2_VENTANA_DENSA or (z1 - z0) > _M2_VENTANA_DENSA:
+            lejos_densas = True
+        else:
+            try:
+                halladas = halladas + _m2_estructuras_densas(x0, z0, x1, z1)
+            except Exception:
+                pass
+    return jsonify(ok=True, demasiado=False, lejos_densas=lejos_densas,
                    estructuras=[[s["k"], s["x"], s["z"]] for s in halladas])
 
 
