@@ -342,7 +342,12 @@ def main():
         if not conf.exists():
             continue
         write_config(conf, build_block(found.get(dim, []), manual, dim))
-        print(f"  {conf.name}: {len(found.get(dim, []))} marcadores")
+        # los que se PUBLICAN son los lugares puestos a mano, no las estructuras
+        # del escaneo: decir aquí el número de estructuras hacía creer que se
+        # estaban poniendo en el mapa 3D, que es justo lo que ya no pasa
+        n = sum(1 for m in manual if m.get("dim", "overworld") == dim)
+        print(f"  {conf.name}: {n} lugar(es) del server "
+              f"({len(found.get(dim, []))} estructuras escaneadas, no van al mapa 3D)")
     # Esto SOLO reescribe las configs de BlueMap. Para que los iconos lleguen de
     # verdad al mapa hace falta el paso --markers, que render-mapa.sh ya da solo
     # todas las noches. Corriendo este script a mano, hay que darlo aquí:

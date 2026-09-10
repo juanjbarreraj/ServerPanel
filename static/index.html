@@ -1066,7 +1066,8 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
           <button class="btn small" onclick="mkMarcadores()"><img class="bico" src="/static/ui/s-posicion.png?v=14" alt="" onerror="this.outerHTML='📍 '">Actualizar los iconos</button>
           <button class="btn small ghost" onclick="mkScan()"><img class="bico" src="/static/ui/mapa.png?v=14" alt="" onerror="this.outerHTML='🔎 '">Volver a dibujar el mapa entero</button>
         </div>
-        <div class="note"><b>Los iconos</b> busca aldeas, cámaras de desafío, ciudades antiguas y demás en lo que ya exploraron y las pone en el mapa: tarda segundos, o unos minutos la primera vez. <b>Volver a dibujar</b> además repinta el terreno y tarda más de una hora — normalmente no hace falta, porque el mapa se actualiza solo cada noche.</div>
+        <div class="note"><b>Los iconos</b> vuelve a publicar sobre el mapa 3D los lugares de aquí arriba, y de paso quita lo que sobre: tarda segundos. Las estructuras (aldeas, ciudades antiguas, monumentos…) ya no van aquí — están en la pestaña <b>Explorar</b>, donde salen todas y no solo las del terreno explorado. <b>Volver a dibujar</b> repinta el terreno y tarda más de una hora; normalmente no hace falta, porque el mapa se actualiza solo cada noche.</div>
+        <div class="note" id="mk-estado" style="margin-top:8px"></div>
       </div>
     </div>
   </section>
@@ -4404,6 +4405,7 @@ async function loadMarkers(){
   if (!MK_CAN) return;
   MK_DEL = !!(ME && (ME.role==='admin' || ME.role==='mod'));
   $('mk-scan-row').classList.toggle('hidden', !MK_DEL);
+  if (MK_DEL) mkEstadoIconos();
   mkPickPinta();
   const r=await api('/api/markers').catch(()=>null);
   renderMarkers((r&&r.markers)||[]);
@@ -4440,6 +4442,37 @@ async function mkAdd(){
 async function mkMarcadores(){
   const r=await api('/api/system/map_markers',{}).catch(()=>null);
   toast((r&&r.output)||'No se pudo arrancar');
+  if(r&&r.ok){ mkEstado('Publicando…'); setTimeout(mkEstadoIconos, 6000);
+               setTimeout(mkEstadoIconos, 20000); setTimeout(mkEstadoIconos, 60000); }
+}
+
+/* Qué hay publicado AHORA MISMO sobre el mapa 3D.
+   BlueMap reescribe entero el markers.json de cada dimensión en cada
+   publicación, así que ese fichero es exactamente lo que ve el navegador.
+   Enseñarlo aquí evita el agujero de antes: el bloque se generaba vacío, se
+   comprobaba que salía vacío, y aun así los iconos seguían en el mapa sin
+   forma de saber en qué paso se rompía la cadena. */
+function mkEstado(html){ const e=$('mk-estado'); if(e) e.innerHTML=html; }
+async function mkEstadoIconos(){
+  if(!$('mk-estado') || !MK_DEL) return;
+  const r=await api('/api/system/map_icons_state').catch(()=>null);   // sin cuerpo = GET
+  if(!r||!r.ok){ mkEstado(''); return; }
+  if(r.error){ mkEstado(`<b style="color:var(--crit)">⚠ ${esc(r.error)}</b>`); return; }
+  const filas=(r.mapas||[]).map(m=>{
+    const cs=(m.conjuntos||[]);
+    const qué = m.estado ? esc(m.estado)
+      : (cs.length ? cs.map(c=>`${esc(c.id)} (${c.n})`).join(', ') : 'sin iconos');
+    const cuando = m.cuando ? ' · '+new Date(m.cuando*1000).toLocaleString() : '';
+    return `<div><b>${esc(m.mapa)}</b>: ${qué}${cuando}</div>`;
+  }).join('');
+  let cabeza;
+  if ((r.sobran||[]).length)
+    cabeza=`<b style="color:var(--warn)">⚠ Sobre el mapa 3D todavía hay iconos que no son lugares: ${esc(r.sobran.join('; '))}. Pulsa «Actualizar los iconos».</b>`;
+  else
+    cabeza=`<b style="color:var(--slime2)">✔ Sobre el mapa 3D solo están los lugares del server.</b>`;
+  if (r.enlace_ok===false)
+    cabeza+=`<br><b style="color:var(--crit)">⚠ ~/bluemap/web ya no es un enlace a lo que sirve la web (${esc(r.enlace||'?')}): lo que escriba BlueMap no se verá.</b>`;
+  mkEstado(cabeza+'<div style="margin-top:6px; opacity:.8">'+filas+'</div>');
 }
 async function mkScan(){
   if(!confirm('Vuelve a dibujar el mapa entero. Tarda más de una hora (con prioridad baja, sin molestar al server).\n\nSi solo faltan los ICONOS de las estructuras, usa el otro botón: tarda segundos.\n\n¿Seguir igualmente?')) return;

@@ -2828,8 +2828,115 @@ def api_system_map_markers():
     # mismos ficheros de BlueMap y no deben solaparse
     ok = _sys_run_bg("mapa", ["bash", str(script)], timeout=3 * 3600)
     audit(u["name"], "actualizar los iconos del mapa")
-    return jsonify(ok=ok, output="Buscando estructuras y publicando los iconos — mira el registro"
-                   if ok else "Ya hay una actualización del mapa corriendo")
+    return jsonify(ok=ok, output="Publicando los iconos del mapa 3D — tarda segundos"
+                   if ok else _mapa_ocupado_texto())
+
+
+def _mapa_ocupado_texto():
+    """Por qué no arrancó, con el desde-cuándo.
+
+    «Ya hay una actualización del mapa corriendo» a secas mandaba a mirar un
+    registro que no dice cuál ni desde cuándo, y un render nocturno atascado
+    bloquea este botón durante horas sin que se note.
+    """
+    desde = _sys_busy.get("mapa")
+    if not desde:
+        return "No pude arrancar el trabajo del mapa"
+    m = int((time.time() - desde) / 60)
+    return ("Ya hay un trabajo del mapa corriendo desde hace %s — este botón "
+            "espera a que acabe" % (f"{m} min" if m else "menos de un minuto"))
+
+
+# ---------------------------------------------------------- qué hay publicado
+# El mapa 3D lee UN fichero por dimensión: <mapas>/<dim>/live/markers.json, y
+# BlueMap lo reescribe entero en cada `--markers`. O sea que ese fichero ES lo
+# que se ve en el navegador, sin intermediarios ni cachés que valgan.
+#
+# Esto existe porque el bloque de marcadores se dejó vacío, se comprobó que el
+# generador lo dejaba vacío… y los iconos seguían en el mapa. Sin poder mirar
+# el fichero publicado no había forma de saber en qué paso se rompía la
+# cadena, y adivinar desde fuera salió caro.
+def _bluemap_dir():
+    return Path(os.environ.get("BLUEMAP_DIR", Path.home() / "bluemap"))
+
+
+def _bluemap_mapas_dir():
+    """La carpeta donde BlueMap deja los mapas, según su propia config."""
+    bm = _bluemap_dir()
+    raiz = "web/maps"
+    try:
+        m = re.search(r'^\s*root\s*[:=]\s*"?([^"\n]+)"?',
+                      (bm / "config/storages/file.conf").read_text(), re.M)
+        if m:
+            raiz = m.group(1).strip()
+    except Exception:
+        pass
+    p = Path(raiz)
+    return p if p.is_absolute() else bm / p
+
+
+def _iconos_publicados():
+    """Lee lo que hay publicado ahora mismo en el mapa 3D."""
+    import gzip
+    bm, mapas = _bluemap_dir(), _bluemap_mapas_dir()
+    web = bm / "web"
+    fuera = {"mapas": [], "sobran": [], "carpeta": str(mapas),
+             "enlace": None, "enlace_ok": True, "error": None}
+    try:
+        fuera["enlace"] = os.path.realpath(web)
+        # que ~/bluemap/web sea un enlace a lo que sirve Caddy es lo que hace
+        # que escribir el mapa y verlo sean la misma cosa
+        fuera["enlace_ok"] = web.is_symlink() or not web.exists()
+    except Exception:
+        pass
+    if not mapas.is_dir():
+        fuera["error"] = "no encuentro los mapas en %s" % mapas
+        return fuera
+    for d in sorted(p for p in mapas.iterdir() if p.is_dir()):
+        f = d / "live/markers.json"
+        crudo = None
+        for cand in (f, d / "live/markers.json.gz"):
+            try:
+                if cand.exists():
+                    b = cand.read_bytes()
+                    crudo = gzip.decompress(b) if cand.suffix == ".gz" else b
+                    f = cand
+                    break
+            except Exception:
+                pass
+        fila = {"mapa": d.name, "conjuntos": [], "cuando": None, "estado": ""}
+        try:
+            fila["cuando"] = int(f.stat().st_mtime)
+        except Exception:
+            pass
+        if crudo is None:
+            fila["estado"] = "sin fichero"
+            fuera["mapas"].append(fila)
+            continue
+        try:
+            datos = json.loads(crudo)
+        except Exception as e:
+            fila["estado"] = "ilegible (%s)" % e
+            fuera["mapas"].append(fila)
+            continue
+        for clave, cjto in sorted(datos.items()):
+            n = len((cjto or {}).get("markers") or {})
+            fila["conjuntos"].append({"id": clave, "n": n})
+            if clave != "lugares":
+                fuera["sobran"].append("%s → %s" % (d.name, clave))
+        fuera["mapas"].append(fila)
+    return fuera
+
+
+@app.get("/api/system/map_icons_state")
+def api_system_map_icons_state():
+    u = require()
+    if u["role"] not in ("admin", "mod"):
+        abort(403)
+    d = _iconos_publicados()
+    d["ok"] = True
+    d["trabajando"] = bool(_sys_busy.get("mapa"))
+    return jsonify(d)
 
 # ============================================================ mundos (admin)
 #

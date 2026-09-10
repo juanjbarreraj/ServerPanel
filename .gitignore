@@ -6,3 +6,4 @@ icons/
 static/mcfont.ttf
 *.tar.gz
 .DS_Store
+_to_delete/
