@@ -92,25 +92,33 @@ class JavaRandom:
 # adivinarlos ni mantenerlos: se leen del jar que tenga el servidor y siempre
 # son los de esa versión. La tabla de abajo es solo el respaldo para cuando no
 # se puede abrir el jar.
+# (espaciado, separación, sal, miembros, reparto)
+#
+# EL REPARTO NO ES IGUAL PARA TODAS y es un fallo que costó encontrar. Casi
+# todas reparten «lineal»: un número al azar entre 0 y espaciado-separación.
+# Pero las mansiones, los monumentos oceánicos y las ciudades del End reparten
+# «triangular»: sacan DOS números y se quedan con la media, lo que las empuja
+# hacia el centro de su región. Haciéndolo lineal para todas, esas tres salen
+# en una casilla plausible y equivocada — que es la peor forma de fallar.
 CONJUNTOS_RESPALDO = {
     "villages":          (34, 8, 10387312,  ["village_plains", "village_desert",
                                              "village_savanna", "village_snowy",
-                                             "village_taiga"]),
-    "pillager_outposts": (32, 8, 165745296, ["pillager_outpost"]),
-    "desert_pyramids":   (32, 8, 14357617,  ["desert_pyramid"]),
-    "igloos":            (32, 8, 14357618,  ["igloo"]),
-    "jungle_temples":    (32, 8, 14357619,  ["jungle_pyramid"]),
-    "swamp_huts":        (32, 8, 14357620,  ["swamp_hut"]),
-    "ocean_ruins":       (20, 8, 14357621,  ["ocean_ruin_cold", "ocean_ruin_warm"]),
-    "shipwrecks":        (24, 4, 165745295, ["shipwreck", "shipwreck_beached"]),
-    "ocean_monuments":   (32, 5, 10387313,  ["monument"]),
-    "woodland_mansions": (80, 20, 10387319, ["mansion"]),
-    "ancient_cities":    (24, 8, 20083232,  ["ancient_city"]),
-    "trail_ruins":       (34, 8, 83469867,  ["trail_ruins"]),
-    "trial_chambers":    (34, 12, 94251327, ["trial_chambers"]),
-    "ruined_portals":    (40, 15, 34222645, ["ruined_portal"]),
-    "nether_complexes":  (27, 4, 30084232,  ["fortress", "bastion_remnant"]),
-    "end_cities":        (20, 11, 10387313, ["end_city"]),
+                                             "village_taiga"], "linear"),
+    "pillager_outposts": (32, 8, 165745296, ["pillager_outpost"], "linear"),
+    "desert_pyramids":   (32, 8, 14357617,  ["desert_pyramid"], "linear"),
+    "igloos":            (32, 8, 14357618,  ["igloo"], "linear"),
+    "jungle_temples":    (32, 8, 14357619,  ["jungle_pyramid"], "linear"),
+    "swamp_huts":        (32, 8, 14357620,  ["swamp_hut"], "linear"),
+    "ocean_ruins":       (20, 8, 14357621,  ["ocean_ruin_cold", "ocean_ruin_warm"], "linear"),
+    "shipwrecks":        (24, 4, 165745295, ["shipwreck", "shipwreck_beached"], "linear"),
+    "ocean_monuments":   (32, 5, 10387313,  ["monument"], "triangular"),
+    "woodland_mansions": (80, 20, 10387319, ["mansion"], "triangular"),
+    "ancient_cities":    (24, 8, 20083232,  ["ancient_city"], "linear"),
+    "trail_ruins":       (34, 8, 83469867,  ["trail_ruins"], "linear"),
+    "trial_chambers":    (34, 12, 94251327, ["trial_chambers"], "linear"),
+    "ruined_portals":    (40, 15, 34222645, ["ruined_portal"], "linear"),
+    "nether_complexes":  (27, 4, 30084232,  ["fortress", "bastion_remnant"], "linear"),
+    "end_cities":        (20, 11, 10387313, ["end_city"], "triangular"),
 }
 
 
@@ -190,7 +198,8 @@ def leer_del_jar(jar):
                     continue
                 miembros = [e["structure"].split(":")[-1] for e in d.get("structures", [])
                             if isinstance(e, dict) and e.get("structure")]
-                fuera[n.rsplit("/", 1)[-1][:-5]] = (esp, sep, sal, miembros)
+                reparto = str(col.get("spread_type") or "linear").split(":")[-1]
+                fuera[n.rsplit("/", 1)[-1][:-5]] = (esp, sep, sal, miembros, reparto)
             except Exception:
                 continue
     return fuera
@@ -213,16 +222,34 @@ def region_de(chunk, espaciado):
     return chunk // espaciado if chunk >= 0 else -((-chunk + espaciado - 1) // espaciado)
 
 
+def _reparto(conjunto):
+    d = CONJUNTOS.get(conjunto)
+    return d[4] if d and len(d) > 4 else "linear"
+
+
 def candidata(semilla, conjunto, region_x, region_z):
-    """El chunk donde Minecraft pondría ese conjunto en esa región."""
+    """El chunk donde Minecraft pondría ese conjunto en esa región.
+
+    OJO con el orden y con la cantidad de números que se sacan: en «triangular»
+    se sacan DOS por eje, y sacar uno de más o de menos desplaza todo lo que
+    venga después. Por eso los dos ejes se calculan con la misma función y
+    seguidos, igual que en el juego.
+    """
     esp, sep, sal = CONJUNTOS[conjunto][:3]
     s = (semilla + region_x * 341873128712 + region_z * 132897987541 + sal)
     s &= (1 << 64) - 1
     if s >= (1 << 63):
         s -= (1 << 64)
     r = JavaRandom(s)
-    dx = r.next_int(esp - sep)
-    dz = r.next_int(esp - sep)
+    n = esp - sep
+    if _reparto(conjunto) == "triangular":
+        # la media de dos tiradas: empuja la estructura hacia el centro de la
+        # región en vez de repartirla por igual
+        tirada = lambda: (r.next_int(n) + r.next_int(n)) // 2
+    else:
+        tirada = lambda: r.next_int(n)
+    dx = tirada()
+    dz = tirada()
     return (region_x * esp + dx, region_z * esp + dz)
 
 
@@ -314,16 +341,41 @@ def _altura_de(d):
     return Y_SUPERFICIE
 
 
-def _desplazamiento(d):
-    """En qué punto DEL CHUNK mira el juego el bioma, respecto al centro.
+# Los puntos donde se pregunta el bioma, respecto al CENTRO del chunk.
+#
+# El juego no mira el bioma en el chunk: lo mira en el CENTRO DE LA PRIMERA
+# PIEZA de la construcción. Y esa pieza se coloca con un giro al azar, así que
+# su centro cae a unos seis bloques de la esquina del chunk, hacia una de las
+# cuatro diagonales — a veces incluso FUERA del chunk.
+#
+# Lo comprobé con una aldea concreta: en la esquina del chunk el bioma es
+# `grove` (no vale para aldeas) y en el centro de la pieza, cinco bloques a la
+# izquierda, es `meadow` (sí vale). El juego la coloca; yo la descartaba.
+#
+# Saber la pieza exacta haría falta cargar las plantillas del jar, que es otro
+# mundo. En vez de eso se preguntan los cinco sitios donde puede caer y vale con
+# que uno cuadre. Medido contra un servidor de verdad, sobre 27 aldeas:
+#     solo la esquina       → 26 de 27, 3 fantasmas
+#     esquina + 4 diagonales→ 27 de 27, 5 fantasmas   ← esto
+# Dos fantasmas más a cambio de no perder ninguna.
+_ESQUINA = (-8, -8)
+_DIAGONALES = 6
+PUNTOS_JIGSAW = [_ESQUINA,
+                 (_ESQUINA[0] - _DIAGONALES, _ESQUINA[1] - _DIAGONALES),
+                 (_ESQUINA[0] + _DIAGONALES, _ESQUINA[1] + _DIAGONALES),
+                 (_ESQUINA[0] - _DIAGONALES, _ESQUINA[1] + _DIAGONALES),
+                 (_ESQUINA[0] + _DIAGONALES, _ESQUINA[1] - _DIAGONALES)]
+PUNTOS_CENTRO = [(0, 0)]
 
-    Las de tipo `jigsaw` —aldeas, puestos de saqueadores, ciudades antiguas,
-    cámaras de desafío— arrancan en la ESQUINA del chunk. Las demás, en el
-    centro. Como los biomas cambian cada 4 bloques, esos 8 bloques de
-    diferencia deciden en los bordes: medido contra un servidor de verdad, con
-    la esquina las aldeas fantasma bajan de 5 a 2.
+
+def _desplazamiento(d):
+    """Dónde mira el juego el bioma, respecto al centro del chunk.
+
+    Las de tipo `jigsaw` —aldeas, puestos, ciudades antiguas, cámaras— se
+    montan a partir de una pieza girada al azar (ver arriba). Las demás usan el
+    centro del chunk exacto, sin sorpresas.
     """
-    return (-8, -8) if d.get("type") == "minecraft:jigsaw" else (0, 0)
+    return PUNTOS_JIGSAW if d.get("type") == "minecraft:jigsaw" else PUNTOS_CENTRO
 
 
 ESTRUCTURAS = {}
@@ -353,9 +405,8 @@ def leer_estructuras(jar):
                           for x in b if isinstance(x, str)}
             else:
                 biomas = set()
-            dx, dz = _desplazamiento(d)
             fuera[n.rsplit("/", 1)[-1][:-5]] = {"biomas": biomas, "y": _altura_de(d),
-                                                "dx": dx, "dz": dz}
+                                                "puntos": _desplazamiento(d)}
         for dim in ("overworld", "nether", "end"):
             BIOMAS_DIMENSION[dim] = _resolver_etiqueta(z, dentro, "is_" + dim)
     return fuera
@@ -391,6 +442,27 @@ def cargar_estructuras(jar=None):
     return ESTRUCTURAS
 
 
+def confirmar_en(srv, semilla, cajas, conjuntos=None, progreso=None):
+    """Como `confirmar`, pero sobre una lista de rectángulos sueltos.
+
+    Existe por un fallo que costó un `Killed`: para comparar contra el mundo de
+    verdad se cogía la caja que abarca TODAS las regiones del disco. Si alguien
+    se ha ido una vez a X = -2.500.000, esa caja mide millones de bloques por
+    millones y calcular sus candidatas se come toda la memoria de la máquina.
+
+    Con una lista de cajas se mira solo donde hay mundo guardado.
+    """
+    conjuntos = conjuntos or sorted(CONJUNTOS)
+    vistas, fuera = set(), []
+    for x0, z0, x1, z1 in cajas:
+        for e in confirmar(srv, semilla, x0, z0, x1, z1, conjuntos, progreso):
+            clave = (e["tipo"], e["x"], e["z"])
+            if clave not in vistas:
+                vistas.add(clave)
+                fuera.append(e)
+    return fuera
+
+
 def confirmar(srv, semilla, x0, z0, x1, z1, conjuntos=None, progreso=None):
     """Candidatas → estructuras de verdad, preguntando el bioma de cada una.
 
@@ -414,7 +486,7 @@ def confirmar(srv, semilla, x0, z0, x1, z1, conjuntos=None, progreso=None):
     # subterráneas en el suyo, y así son dos o tres viajes en vez de cien mil.
     def receta(m):
         i = ESTRUCTURAS.get(m) or {}
-        return (i.get("y", Y_SUPERFICIE), i.get("dx", 0), i.get("dz", 0))
+        return (i.get("y", Y_SUPERFICIE), tuple(i.get("puntos") or PUNTOS_CENTRO))
 
     grupos = {}
     candidatas = {}
@@ -427,18 +499,19 @@ def confirmar(srv, semilla, x0, z0, x1, z1, conjuntos=None, progreso=None):
             for x, z in cs:
                 grupos.setdefault(r, []).append((x, z))
 
-    hechas, total = 0, sum(len(v) for v in grupos.values())
-    biomas_de = {}                          # (receta, x, z) → bioma
+    hechas, total = 0, sum(len(v) * len(r[1]) for r, v in grupos.items())
+    biomas_de = {}                          # (receta, x, z) → conjunto de biomas
     for r, lista in grupos.items():
-        y, dx, dz = r
-        for i in range(0, len(lista), 2000):
-            trozo = lista[i:i + 2000]
-            nombres = srv.puntos([(x + dx, z + dz) for x, z in trozo], y=y)
-            for (x, z), b in zip(trozo, nombres):
-                biomas_de[(r, x, z)] = b
-            hechas += len(trozo)
-            if progreso:
-                progreso(hechas, total)
+        y, puntos = r
+        for dx, dz in puntos:
+            for i in range(0, len(lista), 2000):
+                trozo = lista[i:i + 2000]
+                nombres = srv.puntos([(x + dx, z + dz) for x, z in trozo], y=y)
+                for (x, z), b in zip(trozo, nombres):
+                    biomas_de.setdefault((r, x, z), set()).add(b)
+                hechas += len(trozo)
+                if progreso:
+                    progreso(hechas, total)
 
     fuera = []
     for c in conjuntos:
@@ -449,8 +522,9 @@ def confirmar(srv, semilla, x0, z0, x1, z1, conjuntos=None, progreso=None):
                 info = ESTRUCTURAS.get(m)
                 if not info:
                     continue
-                b = biomas_de.get((receta(m), x, z))
-                if b and b in info["biomas"]:
+                vistos = biomas_de.get((receta(m), x, z)) or ()
+                b = next((v for v in vistos if v in info["biomas"]), None)
+                if b:
                     fuera.append({"conjunto": c, "tipo": m, "x": x, "z": z,
                                   "bioma": b, "seguro": True})
                     break

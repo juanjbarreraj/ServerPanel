@@ -17,9 +17,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import nbt
 
 HOME = Path.home()
-WORLD = HOME / "minecraft/world"
-BLUEMAP = HOME / "bluemap"
-PANEL = HOME / "panel"
+# MC_DIR y PANEL_DIR mandan sobre lo de casa: es lo que usa el resto del panel,
+# y sin ello esto solo funciona si se corre con el usuario correcto — lo que
+# hace imposible probarlo contra una copia del mundo.
+MC = Path(os.environ.get("MC_DIR", HOME / "minecraft"))
+WORLD = MC / "world"
+BLUEMAP = Path(os.environ.get("BLUEMAP_DIR", HOME / "bluemap"))
+PANEL = Path(os.environ.get("PANEL_DIR", HOME / "panel"))
 ICON_SRC = PANEL / "static/markers"
 ICON_DST = BLUEMAP / "web/assets/markers"
 OUT_JSON = PANEL / "data/structures.json"
