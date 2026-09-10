@@ -3072,8 +3072,14 @@ const M2 = {
   pintando:false, listo:false, aviso:'',
 };
 const M2_MAX_ICONOS = 3000;
-const M2_SLIME_DESDE = 1/8;      // píxeles por bloque mínimos para dibujar chunks
-const M2_SLIME_ZOOM  = 1/4;      // a esto se acerca solo al encender los slimes
+/* Un chunk mide 16 bloques, así que en pantalla mide 16·escala píxeles.
+   Con la escala de entrada (1/8) eso son DOS píxeles: se dibujaban, sí, pero
+   eran una neblina verde translúcida sobre un mapa que ya es verde — o sea,
+   invisibles. Y el salto automático solo entraba por debajo de 1/8, que es
+   justo la escala de entrada, así que encender la capa no hacía nada visible.
+   Ahora el mínimo es 4 px por chunk y al encenderla se acerca hasta 12. */
+const M2_SLIME_DESDE = 1/4;      // 4 px por chunk: menos que eso es una mancha
+const M2_SLIME_ZOOM  = 3/4;      // 12 px por chunk, como en Chunkbase
 
 async function m2Cargar(){
   if (M2.listo) { m2Medir(); m2Pinta(); return; }
@@ -3282,8 +3288,10 @@ function m2DibujaSlime(g){
   const s=M2.slime;
   if (!s || !M2.verSlime || M2.esc < M2_SLIME_DESDE) return;
   const lado=16*M2.esc;
-  g.fillStyle='rgba(90, 220, 90, .34)';
-  g.strokeStyle='rgba(60, 190, 60, .55)';
+  // Verde vivo con borde OSCURO. El verde sobre verde no se ve; lo que separa
+  // un chunk de slime del bosque de debajo es la retícula negra.
+  g.fillStyle='rgba(106, 240, 96, .42)';
+  g.strokeStyle='rgba(12, 40, 10, .85)';
   g.lineWidth=1;
   for (let j=0;j<s.n;j++){
     const y=m2az((s.cz+j)*16);
@@ -3293,7 +3301,7 @@ function m2DibujaSlime(g){
       const x=m2ax((s.cx+i)*16);
       if (x<-lado || x>M2.w) continue;
       g.fillRect(x, y, lado, lado);
-      if (lado > 6) g.strokeRect(x+.5, y+.5, lado-1, lado-1);
+      if (lado > 3) g.strokeRect(x+.5, y+.5, lado-1, lado-1);
     }
   }
 }
@@ -3428,6 +3436,7 @@ function m2Iconos(){
   }
   m2Reglas(g);
   const falta = M2.recorte ? 'Acércate para ver las estructuras'
+              : (M2.verSlime && M2.esc < M2_SLIME_DESDE) ? 'Acércate para ver los chunks de slime'
               : M2.lejosDensas ? 'Acércate para ver los tesoros y las minas'
               : (dibujados > M2_MAX_ICONOS ? 'Hay más de los que caben, acércate' : M2.aviso);
   const a=$('m2-aviso');
@@ -3517,7 +3526,9 @@ function m2Capas(){
     b.title='Un chunk de cada diez. Al encenderlo el mapa se acerca hasta que se ven';
     b.onclick=()=>{
       M2.verSlime=!M2.verSlime;
-      if (M2.verSlime && M2.esc < M2_SLIME_DESDE) m2Volar(M2.cx, M2.cz, M2_SLIME_ZOOM);
+      // Acercar SIEMPRE que se esté más lejos de lo cómodo. Antes solo saltaba
+      // por debajo del mínimo, y el mínimo coincidía con la escala de entrada.
+      if (M2.verSlime && M2.esc < M2_SLIME_ZOOM) m2Volar(M2.cx, M2.cz, M2_SLIME_ZOOM);
       m2Guardar(); m2Capas(); m2PideSlime(); m2Iconos();
     };
     w.appendChild(b);
@@ -3554,7 +3565,7 @@ function m2Todas(encender){
     if (encender){ if (!t.densa) M2.forzados.add(t.k); }
     else M2.apagados.add(t.k);
   }
-  M2.verSlime = encender && M2.esc >= M2_SLIME_DESDE;
+  M2.verSlime = !!encender;
   M2.verAparicion = encender;
   m2Guardar(); m2Capas(); m2PideSlime(); m2PideEstructuras(); m2Iconos();
 }

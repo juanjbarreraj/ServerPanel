@@ -65,7 +65,7 @@ case " $* " in *" --a-fondo "*) ARGS="--completo" ;; esac
 ARRANQUE=$(date +%s)
 decir "───────── iconos: inicio ─────────"
 
-decir "1/4 escribiendo los marcadores en las configs${ARGS:+ ($ARGS)}…"
+decir "1/4 escribiendo los marcadores y buscando generadores${ARGS:+ ($ARGS)}…"
 if ! nice -n 19 ionice -c3 python3 "$PANEL/scripts/scan-structures.py" $ARGS 2>&1 | tee -a "$LOG"; then
   decir "⚠ el escaneo falló; no sigo"
   exit 1

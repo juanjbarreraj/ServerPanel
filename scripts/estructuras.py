@@ -211,7 +211,7 @@ TIPOS = {
     # después de excavar las cuevas, así que no hay fórmula. Salen de leer el
     # mundo ya explorado (scan-structures.py), igual que los marcadores del
     # mapa 3D. Por eso lleva su propia etiqueta.
-    "spawner":          ("spawner",         "Generadores",          "Spawners",               3000, True,  44),
+    "spawner":          ("spawner",         "Generadores",          "Spawners",               3000, False, 44),
 }
 
 

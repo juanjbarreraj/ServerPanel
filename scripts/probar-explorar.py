@@ -164,6 +164,40 @@ with sync_playwright() as pw:
         ok(all(s[3].startswith('spawner_') for s in g), "cada uno dice qué bicho es")
 
 
+
+    print("── chunks de slime ──")
+    pag.evaluate("() => { M2.verSlime=false; m2Volar(0,0,1/8); }")
+    pag.wait_for_timeout(600)
+    antes = pag.evaluate("() => M2.esc")
+    pag.evaluate("() => { const b=document.getElementById('m2cap-slime'); b.click(); }")
+    pag.wait_for_function("() => M2.slime && M2.slime.datos", timeout=60000)
+    pag.wait_for_timeout(1200)
+    ok(pag.evaluate("() => M2.verSlime"), "el botón enciende la capa")
+    esc = pag.evaluate("() => M2.esc")
+    ok(esc > antes, "y acerca el mapa (%s → %s)" % (antes, esc))
+    lado = 16 * esc
+    ok(lado >= 8, "cada chunk mide %.0f px, que se ve" % lado)
+    s = pag.evaluate("() => ({n:M2.slime.n, unos:Array.from(M2.slime.datos).filter(Boolean).length})")
+    ok(s["unos"] > 0, "llegan chunks de slime: %d de %d" % (s["unos"], s["n"]*s["n"]))
+    # ¿se ven de verdad? se cuentan píxeles verdes Y píxeles de la retícula oscura
+    pinta = pag.evaluate("""() => { const c=document.getElementById('m2-ico');
+      const g=c.getContext('2d',{willReadFrequently:true});
+      const d=g.getImageData(0,0,c.width,c.height).data;
+      let verde=0, borde=0;
+      for (let i=0;i<d.length;i+=4){
+        if (d[i+3]<10) continue;
+        if (d[i+1]>d[i]+25 && d[i+1]>d[i+2]+25) verde++;
+        if (d[i]<45 && d[i+1]<60 && d[i+2]<45) borde++;
+      }
+      return {verde, borde}; }""")
+    print("     ", pinta)
+    ok(pinta["verde"] > 3000, "hay relleno verde (%d px)" % pinta["verde"])
+    ok(pinta["borde"] > 500, "y la retícula oscura que los separa (%d px)" % pinta["borde"])
+    # apagarlos otra vez
+    pag.evaluate("() => { document.getElementById('m2cap-slime').click(); }")
+    pag.wait_for_timeout(700)
+    ok(not pag.evaluate("() => M2.verSlime"), "se pueden apagar")
+
     print("── la barra de arriba se va al bajar (solo en Explorar) ──")
     pag.set_viewport_size({"width":1280,"height":700}); pag.wait_for_timeout(400)
     arriba = pag.evaluate("""() => { window.scrollTo(0,0); return 1; }""")
@@ -174,9 +208,17 @@ with sync_playwright() as pw:
     pag.wait_for_timeout(800)
     ok(pag.evaluate("() => document.getElementById('topbar').classList.contains('fuera')"),
        "al bajar se va")
-    fuera_pos = pag.evaluate("""() => { const r=document.getElementById('topbar').getBoundingClientRect();
-        return {abajo: Math.round(r.bottom), op: getComputedStyle(document.getElementById('topbar')).opacity}; }""")
-    ok(fuera_pos["abajo"] <= 2, "y de verdad sale de la pantalla (borde inferior %s)" % fuera_pos["abajo"])
+    # esperar a que la ANIMACIÓN termine, no un tiempo fijo: con el mapa
+    # recolocándose el cronómetro fallaba solo a veces, que es lo peor
+    try:
+        pag.wait_for_function(
+            "() => document.getElementById('topbar').getBoundingClientRect().bottom <= 2",
+            timeout=4000)
+        fuera_ok = True
+    except Exception:
+        fuera_ok = False
+    abajo = pag.evaluate("() => Math.round(document.getElementById('topbar').getBoundingClientRect().bottom)")
+    ok(fuera_ok, "y de verdad sale de la pantalla (borde inferior %s)" % abajo)
     # a media altura NO vuelve: solo arriba del todo
     pag.evaluate("() => window.scrollTo(0, 180)")
     pag.wait_for_timeout(700)

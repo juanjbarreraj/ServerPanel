@@ -405,13 +405,18 @@ def main():
     # falta si algo se ve raro; lo normal es el incremental.
     completo = "--completo" in sys.argv
     gens = None
-    if rapido and OUT_JSON.exists():
+    # `--rapido` reutiliza lo guardado, pero solo sirve si está guardado TODO.
+    # Los generadores llegaron después, así que en un server que ya venía
+    # funcionando su fichero no existe: si no se comprueba, el botón «Actualizar
+    # los iconos» pasa de largo para siempre y la capa no aparece nunca.
+    if rapido and OUT_JSON.exists() and GENS_JSON.exists():
         found = json.loads(OUT_JSON.read_text())
         print("Reutilizando el escaneo guardado (%s estructuras)"
               % format(sum(len(v) for v in found.values()), ","))
     else:
         if rapido:
-            print("(no hay escaneo guardado todavía, toca escanear)")
+            print("(falta %s: toca leer el mundo esta vez)"
+                  % ("el escaneo" if not OUT_JSON.exists() else "la lista de generadores"))
         print("Escaneando el mundo…" + (" (completo, sin caché)" if completo else ""))
         t0 = time.time()
         found, gens = scan(completo=completo)
