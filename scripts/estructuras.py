@@ -134,6 +134,45 @@ CONJUNTOS_RESPALDO = {
 }
 
 
+# ─────────────────────────────────────────── el mismo tipo, distinto dibujo
+#
+# Una aldea de nieve y una del desierto son la MISMA capa («Aldea») pero no se
+# ven igual en el juego, así que tampoco deberían verse igual en el mapa. Lo
+# mismo con los generadores: la capa es «Generadores», pero encima del mapa lo
+# útil es saber si lo que hay dentro son zombis o arañas de cueva.
+#
+# El fichero del icono se llama igual que la variante (village_snowy.png). Si no
+# existe, el mapa usa el del tipo y no se rompe nada: así se pueden ir añadiendo
+# de uno en uno.
+VARIANTES = {
+    "village_plains":     ("Aldea de llanura",      "Plains Village"),
+    "village_desert":     ("Aldea del desierto",    "Desert Village"),
+    "village_savanna":    ("Aldea de sabana",       "Savanna Village"),
+    "village_snowy":      ("Aldea nevada",          "Snowy Village"),
+    "village_taiga":      ("Aldea de taiga",        "Taiga Village"),
+    "ocean_ruin_cold":    ("Ruinas frías",          "Cold Ocean Ruins"),
+    "ocean_ruin_warm":    ("Ruinas cálidas",        "Warm Ocean Ruins"),
+    "shipwreck":          ("Naufragio",             "Shipwreck"),
+    "shipwreck_beached":  ("Naufragio varado",      "Beached Shipwreck"),
+    "mineshaft":          ("Mina abandonada",       "Mineshaft"),
+    "mineshaft_mesa":     ("Mina de mesa",          "Badlands Mineshaft"),
+    "spawner_zombie":     ("Generador de zombis",   "Zombie Spawner"),
+    "spawner_skeleton":   ("Generador de esqueletos", "Skeleton Spawner"),
+    "spawner_spider":     ("Generador de arañas",   "Spider Spawner"),
+    "spawner_cave_spider": ("Generador de arañas de cueva", "Cave Spider Spawner"),
+    "spawner_silverfish": ("Generador de lepismas", "Silverfish Spawner"),
+    "spawner_blaze":      ("Generador de blazes",   "Blaze Spawner"),
+    "spawner_magma_cube": ("Generador de cubos de magma", "Magma Cube Spawner"),
+}
+
+
+def nombre_variante(v, ingles=False):
+    n = VARIANTES.get(v)
+    if not n:
+        return v.replace("_", " ").title()
+    return n[1] if ingles else n[0]
+
+
 # ───────────────────────────────────────────── cómo se enseña cada estructura
 #
 # Esta tabla la comparten el mapa 3D (scan-structures.py, que lee el mundo de
@@ -168,6 +207,11 @@ TIPOS = {
     "buried_treasure":  ("buried_treasure", "Tesoro enterrado",     "Buried Treasure",        3000, True,  41),
     "ruined_portal":    ("ruined_portal",   "Portal en ruinas",     "Ruined Portal",          3000, True,  42),
     "mineshaft":        ("mineshaft",       "Mina abandonada",      "Mineshaft",              3000, True,  43),
+    # Este NO sale de la semilla: los generadores son decoración que se coloca
+    # después de excavar las cuevas, así que no hay fórmula. Salen de leer el
+    # mundo ya explorado (scan-structures.py), igual que los marcadores del
+    # mapa 3D. Por eso lleva su propia etiqueta.
+    "spawner":          ("spawner",         "Generadores",          "Spawners",               3000, True,  44),
 }
 
 

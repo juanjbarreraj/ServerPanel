@@ -127,6 +127,42 @@ with sync_playwright() as pw:
     vac = pag.evaluate("async () => (await (await fetch('/api/mapa2/hechas')).json()).hechas")
     ok(not vac, "se puede desmarcar: %s" % vac)
 
+
+    print("── variantes: cada aldea con el dibujo de su bioma ──")
+    v = pag.evaluate("() => Object.keys(M2.variantes||{})")
+    print("     variantes con icono propio:", v)
+    if not v:
+        print("  — saltada: todavía no hay ningún icono de variante en static/markers/")
+    else:
+        # la lista de estructuras trae la variante en el cuarto hueco
+        muestra = pag.evaluate("""() => (M2.estructuras||[]).filter(s=>s[3] && s[3]!==s[0]).slice(0,4)""")
+        print("     ejemplos:", muestra)
+        ok(bool(muestra), "las estructuras llegan con su variante")
+        usa = pag.evaluate("""() => { const s=(M2.estructuras||[]).find(s=>M2.variantes[s[3]]);
+            if (!s) return null;
+            return {sub:s[3], mismo: M2.iconos.get(s[3]) === M2.iconos.get(s[0])}; }""")
+        if usa:
+            ok(not usa["mismo"], "y dibujan con SU icono, no el de la capa (%s)" % usa["sub"])
+        nombre = pag.evaluate("""() => { const s=(M2.estructuras||[]).find(s=>M2.variantes[s[3]]);
+            if (!s) return null; m2Globo(s[0],s[1],s[2],s[3]);
+            return document.querySelector('#m2-globo b').textContent; }""")
+        if nombre:
+            ok(nombre not in ("Aldea","Generadores"), "el globo dice la variante: %r" % nombre)
+
+    print("── generadores del mundo explorado ──")
+    hay = pag.evaluate("() => (M2.est.tipos||[]).some(t=>t.delMundo)")
+    if not hay:
+        print("  — saltada: falta static/markers/spawner.png o data/spawners.json")
+    else:
+        pag.evaluate("""() => { M2.apagados.delete('spawner'); M2.forzados.add('spawner');
+            m2Volar(0,0,1); m2Capas(); m2PideEstructuras(); }""")
+        pag.wait_for_function("() => M2.pidiendo===0", timeout=60000)
+        pag.wait_for_timeout(1500)
+        g = pag.evaluate("() => (M2.estructuras||[]).filter(s=>s[0]==='spawner')")
+        print("     generadores a la vista:", g)
+        ok(bool(g), "llegan generadores")
+        ok(all(s[3].startswith('spawner_') for s in g), "cada uno dice qué bicho es")
+
     print("── sin errores de JavaScript ──")
     ok(not err, "consola limpia: %r" % err[:3])
     nav.close()

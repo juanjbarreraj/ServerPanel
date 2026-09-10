@@ -27,6 +27,7 @@ PANEL = Path(os.environ.get("PANEL_DIR", HOME / "panel"))
 ICON_SRC = PANEL / "static/markers"
 ICON_DST = BLUEMAP / "web/assets/markers"
 OUT_JSON = PANEL / "data/structures.json"
+GENS_JSON = PANEL / "data/spawners.json"   # generadores del terreno explorado
 MANUAL_JSON = PANEL / "data/markers.json"       # marcadores puestos a mano desde el panel
 # Tamaño con el que se VEN los marcadores sobre el mapa. Los ficheros de
 # static/markers/ son de 64 px nativos y ahora se copian tal cual, sin reducir:
@@ -124,6 +125,83 @@ def structures_in_chunk(root, cx, cz):
         found.append({"kind": kind, "id": sid, "x": int(x), "y": int(y), "z": int(z)})
     return found
 
+# ------------------------------------------------- generadores de monstruos
+#
+# Los generadores (las «monster rooms» y los de las minas, fortalezas y
+# fortines) NO se pueden calcular de la semilla: son decoración que Minecraft
+# coloca DESPUÉS de excavar las cuevas, así que para saber dónde hay uno habría
+# que generar el mundo entero bloque a bloque. Chunkbase tampoco los tiene.
+#
+# Pero en el mundo ya explorado están escritos, como cualquier otro bloque con
+# datos. Aquí se leen de `block_entities` del chunk, que es la misma lista que
+# ya se abre para las estructuras: sale casi gratis.
+_SPAWNER = {"minecraft:mob_spawner", "mob_spawner", "MobSpawner"}
+
+
+def _texto(tag):
+    if tag is None:
+        return None
+    v = tag.v
+    return v.decode("utf-8", "replace") if isinstance(v, bytes) else (v if isinstance(v, str) else None)
+
+
+def _mob_de(payload):
+    """Qué bicho sale de este generador, sin el `minecraft:`.
+
+    El nombre del campo ha cambiado varias veces (EntityId → SpawnData.id →
+    SpawnData.entity.id → spawn_data.entity.id), y un mundo que viene de una
+    versión vieja puede traer cualquiera de ellos. Se prueban todos.
+    """
+    for camino in (("SpawnData", "entity", "id"), ("spawn_data", "entity", "id"),
+                   ("SpawnData", "id"), ("EntityId",)):
+        nodo, cuerpo = None, payload
+        try:
+            for paso in camino:
+                nodo = nbt.cget(cuerpo, paso)
+                if nodo is None:
+                    break
+                cuerpo = nodo.v
+            v = _texto(nodo)
+            if v:
+                return v.split(":")[-1]
+        except Exception:
+            continue
+    # algunos traen la lista de posibles en vez del que toca ahora
+    try:
+        pot = nbt.cget(payload, "SpawnPotentials") or nbt.cget(payload, "spawn_potentials")
+        primero = pot.v.items[0]
+        d = nbt.cget(primero, "data")
+        ent = nbt.cget(d.v if d is not None else primero, "entity")
+        return _texto(nbt.cget(ent.v, "id")).split(":")[-1]
+    except Exception:
+        return "desconocido"
+
+
+def spawners_in_chunk(root):
+    """[{mob, x, y, z}] de los generadores que hay en este chunk."""
+    be = nbt.cget(root.v, "block_entities") or nbt.cget(root.v, "BlockEntities")
+    if be is None or not getattr(be.v, "items", None):
+        return []
+    fuera = []
+    for tag in be.v.items:
+        try:
+            ident = nbt.cget(tag, "id")
+            if ident is None:
+                continue
+            v = ident.v.decode() if isinstance(ident.v, bytes) else str(ident.v)
+            if v not in _SPAWNER:
+                continue
+            x = nbt.cget(tag, "x"); y = nbt.cget(tag, "y"); z = nbt.cget(tag, "z")
+            if x is None or z is None:
+                continue
+            fuera.append({"mob": _mob_de(tag),
+                          "x": int(x.v), "y": int(y.v) if y is not None else 40,
+                          "z": int(z.v)})
+        except Exception:
+            continue
+    return fuera
+
+
 # ------------------------------------------------------- caché por región
 # Leer las ~340 regiones enteras tarda demasiado para hacerlo cada noche, y por
 # eso antes solo se escaneaba una vez por semana: el terreno que exploraban los
@@ -135,7 +213,7 @@ def structures_in_chunk(root, cx, cz):
 # ficheros que han cambiado, que son justo los chunks nuevos. Así el escaneo
 # cabe en el trabajo de todas las noches.
 CACHE_JSON = PANEL / "data/structures-cache.json"
-CACHE_V = 2
+CACHE_V = 3        # 3: además de estructuras, generadores
 FRESCA = 120        # segundos
 
 def _cache_cargar():
@@ -155,7 +233,7 @@ def _cache_guardar(dims):
 
 def scan(completo=False):
     cache = {} if completo else _cache_cargar()
-    all_found, nueva = {}, {}
+    all_found, all_gens, nueva = {}, {}, {}
     ahora_ts = time.time()
     for dim, rdir in DIMS:
         if not rdir.is_dir():
@@ -173,15 +251,16 @@ def scan(completo=False):
                 actual[f.name] = guardado
                 reusadas += 1
                 continue
-            items = []
+            items, gens = [], []
             for cx, cz, root in read_region(f):
                 items.extend(structures_in_chunk(root, cx, cz))
+                gens.extend(spawners_in_chunk(root))
             # Si el servidor acaba de tocar el fichero puede que lo hayamos leído
             # a medio escribir. Se usa lo leído, pero se guarda con una firma
             # imposible para que la próxima vez se relea sí o sí.
             if ahora_ts - st.st_mtime < FRESCA:
                 firma = [0, 0]
-            actual[f.name] = {"f": firma, "i": items}
+            actual[f.name] = {"f": firma, "i": items, "g": gens}
             leidas += 1
 
         # dedupe por tipo+coordenada redondeada
@@ -193,11 +272,20 @@ def scan(completo=False):
                     continue
                 seen.add(k); uniq.append(it)
         all_found[dim] = uniq
+        vistos, gens = set(), []
+        for datos in actual.values():
+            for g in (datos.get("g") or []):
+                k = (g["x"], g["y"], g["z"])
+                if k in vistos:
+                    continue
+                vistos.add(k); gens.append(g)
+        all_gens[dim] = gens
         nueva[dim] = actual
-        print("  %-9s %4d regiones (%d releídas, %d de caché) → %s estructuras"
-              % (dim + ":", len(actual), leidas, reusadas, format(len(uniq), ",")))
+        print("  %-9s %4d regiones (%d releídas, %d de caché) → %s estructuras, %s generadores"
+              % (dim + ":", len(actual), leidas, reusadas,
+                 format(len(uniq), ","), format(len(gens), ",")))
     _cache_guardar(nueva)
-    return all_found
+    return all_found, all_gens
 
 # ---------------------------------------------------------------- marcadores
 BEGIN = "# >>> CALIFREE MARKERS (autogenerado por scan-structures.py — no editar)"
@@ -316,6 +404,7 @@ def main():
     # --completo tira la caché por región y relee el mundo entero. Solo hace
     # falta si algo se ve raro; lo normal es el incremental.
     completo = "--completo" in sys.argv
+    gens = None
     if rapido and OUT_JSON.exists():
         found = json.loads(OUT_JSON.read_text())
         print("Reutilizando el escaneo guardado (%s estructuras)"
@@ -325,7 +414,7 @@ def main():
             print("(no hay escaneo guardado todavía, toca escanear)")
         print("Escaneando el mundo…" + (" (completo, sin caché)" if completo else ""))
         t0 = time.time()
-        found = scan(completo=completo)
+        found, gens = scan(completo=completo)
         print(f"  ({time.time()-t0:.1f}s)")
     try:
         manual = json.loads(MANUAL_JSON.read_text())
@@ -333,6 +422,13 @@ def main():
         manual = []
     OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     OUT_JSON.write_text(json.dumps(found))
+    # Los generadores van a su propio fichero: los lee la pestaña Explorar para
+    # pintarlos en el mapa. Con --rapido no se recalculan, así que no se pisa
+    # lo que hubiera guardado.
+    if gens is not None:
+        GENS_JSON.write_text(json.dumps(gens))
+        print("  %s generadores → %s" % (format(sum(len(v) for v in gens.values()), ","),
+                                         GENS_JSON.name))
     if dry:
         print(build_block(found.get("overworld", [])[:3], manual, "overworld"))
         return

@@ -500,10 +500,10 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 
 .m2-capas.tira{display:flex; gap:6px; overflow-x:auto; overflow-y:hidden;
   padding:0 2px 9px; scroll-behavior:smooth}
-.m2-capas.tira .m2-cap{flex:0 0 auto; width:48px; height:48px; padding:0;
+.m2-capas.tira .m2-cap{flex:0 0 auto; width:60px; height:60px; padding:0;
   justify-content:center; position:relative}
 .m2-capas.tira .m2-cap .et{display:none}
-.m2-capas.tira .m2-cap img{width:32px; height:32px; flex:0 0 32px}
+.m2-capas.tira .m2-cap img{width:44px; height:44px; flex:0 0 44px}
 /* la cuenta, en una esquina: en la tira no cabe al lado del nombre */
 .m2-capas.tira .m2-cap .n{position:absolute; right:3px; bottom:1px; font-size:.58rem;
   font-weight:700; opacity:.75}
@@ -517,7 +517,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 
 .m2-capas.lista{display:grid; grid-template-columns:repeat(auto-fill, minmax(205px, 1fr));
   gap:7px}
-.m2-modo{flex:0 0 auto; width:34px; height:48px; border:0; border-radius:5px; cursor:pointer;
+.m2-modo{flex:0 0 auto; width:34px; height:60px; border:0; border-radius:5px; cursor:pointer;
   background:var(--slotbg); color:var(--ink3); font-size:.9rem; line-height:1;
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
 .m2-modo:hover{color:var(--slime2)}
@@ -528,7 +528,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   background:var(--slotbg); transition:all .18s var(--spring); text-align:left; width:100%;
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
 .m2-cap .et{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.m2-cap img{width:20px; height:20px; flex:0 0 20px; image-rendering:pixelated; opacity:.4; transition:opacity .18s}
+.m2-cap img{width:26px; height:26px; flex:0 0 26px; image-rendering:pixelated; opacity:.4; transition:opacity .18s}
 .m2-cap.on{color:var(--ink)}
 .m2-cap.on img{opacity:1}
 .m2-cap.on{box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06),
@@ -938,7 +938,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <img class="banner" src="/banner.png" onerror="this.style.display='none'">
     <div class="login-inner">
       <h1 class="brand pxfont"><span class="cube"></span><span id="brand-login">Serve Actual</span></h1>
-      <div class="sub" style="margin-bottom:16px">Panel del servidor — solo con invitación</div>
+      <div class="sub" style="margin-bottom:16px">Panel del servidor, solo con invitación</div>
       <div id="li-creds">
         <div class="field"><label>Usuario</label><input id="li-user" autocomplete="username"></div>
         <div class="field"><label>Contraseña</label><input id="li-pass" type="password" autocomplete="current-password"
@@ -992,9 +992,9 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <div><div class="lab" data-i18n="t_mem">Memoria del server</div><div class="val px" id="t-mem">—</div></div></div>
     </div>
     <div class="grid two" style="margin-bottom:14px">
-      <div class="card"><h3 data-i18n="ch_tick">Tick — últimos 10 minutos (ms)</h3>
+      <div class="card"><h3 data-i18n="ch_tick">Tick, últimos 10 minutos (ms)</h3>
         <div class="chartwrap"><svg id="ch-tick"></svg><div class="tip" id="tip-tick"></div></div></div>
-      <div class="card"><h3 data-i18n="ch_mem">Memoria usada — últimos 10 minutos (GB)</h3>
+      <div class="card"><h3 data-i18n="ch_mem">Memoria usada, últimos 10 minutos (GB)</h3>
         <div class="chartwrap"><svg id="ch-mem"></svg><div class="tip" id="tip-mem"></div></div></div>
     </div>
     <div class="grid two">
@@ -1079,7 +1079,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
     <div class="card" style="padding:10px">
       <iframe id="map-frame" title="Mapa del mundo" style="width:100%; height:calc(100vh - 250px); min-height:min(480px, 70vh); border:0; border-radius:8px; background:#04060a"></iframe>
-      <div class="note" style="margin:8px 4px 2px" data-i18n="map_note">El mundo real en 3D — arrastra para girar, rueda para acercar. Se actualiza cada noche con lo que construyeron en el día.</div>
+      <div class="note" style="margin:8px 4px 2px" data-i18n="map_note">El mundo real en 3D</div>
     </div>
     <div class="card hidden" id="map-mk" style="margin-top:14px">
       <h3><img class="hico" src="/static/ui/s-posicion.png?v=14" alt="" onerror="this.outerHTML='📍 '">Lugares del server</h3>
@@ -1104,7 +1104,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
           <button class="btn small" onclick="mkMarcadores()"><img class="bico" src="/static/ui/s-posicion.png?v=14" alt="" onerror="this.outerHTML='📍 '">Actualizar los iconos</button>
           <button class="btn small ghost" onclick="mkScan()"><img class="bico" src="/static/ui/mapa.png?v=14" alt="" onerror="this.outerHTML='🔎 '">Volver a dibujar el mapa entero</button>
         </div>
-        <div class="note"><b>Los iconos</b> vuelve a publicar sobre el mapa 3D los lugares de aquí arriba, y de paso quita lo que sobre: tarda segundos. Las estructuras (aldeas, ciudades antiguas, monumentos…) ya no van aquí — están en la pestaña <b>Explorar</b>, donde salen todas y no solo las del terreno explorado. <b>Volver a dibujar</b> repinta el terreno y tarda más de una hora; normalmente no hace falta, porque el mapa se actualiza solo cada noche.</div>
+        <div class="note">Volver a dibujar repinta el terreno y tarda más de una hora; normalmente no hace falta, porque el mapa se actualiza solo cada noche.</div>
         <div class="note" id="mk-estado" style="margin-top:8px"></div>
       </div>
     </div>
@@ -1164,7 +1164,6 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <div class="card">
       <h3><img class="hico" src="/static/ui/historia.png?v=11" alt=""
            onerror="this.outerHTML='🕰️ '"><span data-i18n="hist_title">Lo que ha pasado en el server</span></h3>
-      <div class="note" style="margin-top:0" data-i18n="hist_note">Sale del registro del propio servidor. Sin plugins ni mods.</div>
       <div class="note hidden" id="hi-relleno"></div>
       <div class="hi-f" style="margin-top:12px" id="hi-filtros"></div>
       <div class="hilist" id="hi-lista"></div>
@@ -1177,7 +1176,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- MODERATION -->
   <section id="tab-mod" class="hidden">
     <div class="card" id="joinreq-card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-puerta.png?v=11" alt="" onerror="this.outerHTML=''">Solicitudes de ingreso — tocando la puerta</h3>
+      <h3><img class="hico" src="/static/ui/s-puerta.png?v=11" alt="" onerror="this.outerHTML=''">Solicitudes de ingreso, tocando la puerta</h3>
       <div style="overflow-x:auto"><table id="jr-table">
         <thead><tr><th>Jugador</th><th class="right">Intentos</th><th>Último intento</th><th class="right"></th></tr></thead>
         <tbody></tbody></table></div>
@@ -1185,7 +1184,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
     <div class="grid two">
       <div class="card">
-        <h3>Whitelist — quién puede entrar</h3>
+        <h3>Whitelist, quién puede entrar</h3>
         <div class="formrow"><input id="wl-name" placeholder="Nombre exacto de Minecraft"><button class="btn small" onclick="wlAdd()">Aceptar jugador</button></div>
         <div style="overflow-x:auto"><table id="wl-table"><thead><tr><th>Nombre</th><th class="right"></th></tr></thead><tbody></tbody></table></div>
       </div>
@@ -1254,7 +1253,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <select id="nu-role"><option value="mod">Moderador</option><option value="viewer">Observador</option><option value="admin">Admin</option></select>
         <button class="btn small" onclick="createUser()">Crear</button>
       </div>
-      <div class="note">Pásale a cada amigo su usuario + contraseña temporal — el panel los obliga a cambiarla en su primer ingreso.</div>
+      <div class="note">Pásale a cada amigo su usuario + contraseña temporal, el panel los obliga a cambiarla en su primer ingreso.</div>
     </div>
     <div id="users-list"></div>
     <div class="card" style="margin-top:14px"><h3>Actividad reciente del panel</h3>
@@ -1297,7 +1296,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
           <input id="sys-pin" placeholder="PIN público (4-32)" maxlength="32">
           <button class="btn small" onclick="sysSetPin()">Guardar PIN</button>
         </div>
-        <div class="note">El PIN es la puerta de la vista pública. Cámbialo cuando quieras — las sesiones ya abiertas siguen vivas hasta 30 días.</div>
+        <div class="note">El PIN es la puerta de la vista pública. Cámbialo cuando quieras, las sesiones ya abiertas siguen vivas hasta 30 días.</div>
       </div>
       <div class="card">
         <h3><img class="hico" src="/static/ui/s-candado.png?v=14" alt="" onerror="this.outerHTML='🔐 '">Verificación en dos pasos (tu cuenta)</h3>
@@ -1354,7 +1353,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <a class="btn small ghost" href="#" id="mu-ultima" onclick="return muUltimaCopia(event)">Última copia de seguridad</a>
       </div>
       <div class="note">«Descargar este mundo» lo empaqueta tal y como está ahora: primero pausa el guardado del
-        servidor, comprime y lo reanuda. Por eso tarda un poco y no es un enlace directo — una copia hecha en
+        servidor, comprime y lo reanuda. Por eso tarda un poco y no es un enlace directo, una copia hecha en
         caliente sale con trozos a medio escribir y no lo notas hasta que intentas cargarla.</div>
     </div>
 
@@ -1393,7 +1392,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <label class="chip"><input type="checkbox" id="mu-tr-inv"> Inventario y experiencia</label>
       </div>
       <div class="note">Lo que había se guarda antes de pisarlo. El inventario es el único con truco:
-        llegan con sus cosas, pero se les reescribe la posición al spawn del mundo nuevo — las
+        llegan con sus cosas, pero se les reescribe la posición al spawn del mundo nuevo, las
         coordenadas del mundo viejo aquí pueden ser el interior de una montaña o el vacío.</div>
     </div>
 
@@ -1440,7 +1439,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 <!-- password modal -->
 <div class="modal-bg" id="tp-modal" onclick="if(event.target.id==='tp-modal')cerrar('tp-modal')">
   <div class="modal" style="max-width:520px" onclick="event.stopPropagation()">
-    <h3 style="margin-top:0">🧍 Teleport — <span id="tp-quien"></span></h3>
+    <h3 style="margin-top:0">🧍 Teleport, <span id="tp-quien"></span></h3>
     <div class="hi-f" id="tp-tipos" style="margin-bottom:12px"></div>
     <div id="tp-jug" class="hidden">
       <div class="note" style="margin-top:0">Lo mando junto a otro que esté conectado.</div>
@@ -1456,7 +1455,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
       <div class="note" id="tp-pista"></div>
     </div>
     <h3 style="margin:16px 0 4px; font-size:.95rem">Efectos antes de moverlo <span class="hi-sub">(opcional)</span></h3>
-    <div class="note" style="margin-top:0">Se aplican justo antes del salto — útil para caer de alto o llegar al Nether.</div>
+    <div class="note" style="margin-top:0">Se aplican justo antes del salto, útil para caer de alto o llegar al Nether.</div>
     <div id="tp-efectos"></div>
     <div id="tp-err" class="note" style="color:#ffb4a8"></div>
     <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px">
@@ -1468,7 +1467,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 
 <div class="modal-bg" id="ef-modal" onclick="if(event.target.id==='ef-modal')cerrar('ef-modal')">
   <div class="modal" style="max-width:520px" onclick="event.stopPropagation()">
-    <h3 style="margin-top:0">✨ Efectos — <span id="ef-quien"></span></h3>
+    <h3 style="margin-top:0">✨ Efectos, <span id="ef-quien"></span></h3>
     <div class="note" style="margin-top:0">Solo funciona con el jugador conectado.</div>
     <div id="ef-efectos"></div>
     <div id="ef-err" class="note" style="color:#ffb4a8"></div>
@@ -1539,18 +1538,18 @@ try{ LANG = localStorage.getItem('panel_lang') || 'es'; }catch(_){}
 const I18N = {
  es:{welcome:'Bienvenidos al Panel del servidor', mods:'Moderadores', pin_title:'PIN de acceso',
   pin_btn:'Entrar',
-  pin_wrong:'PIN incorrecto', pin_unset:'El PIN aún no está configurado — avísale al admin.',
-  pin_rate:'Demasiados intentos — espera 5 minutos',
+  pin_wrong:'PIN incorrecto', pin_unset:'El PIN aún no está configurado, avísale al admin.',
+  pin_rate:'Demasiados intentos, espera 5 minutos',
   tab_dash:'Inicio', tab_players:'Jugadores', tab_mem:'Memorias', tab_map:'Mapa',
-  map_note:'El mundo real en 3D — arrastra para girar, rueda para acercar. Se actualiza cada noche con lo que construyeron en el día.',
+  map_note:'El mundo real en 3D',
   t_state:'Servidor', t_online:'Jugadores en línea', t_tick:'Tiempo de tick', t_mem:'Memoria del server',
   st_on:'En línea', st_boot:'Arrancando', st_off:'Apagado',
-  ch_tick:'Tick — últimos 10 minutos (ms)', ch_mem:'Memoria usada — últimos 10 minutos (GB)',
+  ch_tick:'Tick, últimos 10 minutos (ms)', ch_mem:'Memoria usada, últimos 10 minutos (GB)',
   conn_now:'Conectados ahora', nobody:'Nadie conectado ahora', join_data:'Datos para entrar',
   kv_ver:'Versión', kv_engine:'Motor', kv_diff:'Dificultad', kv_view:'Distancia de visión', kv_wl:'En la whitelist',
   copy:'Copiar', copied:'Dirección copiada', players_book:'Libro de jugadores',
   pl_note:'Las estadísticas vienen directo de los archivos del servidor. Toca un jugador para ver su ficha.',
-  pl_empty:'Aún no hay estadísticas — aparecen cuando la gente juega.', collecting:'recolectando datos…',
+  pl_empty:'Aún no hay estadísticas, aparecen cuando la gente juega.', collecting:'recolectando datos…',
   back_players:'← Todos los jugadores', inv_btn:'🎒 Inventario', hist_add:'➕ Subir skin antigua',
   sort_by:'Ordenar por', sort_alpha:'Alfabético (A-Z)', sort_hours:'Más horas jugadas', sort_mobs:'Más mobs matados',
   sort_placed:'Más bloques puestos', sort_deaths:'Más muertes', sort_pvp:'Más jugadores matados',
@@ -1561,7 +1560,6 @@ const I18N = {
   sort_xp:'Nivel de experiencia', sort_seen:'Conectado más recientemente', lvl_short:'Nv.',
   tab_hist:'Historia',
   hist_title:'Lo que ha pasado en el server',
-  hist_note:'Sale del registro del propio servidor. Sin plugins ni mods.',
   hist_all:'Todo', hist_ses:'Sesiones', hist_dea:'Muertes', hist_adv:'Logros',
   hist_more:'Ver más atrás', hist_empty:'Todavía no hay nada por aquí.',
   hist_played:'jugó {0}', hist_online:'lleva {0} conectado',
@@ -1581,26 +1579,26 @@ const I18N = {
   th_km:'Km caminados', th_seen:'Última vez', online_tag:'(en línea)',
   now:'ahora mismo', min_ago:'hace {0} min', h_ago:'hace {0} h', d_ago:'hace {0} días',
   mem_title:'Memorias del server', mem_global:'Globales', mem_indiv:'Individuales',
-  mem_note:'El álbum del server — mira y comparte los mejores momentos.',
+  mem_note:'El álbum del server, mira y comparte los mejores momentos.',
   mem_up:'Subir una foto nueva', mem_up_to:'Subir a la carpeta de {0}', mem_desc:'Descripción (obligatoria):',
   mem_by:'subida por', mem_back:'← Todas las carpetas', mem_photos:'foto(s)', mem_none:'Aún no hay fotos aquí',
   close:'Cerrar', del:'Borrar', view_skin:'🧍 Ver skin en 3D', skin_walk:'▶ Caminar', skin_stop:'⏸ Quieto',
-  skin_hist:'Skins guardadas por el panel', skin_none:'El archivo arranca hoy — cada día el panel guarda la skin de todos.',
+  skin_hist:'Skins guardadas por el panel', skin_none:'El archivo arranca hoy, cada día el panel guarda la skin de todos.',
   skin_namemc:'Ver historial completo en NameMC ↗', logout:'Salir', guest:'invitado'},
  en:{welcome:'Welcome to the Server Panel', mods:'Moderators', pin_title:'Access PIN',
   pin_btn:'Enter',
-  pin_wrong:'Wrong PIN', pin_unset:'The PIN is not configured yet — tell the admin.',
-  pin_rate:'Too many attempts — wait 5 minutes',
+  pin_wrong:'Wrong PIN', pin_unset:'The PIN is not configured yet, tell the admin.',
+  pin_rate:'Too many attempts, wait 5 minutes',
   tab_dash:'Home', tab_players:'Players', tab_mem:'Memories', tab_map:'Map',
-  map_note:'The real world in 3D — drag to rotate, scroll to zoom. Updates every night with what was built during the day.',
+  map_note:'The real world in 3D',
   t_state:'Server', t_online:'Players online', t_tick:'Tick time', t_mem:'Server memory',
   st_on:'Online', st_boot:'Starting', st_off:'Offline',
-  ch_tick:'Tick — last 10 minutes (ms)', ch_mem:'Memory used — last 10 minutes (GB)',
+  ch_tick:'Tick, last 10 minutes (ms)', ch_mem:'Memory used, last 10 minutes (GB)',
   conn_now:'Connected now', nobody:'Nobody online right now', join_data:'How to join',
   kv_ver:'Version', kv_engine:'Engine', kv_diff:'Difficulty', kv_view:'View distance', kv_wl:'Whitelisted',
   copy:'Copy', copied:'Address copied', players_book:'Player book',
   pl_note:'Stats come straight from the server files. Tap a player to open their card.',
-  pl_empty:'No stats yet — they show up once people play.', collecting:'collecting data…',
+  pl_empty:'No stats yet, they show up once people play.', collecting:'collecting data…',
   back_players:'← All players', inv_btn:'🎒 Inventory', hist_add:'➕ Upload old skin',
   sort_by:'Sort by', sort_alpha:'Alphabetical (A-Z)', sort_hours:'Most hours played', sort_mobs:'Most mobs killed',
   sort_placed:'Most blocks placed', sort_deaths:'Most deaths', sort_pvp:'Most players killed',
@@ -1611,7 +1609,6 @@ const I18N = {
   sort_xp:'Experience level', sort_seen:'Most recently online', lvl_short:'Lv.',
   tab_hist:'History',
   hist_title:'What has happened on the server',
-  hist_note:"Read from the server's own log. No plugins, no mods.",
   hist_all:'All', hist_ses:'Sessions', hist_dea:'Deaths', hist_adv:'Advancements',
   hist_more:'Further back', hist_empty:'Nothing here yet.',
   hist_played:'played {0}', hist_online:'online for {0}',
@@ -1631,11 +1628,11 @@ const I18N = {
   th_km:'Km walked', th_seen:'Last seen', online_tag:'(online)',
   now:'just now', min_ago:'{0} min ago', h_ago:'{0} h ago', d_ago:'{0} days ago',
   mem_title:'Server Memories', mem_global:'Global', mem_indiv:'Individual',
-  mem_note:'The server album — browse and share the best moments.',
+  mem_note:'The server album, browse and share the best moments.',
   mem_up:'Upload a new photo', mem_up_to:"Upload to {0}'s folder", mem_desc:'Description (required):',
   mem_by:'uploaded by', mem_back:'← All folders', mem_photos:'photo(s)', mem_none:'No photos here yet',
   close:'Close', del:'Delete', view_skin:'🧍 View 3D skin', skin_walk:'▶ Walk', skin_stop:'⏸ Stop',
-  skin_hist:'Skins archived by the panel', skin_none:'The archive starts today — the panel saves everyone\'s skin daily.',
+  skin_hist:'Skins archived by the panel', skin_none:'The archive starts today, the panel saves everyone\'s skin daily.',
   skin_namemc:'Full history on NameMC ↗', logout:'Log out', guest:'guest'}
 };
 function t(k, a){ let s=(I18N[LANG]&&I18N[LANG][k])||I18N.es[k]||k; if(a!==undefined) s=s.replace('{0}',a); return s; }
@@ -1952,7 +1949,7 @@ function drawChart(svgId,tipId,pts,color,unit,guide){
     for (const p of pts){ const dd=Math.abs(X(p[0])-mx); if(dd<bd){bd=dd; best=p;} }
     const tip=$(tipId); tip.style.display='block';
     tip.style.left=(X(best[0])/W*100)+'%'; tip.style.top='32px';
-    tip.textContent=`${new Date(best[0]).toLocaleTimeString()} — ${best[1].toFixed(1)} ${unit}`;
+    tip.textContent=`${new Date(best[0]).toLocaleTimeString()}, ${best[1].toFixed(1)} ${unit}`;
   };
   svg.onmouseleave=()=>$(tipId).style.display='none';
 }
@@ -2100,7 +2097,7 @@ function pvStrip(info){
   hist.forEach(h=>{
     const isCur = cur && h.hash===cur;
     const d=document.createElement('div'); d.className='sk'+(isCur?' cur':'');
-    d.title=(isCur?(LANG==='en'?'Current skin — ':'Skin actual — '):'')+h.date+(h.ts?` ${hhmm(h.ts)}`:'');
+    d.title=(isCur?(LANG==='en'?'Current skin, ':'Skin actual, '):'')+h.date+(h.ts?` ${hhmm(h.ts)}`:'');
     d.onclick=()=>{ pvSkin(`/skinhist/${PV_UUID}/${encodeURIComponent(h.file)}`, h.slim); toast('Skin del '+h.date); };
     if (ME && ME.role==='admin'){
       d.oncontextmenu=async(e)=>{                 // click derecho = borrar (solo admin)
@@ -2231,7 +2228,7 @@ function advSteps(l){
   const cab = faltan ? t('adv_steps').replace('{0}',faltan).replace('{1}',l.steps.length)
                      : t('adv_done_all');
   return `<div class="advsteps">
-    <div class="sh">${esc(advTitle(l))} — ${cab}</div>
+    <div class="sh">${esc(advTitle(l))}, ${cab}</div>
     ${l.steps.map(s=>`<div class="advstep ${s.d?'ok':''}">
       <span>${s.d?'✔':'·'}</span><span>${esc(s.en||s.es||s.id)}</span>
       ${s.d?`<span class="sd">${esc(String(s.d).slice(0,10))}</span>`:''}</div>`).join('')}
@@ -2256,7 +2253,7 @@ function statCol(title, total, rows, key){
   return col;
 }
 async function pvAddSkin(){
-  const date=prompt('Fecha de esa skin (AAAA-MM-DD) — puede ser aproximada:','2021-01-01');
+  const date=prompt('Fecha de esa skin (AAAA-MM-DD), puede ser aproximada:','2021-01-01');
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())){ if(date!==null) toast('Formato: AAAA-MM-DD'); return; }
   const inp=$('pv-skinfile'); inp.value='';
   inp.onchange=async()=>{
@@ -2328,7 +2325,7 @@ function tipLines(it){
   }
   if (it.unbreakable) L.push(plain('Irrompible', '#5555FF'));
   if (it.max_damage!=null && it.damage!=null) L.push(plain(`Durabilidad: ${it.max_damage-it.damage} / ${it.max_damage}`, '#FFFFFF'));
-  if (it.inside && it.inside.length) L.push(plain(`📦 ${it.inside.length} ítems adentro — toca para abrir`, '#8aeb67'));
+  if (it.inside && it.inside.length) L.push(plain(`📦 ${it.inside.length} ítems adentro, toca para abrir`, '#8aeb67'));
   return L;
 }
 const FOIL=new Set(['enchanted_golden_apple','experience_bottle','written_book','end_crystal','nether_star']);
@@ -2449,7 +2446,7 @@ async function openPlayer(uuid, name, online){
     <div class="mrow"><button class="btn ghost" onclick="closePC()">Cerrar</button></div>`;
   $('ender-btn').dataset.tip = JSON.stringify([
     {seg:[{t:'Cofre de Ender', c:'#FF55FF'}]},
-    {seg:[{t:enderCount ? `${enderCount} ítems guardados — toca para abrir` : 'vacío', c:'#AAAAAA', i:true}]}]);
+    {seg:[{t:enderCount ? `${enderCount} ítems guardados, toca para abrir` : 'vacío', c:'#AAAAAA', i:true}]}]);
   const inv = new Array(36).fill(null);
   const legacyArmor = {103:'head',102:'chest',101:'legs',100:'feet','-106':'offhand'};
   const eq = {...g.equipment};
@@ -2469,7 +2466,7 @@ async function openPlayer(uuid, name, online){
 }
 function openEnder(){
   if (!GEAR) return;
-  $('ct-body').innerHTML = `<h3 style="margin-bottom:12px"><img src="/icons/ender_chest.png?v=9" onerror="this.src='/static/ender_chest.png'" style="width:22px;height:22px;image-rendering:auto;vertical-align:-5px"> Cofre de Ender — ${esc(GEAR.name)}</h3>
+  $('ct-body').innerHTML = `<h3 style="margin-bottom:12px"><img src="/icons/ender_chest.png?v=9" onerror="this.src='/static/ender_chest.png'" style="width:22px;height:22px;image-rendering:auto;vertical-align:-5px"> Cofre de Ender, ${esc(GEAR.name)}</h3>
     <div class="slotgrid" id="ct-grid"></div>
     <div class="mrow"><button class="btn ghost" onclick="$('ct-modal').classList.remove('open')">Cerrar</button></div>`;
   const arr=new Array(27).fill(null);
@@ -2509,7 +2506,7 @@ async function playerAct(name, act){
   const labels={heal:'curar',feed:'alimentar',kill:'matar'};
   if (act==='kill' && !confirm(`¿Seguro que quieres matar a ${name}?`)) return;
   const r = await api('/api/player/action', {name, act});
-  toast(r.error || `Listo — acabas de ${labels[act]} a ${name}`);
+  toast(r.error || `Listo, acabas de ${labels[act]} a ${name}`);
 }
 
 /* ---------- moderación ---------- */
@@ -2530,7 +2527,7 @@ async function loadJoinReq(){
   if (!r.requests.length) tb.innerHTML='<tr><td colspan="4">Nadie está tocando la puerta.</td></tr>';
 }
 async function jrAccept(n){ const r=await api('/api/joinreq/accept',{name:n});
-  toast(r.output||'Aceptado — ya puede entrar'); loadJoinReq(); loadWhitelist(); }
+  toast(r.output||'Aceptado, ya puede entrar'); loadJoinReq(); loadWhitelist(); }
 async function jrDismiss(n){ await api('/api/joinreq/dismiss',{name:n}); toast(n+' ignorado'); loadJoinReq(); }
 
 async function loadWhitelist(){
@@ -2565,7 +2562,7 @@ async function doSay(){ const m=$('say-msg').value.trim(); if(!m) return;
   const r=await api('/api/say',{message:m}); toast(r.ok?'Enviado a todos en el juego':'Falló'); $('say-msg').value=''; }
 async function doRestart(){
   if(!confirm('¿Reiniciar el servidor ahora? Todos salen ~30 segundos.')) return;
-  await api('/api/restart',{}); toast('Reiniciando — vuelve en ~30s');
+  await api('/api/restart',{}); toast('Reiniciando, vuelve en ~30s');
 }
 
 /* ---------- consola ---------- */
@@ -2594,7 +2591,7 @@ async function loadBackups(){
       <td class="right"><a class="btn small ghost" href="/api/backups/download/${encodeURIComponent(b.name)}">Descargar</a></td>`;
     tb.appendChild(tr);
   }
-  if (!r.backups.length) tb.innerHTML='<tr><td colspan="4">Aún no hay copias — la primera llega esta noche, o presiona "Hacer copia ahora".</td></tr>';
+  if (!r.backups.length) tb.innerHTML='<tr><td colspan="4">Aún no hay copias, la primera llega esta noche, o presiona "Hacer copia ahora".</td></tr>';
 }
 async function backupNow(){ const r=await api('/api/backups/now',{}); toast(r.output||r.error||'Iniciada'); setTimeout(loadBackups,65000); }
 
@@ -2603,10 +2600,10 @@ async function loadPlugins(){
   const r=await api('/api/plugins');
   const badge=$('engine-badge'), note=$('engine-note');
   if (r.engine==='paper'){
-    badge.innerHTML='<span class="dot good"></span>Paper — plugins habilitados';
+    badge.innerHTML='<span class="dot good"></span>Paper, plugins habilitados';
     note.textContent='Sube plugins .jar y reinicia el servidor para activarlos.';
   } else {
-    badge.innerHTML='<span class="dot warn"></span>Vanilla — plugins todavía no';
+    badge.innerHTML='<span class="dot warn"></span>Vanilla, plugins todavía no';
     note.textContent='Para usar plugins hay que cambiar el motor a Paper (misma dirección, mismo mundo, tus amigos no notan nada). Pídele a Claude la migración cuando quieras.';
   }
   const tb=$('plug-table').querySelector('tbody'); tb.innerHTML='';
@@ -2649,7 +2646,7 @@ async function verCargar(refrescar){
   let r; try{ r = await api('/api/actualizar/estado' + (refrescar ? '?refrescar=1' : '')); }
   catch(e){ return; }
   if (!r.disponible){
-    $('ver-kv').innerHTML = '<span class="note">Falta <code>scripts/actualizar.py</code> — haz Commit + Sync.</span>';
+    $('ver-kv').innerHTML = '<span class="note">Falta <code>scripts/actualizar.py</code>, haz Commit + Sync.</span>';
     return;
   }
   const c = r.congelado, trabajando = (r.trabajo||{}).estado === 'trabajando';
@@ -2677,7 +2674,7 @@ async function verCargar(refrescar){
     if (c){
       $('mapa-congelado-n').textContent =
         'El servidor pasó a Minecraft ' + (c.version||'?') + ' y BlueMap todavía no la soporta. ' +
-        'Lo que ves es el mapa de antes, completo — solo deja de añadirse el terreno nuevo. ' +
+        'Lo que ves es el mapa de antes, completo, solo deja de añadirse el terreno nuevo. ' +
         'El panel lo reintenta solo cada día.';
       $('mapa-congelado-b').classList.toggle('hidden', !(ME && ME.role === 'admin'));
     }
@@ -2908,7 +2905,7 @@ async function muSubir(f){
     let r;
     try { r = await api('/api/mundos/trozo', fd, true); }
     catch (e){
-      if (++fallos > 3){ toast('Se cortó la subida — vuelve a intentarlo'); break; }
+      if (++fallos > 3){ toast('Se cortó la subida, vuelve a intentarlo'); break; }
       await new Promise(s => setTimeout(s, 1500 * fallos)); continue;
     }
     fallos = 0;
@@ -3046,6 +3043,7 @@ const M2 = {
   verSlime:false, verAparicion:true,
   porColor:new Map(),       // "r,g,b" → bioma, para decir el bioma sin pedir nada
   hechas:{},                // "tipo:x:z" → {por, t}: lo que ya visitó alguien
+  variantes:{},             // "village_snowy" → {icono, es, en}: dibujo propio
   modo:'tira',              // 'tira' (iconos) o 'lista' (icono + nombre)
   lejosDensas:false,        // tesoros y minas piden estar cerca
   pintando:false, listo:false, aviso:'',
@@ -3085,6 +3083,15 @@ async function m2Cargar(){
     const im=new Image(); im.src = MK_ICON(t.icono);
     im.onload=()=>m2Iconos();
     M2.iconos.set(t.k, im);
+  }
+  // Los iconos de variante (aldea nevada, generador de zombis…). El servidor
+  // solo manda los que TIENEN fichero, así que aquí no hay nada que adivinar:
+  // lo que no esté en esta lista se dibuja con el icono de su capa.
+  M2.variantes = d.variantes || {};
+  for (const [v, info] of Object.entries(M2.variantes)){
+    const im=new Image(); im.src = MK_ICON(info.icono);
+    im.onload=()=>m2Iconos();
+    M2.iconos.set(v, im);
   }
   try{
     const g = JSON.parse(localStorage.getItem('panel_m2') || '{}');
@@ -3350,13 +3357,13 @@ function m2Iconos(){
   M2.enPantalla=[];
   m2Decidir();
   const salen=new Set(M2.est.tipos.filter(m2SaleAhora).map(t=>t.k));
-  for (const [k,x,z] of M2.estructuras){
+  for (const [k,x,z,sub] of M2.estructuras){
     if (!salen.has(k)) continue;
     const px=m2ax(x), py=m2az(z);
     if (px<-t || py<-t || px>M2.w+t || py>M2.h+t) continue;
     if (++dibujados > M2_MAX_ICONOS) break;
     const hecha = M2.hechas && M2.hechas[m2Clave(k,x,z)];
-    const im=M2.iconos.get(k);
+    const im=M2.iconos.get((sub && M2.variantes[sub]) ? sub : k);
     // Lo ya visitado se apaga a medias en vez de desaparecer: sigue estando
     // ahí, y quien quiera volver tiene que poder verlo.
     if (hecha) g.globalAlpha = 0.38;
@@ -3378,7 +3385,7 @@ function m2Iconos(){
       g.lineWidth=Math.max(1.2, r*0.32); g.strokeStyle='#0a0d11';
       g.lineCap='round'; g.lineJoin='round'; g.stroke();
     }
-    M2.enPantalla.push([k,x,z,px,py]);
+    M2.enPantalla.push([k,x,z,px,py,sub]);
   }
   // El punto de aparición: dónde cae la gente al entrar. No se calcula, se lee
   // del mundo, así que es exacto aunque lo hayan movido con /setworldspawn.
@@ -3399,7 +3406,7 @@ function m2Iconos(){
   m2Reglas(g);
   const falta = M2.recorte ? 'Acércate para ver las estructuras'
               : M2.lejosDensas ? 'Acércate para ver los tesoros y las minas'
-              : (dibujados > M2_MAX_ICONOS ? 'Hay más de los que caben — acércate' : M2.aviso);
+              : (dibujados > M2_MAX_ICONOS ? 'Hay más de los que caben, acércate' : M2.aviso);
   const a=$('m2-aviso');
   a.textContent = falta || '';
   a.classList.toggle('hidden', !falta);
@@ -3415,9 +3422,10 @@ function m2PideEstructuras(){
     // Los tesoros y las minas cuestan mucho de calcular (una tirada de dado en
     // CADA chunk), así que solo se piden si alguien tiene esa capa encendida.
     const densas = (M2.est.tipos||[]).some(t => t.densa && !M2.apagados.has(t.k));
+    const gens = (M2.est.tipos||[]).some(t => t.delMundo && !M2.apagados.has(t.k));
     const q = `x0=${Math.floor(m2dex(0)-mx)}&z0=${Math.floor(m2dez(0)-mz)}`
             + `&x1=${Math.ceil(m2dex(M2.w)+mx)}&z1=${Math.ceil(m2dez(M2.h)+mz)}`
-            + (densas ? '&densas=1' : '');
+            + (densas ? '&densas=1' : '') + (gens ? '&gens=1' : '');
     let d=null;
     try{ d = await api('/api/mapa2/estructuras?'+q); }catch(_){}
     if (!d || !d.ok) return;
@@ -3506,7 +3514,7 @@ function m2Capas(){
       // Tesoros y minas no vienen si nadie los pide: al encender una de esas
       // capas hay que volver a preguntar, o la casilla se enciende y no aparece
       // nada — que es exactamente lo que hacía pensar que estaba rota.
-      m2Guardar(); m2Capas(); if (t.densa) m2PideEstructuras(); m2Iconos();
+      m2Guardar(); m2Capas(); if (t.densa || t.delMundo) m2PideEstructuras(); m2Iconos();
     };
     w.appendChild(b);
   }
@@ -3687,12 +3695,19 @@ async function m2Marcar(k,x,z,quiero){
     toast((d&&d.error) || 'No se pudo guardar la marca');
   } else if (d.marca) M2.hechas[clave]=d.marca;
   m2Iconos();
-  if (!$('m2-globo').classList.contains('hidden')) m2Globo(k,x,z);
+  if (!$('m2-globo').classList.contains('hidden')){
+    const e=(M2.enPantalla||[]).find(s=>s[0]===k && s[1]===x && s[2]===z);
+    m2Globo(k,x,z, e && e[5]);
+  }
 }
 
-function m2Globo(k,x,z){
+function m2Globo(k,x,z,sub){
   const globo=$('m2-globo');
-  const t=(k==='__aparicion') ? {es:'Punto de aparición', en:'World spawn'}
+  // El nombre de la variante manda: «Aldea nevada» dice más que «Aldea», y en
+  // un generador saber si son zombis o arañas de cueva es TODO lo que importa.
+  const v = sub && M2.variantes[sub];
+  const t = v ? v
+          : (k==='__aparicion') ? {es:'Punto de aparición', en:'World spawn'}
           : (M2.est.tipos.find(t=>t.k===k) || {es:k,en:k});
   let html = `<b>${esc(LANG==='en'?t.en:t.es)}</b><span class="c">X ${x}&nbsp;&nbsp;Z ${z}</span>`;
   if (k!=='__aparicion'){
@@ -3725,9 +3740,9 @@ function m2ColocaGlobo(ix, iy){
 
 function m2Clic(px,py){
   const globo=$('m2-globo');
-  for (const [k,x,z,ix,iy] of (M2.enPantalla||[])){
+  for (const [k,x,z,ix,iy,sub] of (M2.enPantalla||[])){
     if (Math.abs(ix-px)<13 && Math.abs(iy-py)<13){
-      m2Globo(k,x,z);
+      m2Globo(k,x,z,sub);
       globo.style.left=ix+'px'; globo.style.top=iy+'px';
       globo.classList.remove('hidden');
       m2ColocaGlobo(ix, iy);
@@ -3787,13 +3802,13 @@ async function createUser(){
   const name=$('nu-name').value.trim(), pass=$('nu-pass').value, role=$('nu-role').value;
   const r=await api('/api/users/create',{name, password:pass, role});
   if (r.error){ toast(r.error); return; }
-  toast(`Cuenta "${name}" creada — pásale la contraseña temporal`);
+  toast(`Cuenta "${name}" creada, pásale la contraseña temporal`);
   $('nu-name').value=''; $('nu-pass').value=''; loadUsers();
 }
 async function resetPw(name){
   const p=prompt(`Nueva contraseña temporal para ${name} (8+):`); if(!p) return;
   const r=await api('/api/users/update',{name, password:p});
-  toast(r.error||'Contraseña restablecida — deberá cambiarla al entrar');
+  toast(r.error||'Contraseña restablecida, deberá cambiarla al entrar');
 }
 async function delUser(name){
   if(!confirm(`¿Eliminar la cuenta del panel "${name}"?`)) return;
@@ -4044,11 +4059,11 @@ async function loadSistema(){
   $('sys-log').textContent = (r.log||[]).join('\n') || 'Nada todavía';
   const w=$('sys-2fa');
   if (r.totp_on){
-    w.innerHTML=`<div class="note" style="margin-top:0">✅ Activo — tu login pide código de la app.</div>
+    w.innerHTML=`<div class="note" style="margin-top:0">✅ Activo, tu login pide código de la app.</div>
       <div class="formrow" style="margin-top:10px"><input id="f2a-off-code" placeholder="Código actual" maxlength="6">
       <button class="btn small danger" onclick="sys2faOff()">Desactivar</button></div>`;
   } else if (!window._2faSetup){
-    w.innerHTML=`<div class="note" style="margin-top:0">Tu cuenta es la llave maestra del server — actívalo.</div>
+    w.innerHTML=`<div class="note" style="margin-top:0">Tu cuenta es la llave maestra del server, actívalo.</div>
       <button class="btn small" style="margin-top:10px" onclick="sys2faStart()">Activar 2FA</button>`;
   }
 }
@@ -4070,7 +4085,7 @@ function sysAuto(lista){
     // ha roto justo cuando todo va bien
     const col = a.pausa ? 'var(--warn)' : (a.ok ? 'var(--good)' : 'var(--crit)');
     const cnota = a.pausa ? 'var(--ink3)' : 'var(--crit)';
-    const nota = a.nota ? ` — <span style="color:${cnota}">${esc(a.nota)}</span>` : '';
+    const nota = a.nota ? `, <span style="color:${cnota}">${esc(a.nota)}</span>` : '';
     return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0">
       <span class="dot" style="background:${col};margin:0"></span>
       <span style="flex:1;min-width:0">${esc(a.nombre)}</span>
@@ -4327,7 +4342,7 @@ function coordTxt(p){
   const dim=DIM_NOM[p.dim]||p.dim||'';
   return `<b>${Math.round(p.x)}</b> <b>${Math.round(p.y)}</b> <b>${Math.round(p.z)}</b>`+
          `<span class="hi-sub"> · ${esc(dim)}${b?' · '+esc(b):''}</span>`+
-         (p.lejano?`<div class="efpel" style="font-size:.8rem">⚠ Esto está a millones de bloques — es un dato corrupto del mundo viejo, no un sitio real. Mandarlo ahí genera terreno basura.</div>`:'');
+         (p.lejano?`<div class="efpel" style="font-size:.8rem">⚠ Esto está a millones de bloques, es un dato corrupto del mundo viejo, no un sitio real. Mandarlo ahí genera terreno basura.</div>`:'');
 }
 
 async function pvCargarPos(uuid){
@@ -4344,7 +4359,7 @@ async function pvCargarPos(uuid){
   html += `<div class="hi-sub" style="margin-top:2px">${viva
       ? 'en vivo, preguntado al servidor'
       : (r.online ? 'no pude preguntarle al servidor; esto es del archivo'
-                  : 'está desconectado — última posición guardada')}</div>`;
+                  : 'está desconectado, última posición guardada')}</div>`;
   if (r.muerte)
     html += `<div class="posgrid" style="margin-top:10px"><div><span class="k">Última muerte</span>${coordTxt(r.muerte)}</div></div>`;
   else
@@ -4390,7 +4405,7 @@ function efPintaSelector(cont, conInterruptor){
       aviso.textContent='⚠ Este hace daño. A nivel alto puede matarlo al instante.';
     } else if (e.tipo==='desconocido'){
       aviso.className='note ef-aviso efdesc';
-      aviso.textContent='No sé si este efecto hace daño — es nuevo o no lo tengo clasificado. Pruébalo con cuidado.';
+      aviso.textContent='No sé si este efecto hace daño, es nuevo o no lo tengo clasificado. Pruébalo con cuidado.';
     } else { aviso.className='note ef-aviso'; aviso.textContent=''; }
   };
   sel.onchange=revisar; revisar();
@@ -4595,7 +4610,7 @@ async function mkAdd(){
            z:$('mk-z').value.trim(), icon:MK_SEL, dim:$('mk-dim').value};
   if(!b.name || b.x===''|| b.z===''){ toast('Falta el nombre o las coordenadas'); return; }
   const r=await api('/api/markers/add', b).catch(()=>null);
-  if(r&&r.ok){ toast('Marcador añadido 📍 — aparece en el mapa tras actualizarlo');
+  if(r&&r.ok){ toast('Marcador añadido 📍, aparece en el mapa tras actualizarlo');
     $('mk-name').value=''; $('mk-x').value=''; $('mk-z').value='';
     renderMarkers(r.markers);
   } else toast((r&&r.error)||'No se pudo añadir');
@@ -4626,13 +4641,14 @@ async function mkEstadoIconos(){
     const cuando = m.cuando ? ' · '+new Date(m.cuando*1000).toLocaleString() : '';
     return `<div><b>${esc(m.mapa)}</b>: ${qué}${cuando}</div>`;
   }).join('');
-  let cabeza;
+  // Cuando todo está bien no se dice nada: el sitio es para avisar, no para
+  // felicitarse. Solo aparece si de verdad hay algo que arreglar.
+  let cabeza='';
   if ((r.sobran||[]).length)
     cabeza=`<b style="color:var(--warn)">⚠ Sobre el mapa 3D todavía hay iconos que no son lugares: ${esc(r.sobran.join('; '))}. Pulsa «Actualizar los iconos».</b>`;
-  else
-    cabeza=`<b style="color:var(--slime2)">✔ Sobre el mapa 3D solo están los lugares del server.</b>`;
   if (r.enlace_ok===false)
-    cabeza+=`<br><b style="color:var(--crit)">⚠ ~/bluemap/web ya no es un enlace a lo que sirve la web (${esc(r.enlace||'?')}): lo que escriba BlueMap no se verá.</b>`;
+    cabeza+=`${cabeza?'<br>':''}<b style="color:var(--crit)">⚠ ~/bluemap/web ya no es un enlace a lo que sirve la web (${esc(r.enlace||'?')}): lo que escriba BlueMap no se verá.</b>`;
+  if (!cabeza){ mkEstado(''); return; }
   mkEstado(cabeza+'<div style="margin-top:6px; opacity:.8">'+filas+'</div>');
 }
 async function mkScan(){

@@ -3579,6 +3579,41 @@ def api_m2_hecha():
     return jsonify(ok=True, clave=clave, marca=marca)
 
 
+# ══════════════════════════════ generadores de monstruos (del mundo explorado)
+#
+# No salen de la semilla y no pueden: son decoración que se coloca DESPUÉS de
+# excavar las cuevas. Pero en el terreno que ya visitó alguien están escritos, y
+# scan-structures.py los apunta en data/spawners.json cada noche. Aquí solo se
+# leen y se recortan al trozo que se está mirando.
+_gens = {"t": 0, "datos": {}}
+
+
+def _m2_generadores(x0, z0, x1, z1, dim="overworld"):
+    f = DATA_DIR / "spawners.json"
+    try:
+        cuando = f.stat().st_mtime
+    except OSError:
+        return []
+    if _gens["t"] != cuando:
+        try:
+            _gens["datos"] = json.loads(f.read_text())
+            _gens["t"] = cuando
+        except Exception:
+            return []
+    fuera = []
+    for g in (_gens["datos"].get(dim) or []):
+        x, z = g.get("x"), g.get("z")
+        if x is None or z is None or not (x0 <= x <= x1 and z0 <= z <= z1):
+            continue
+        fuera.append({"k": "spawner", "x": int(x), "z": int(z),
+                      "tipo": "spawner_" + str(g.get("mob") or "desconocido")})
+    return fuera
+
+
+def _hay_icono(nombre):
+    return (PANEL_DIR / "static" / "markers" / (nombre + ".png")).exists()
+
+
 _m2_densas = {}                 # (semilla, celda_x, celda_z) → estructuras densas
 _M2_CELDA_DENSA = 2048          # celdas pequeñas: son miles por celda grande
 _M2_VENTANA_DENSA = 24576       # más allá de esto no se calculan, se avisa
@@ -3792,6 +3827,7 @@ def api_m2_estado():
     # van por otra cuenta y saldrían siempre a cero.
     posibles = set()
     densas = set()
+    variantes = {}
     for c in e.conjuntos_de("overworld"):
         for m in (e.CONJUNTOS[c][3] or [c]):
             k = e.tipo_de(m)
@@ -3799,6 +3835,24 @@ def api_m2_estado():
                 posibles.add(k)
                 if e.por_probabilidad(c):
                     densas.add(k)
+                # Una aldea nevada y una del desierto son la misma CAPA pero no
+                # el mismo dibujo. Se ofrece el icono propio solo si el fichero
+                # existe; mientras no exista, el mapa usa el del tipo y nadie ve
+                # un hueco.
+                if m != k and _hay_icono(m):
+                    variantes[m] = {"icono": m, "es": e.nombre_variante(m),
+                                    "en": e.nombre_variante(m, True)}
+    # Los generadores no salen de la semilla: se leen del mundo explorado. Solo
+    # se ofrecen si hay icono y si el escaneo ya encontró alguno.
+    hay_gens = _hay_icono("spawner") and (DATA_DIR / "spawners.json").exists()
+    if hay_gens:
+        posibles.add("spawner")
+        for m in ("zombie", "skeleton", "spider", "cave_spider", "silverfish",
+                  "blaze", "magma_cube"):
+            v = "spawner_" + m
+            if _hay_icono(v):
+                variantes[v] = {"icono": v, "es": e.nombre_variante(v),
+                                "en": e.nombre_variante(v, True)}
     # Las fortalezas no salen de la rejilla: se le preguntan al servidor y se
     # guardan. Solo se ofrecen como capa si de verdad tenemos alguna.
     fortalezas = []
@@ -3815,11 +3869,12 @@ def api_m2_estado():
         icono, es, en, _dist, oculto, orden = e.TIPOS[k]
         tipos.append({"k": k, "icono": icono, "es": es, "en": en,
                       "oculto": oculto, "paso": paso.get(k, 512),
-                      "densa": k in densas, "cerca": _M2_VENTANA_DENSA if k in densas else 0})
+                      "densa": k in densas, "cerca": _M2_VENTANA_DENSA if k in densas else 0,
+                      "delMundo": k == "spawner"})
     return jsonify(ok=True, semilla=str(salud["semilla"]), y=salud.get("y"),
                    niveles=b.NIVELES, tam=b.TAM, leyenda=leyenda, tipos=tipos,
                    aparicion=punto_de_aparicion(), version=mc_version(),
-                   dimension="Overworld", fortalezas=fortalezas)
+                   dimension="Overworld", fortalezas=fortalezas, variantes=variantes)
 
 
 # signed=True o Flask no acepta coordenadas negativas y media mitad del
@@ -3883,8 +3938,18 @@ def api_m2_estructuras():
                 halladas = halladas + _m2_estructuras_densas(x0, z0, x1, z1)
             except Exception:
                 pass
+    # Los generadores salen del mundo explorado, no de la semilla, así que van
+    # aparte y solo si el icono existe (si no, la capa sería un cuadro vacío).
+    if request.args.get("gens") in ("1", "true", "si") and _hay_icono("spawner"):
+        try:
+            halladas = halladas + _m2_generadores(x0, z0, x1, z1)
+        except Exception:
+            pass
+    # El cuarto campo es la VARIANTE: village_snowy, spawner_zombie… El mapa la
+    # usa para dibujar el icono que toca; si no hay icono suyo, cae al del tipo.
     return jsonify(ok=True, demasiado=False, lejos_densas=lejos_densas,
-                   estructuras=[[s["k"], s["x"], s["z"]] for s in halladas])
+                   estructuras=[[s["k"], s["x"], s["z"], s.get("tipo") or s["k"]]
+                                for s in halladas])
 
 
 @app.get("/api/mapa2/bioma")
