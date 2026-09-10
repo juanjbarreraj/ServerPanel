@@ -166,6 +166,10 @@ with sync_playwright() as pw:
 
 
     print("── chunks de slime ──")
+    # que NO se le pidan a nadie: la cuenta se hace en el navegador, y de eso
+    # depende que funcionen aunque el lector de biomas esté apagado o viejo
+    pedidas_slime = []
+    pag.on("request", lambda r: pedidas_slime.append(r.url) if "/api/mapa2/slime" in r.url else None)
     pag.evaluate("() => { M2.verSlime=false; m2Volar(0,0,1/8); }")
     pag.wait_for_timeout(600)
     antes = pag.evaluate("() => M2.esc")
@@ -197,6 +201,11 @@ with sync_playwright() as pw:
     pag.evaluate("() => { document.getElementById('m2cap-slime').click(); }")
     pag.wait_for_timeout(700)
     ok(not pag.evaluate("() => M2.verSlime"), "se pueden apagar")
+    ok(not pedidas_slime, "y no se le piden al servidor: %r" % pedidas_slime[:2])
+    # la cuenta tiene que ser la del juego, no una parecida
+    ok(pag.evaluate("""() => m2EsSlime(1244994422874902852n, 1, 0) === true
+                        && m2EsSlime(1244994422874902852n, 0, 0) === false"""),
+       "la fórmula da lo mismo que el generador en dos casos conocidos")
 
     print("── la barra de arriba se va al bajar (solo en Explorar) ──")
     pag.set_viewport_size({"width":1280,"height":700}); pag.wait_for_timeout(400)
