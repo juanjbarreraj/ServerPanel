@@ -464,21 +464,15 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.09)}
 
 /* ============ mapa del mundo entero (biomas + estructuras) ============ */
-/* Dos lienzos encima del otro: abajo los biomas, arriba los iconos. No es por
-   capricho — al pasar el ratón se lee el color del píxel de abajo para decir el
-   bioma sin pedirle nada al servidor, y si los iconos estuvieran pintados en el
-   mismo lienzo taparían ese color. */
-.m2-lienzo{position:relative; width:100%; height:calc(100vh - 300px); min-height:min(420px, 62vh);
+/* Dos lienzos encima del otro: abajo los biomas, arriba iconos, chunks de slime
+   y las reglas de coordenadas. No es por capricho — al pasar el ratón se lee el
+   color del píxel de abajo para decir el bioma sin pedirle nada al servidor, y
+   si lo demás estuviera pintado en el mismo lienzo taparía ese color. */
+.m2-lienzo{position:relative; width:100%; height:calc(100vh - 330px); min-height:min(430px, 60vh);
   border-radius:8px; overflow:hidden; background:#04060a; touch-action:none; cursor:grab}
 .m2-lienzo.arrastrando{cursor:grabbing}
 .m2-lienzo canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
-.m2-top{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:0 2px 9px}
-.m2-donde{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.82rem; color:var(--ink3);
-  background:var(--slotbg); padding:6px 10px; border-radius:5px; min-width:0; flex:1 1 220px;
-  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06);
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-.m2-donde b{color:var(--ink); font-weight:700}
-.m2-ir{width:150px; flex:0 0 auto}
+
 /* La cabecera, como la de Chunkbase: semilla, versión y dimensión a la vista.
    La semilla es lo primero que quiere ver cualquiera que abra esto, y hasta
    ahora había que ir a buscarla a la consola. */
@@ -495,26 +489,45 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 
 /* Las capas en rejilla con su nombre al lado, no en pastillas apretadas: con
    veinte tipos, una fila que se dobla sola es imposible de recorrer con la
-   vista. En rejilla siempre están en el mismo sitio. */
+   vista. En rejilla siempre están en el mismo sitio. Y van ENCIMA del mapa,
+   como en Chunkbase: es lo que se toca, y estando debajo obligaba a bajar. */
 .m2-capas{display:grid; grid-template-columns:repeat(auto-fill, minmax(205px, 1fr));
-  gap:7px; margin:12px 2px 0}
+  gap:7px; margin:0 2px 10px}
 .m2-cap{display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:5px;
   font-size:.76rem; font-weight:700; cursor:pointer; user-select:none; border:0; color:var(--ink3);
   background:var(--slotbg); transition:all .18s var(--spring); text-align:left; width:100%;
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
 .m2-cap .et{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.m2-cap.on{box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06),
-  0 0 0 2px var(--slime) inset}
-.m2-marcar{display:flex; gap:14px; margin:10px 4px 0; font-size:.75rem}
-.m2-marcar button{background:none; border:0; color:var(--ink3); cursor:pointer; padding:2px 0;
-  font-size:.75rem; font-weight:700; text-decoration:underline; text-underline-offset:3px}
-.m2-marcar button:hover{color:var(--slime2)}
 .m2-cap img{width:20px; height:20px; flex:0 0 20px; image-rendering:pixelated; opacity:.4; transition:opacity .18s}
 .m2-cap.on{color:var(--ink)}
 .m2-cap.on img{opacity:1}
+.m2-cap.on{box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06),
+  0 0 0 2px var(--slime) inset}
 .m2-cap .n{opacity:.5; font-weight:400}
-.m2-cap.lejos{opacity:.5}
-.m2-cap.lejos::after{content:'🔍'; font-size:.7rem; margin-left:1px}
+.m2-marcar{display:flex; gap:14px; margin:0 4px 12px; font-size:.75rem}
+.m2-marcar button{background:none; border:0; color:var(--ink3); cursor:pointer; padding:2px 0;
+  font-size:.75rem; font-weight:700; text-decoration:underline; text-underline-offset:3px}
+.m2-marcar button:hover{color:var(--slime2)}
+
+/* La barra de ir-a y el cartel de dónde estás */
+.m2-top{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:0 2px 9px}
+.m2-ir{display:flex; gap:6px; align-items:center; font-size:.78rem; color:var(--ink3); font-weight:700}
+.m2-ir input{width:88px; text-align:center;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.m2-donde{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.82rem; color:var(--ink3);
+  background:var(--slotbg); padding:6px 10px; border-radius:5px; min-width:0; flex:1 1 220px;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.m2-donde b{color:var(--ink); font-weight:700}
+
+/* Los botones de acercar y alejar van DENTRO del mapa, abajo a la derecha,
+   como en cualquier mapa del mundo. Fuera se perdían entre el resto. */
+.m2-zoom{position:absolute; right:10px; bottom:10px; z-index:4; display:flex; flex-direction:column; gap:5px}
+.m2-zoom button{width:32px; height:32px; border:0; border-radius:6px; cursor:pointer;
+  background:rgba(10,13,17,.86); color:#e8edf3; font-size:1.15rem; font-weight:700; line-height:1;
+  box-shadow:0 2px 8px rgba(0,0,0,.5)}
+.m2-zoom button:hover{background:rgba(111,212,78,.9); color:#0a0d11}
+
 .m2-globo{position:absolute; z-index:5; transform:translate(-50%,-100%); pointer-events:none;
   background:#181c21; color:#e8edf3; padding:8px 12px; border-radius:6px; font-size:.78rem; line-height:1.4;
   white-space:nowrap; box-shadow:0 6px 22px rgba(0,0,0,.55); margin-top:-12px}
@@ -523,11 +536,9 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .m2-aviso{position:absolute; left:50%; bottom:12px; transform:translateX(-50%); z-index:4;
   background:rgba(10,13,17,.86); color:var(--ink3); padding:6px 13px; border-radius:20px; font-size:.74rem;
   pointer-events:none; transition:opacity .25s}
-.m2-cruz{position:absolute; z-index:3; pointer-events:none; width:15px; height:15px; margin:-8px 0 0 -8px;
-  border:2px solid rgba(255,255,255,.85); border-radius:50%; box-shadow:0 0 0 2px rgba(0,0,0,.5)}
 @media (max-width:640px){
-  .m2-lienzo{height:calc(100vh - 340px); min-height:56vh}
-  .m2-ir{width:110px}
+  .m2-lienzo{height:calc(100vh - 380px); min-height:52vh}
+  .m2-ir input{width:74px}
 }
 
 /* ============ mundos ============ */
@@ -1063,7 +1074,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- MAPA DEL MUNDO ENTERO — biomas y estructuras calculados de la semilla -->
   <section id="tab-mapa2" class="hidden">
     <div class="card hidden" id="m2-apagado" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/mapa.png?v=14" alt="" onerror="this.outerHTML='🧭 '">El explorador no está encendido</h3>
+      <h3><img class="hico" src="/static/ui/explorar.png?v=14" alt="" onerror="this.outerHTML='🧭 '">El explorador no está encendido</h3>
       <div class="note" id="m2-apagado-n" style="margin-top:0"></div>
     </div>
 
@@ -1076,22 +1087,6 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <div class="m2-dato"><label>Versión</label><div class="v" id="m2-version">—</div></div>
         <div class="m2-dato"><label>Dimensión</label><div class="v" id="m2-dimension">Overworld</div></div>
       </div>
-      <div class="m2-top">
-        <div class="m2-donde" id="m2-donde">Mueve el ratón por el mapa</div>
-        <input class="m2-ir" id="m2-ir" placeholder="Ir a:  x z" inputmode="numeric"
-               onkeydown="if(event.key==='Enter')m2Ir()">
-        <button class="btn small ghost" id="m2-btn-ir" onclick="m2Ir()">Ir</button>
-        <button class="btn small ghost" id="m2-btn-mas" onclick="m2Zoom(2)" title="Acercar">+</button>
-        <button class="btn small ghost" id="m2-btn-menos" onclick="m2Zoom(.5)" title="Alejar">−</button>
-      </div>
-
-      <div class="m2-lienzo" id="m2-lienzo">
-        <canvas id="m2-bio"></canvas>
-        <canvas id="m2-ico"></canvas>
-        <div class="m2-cruz hidden" id="m2-cruz"></div>
-        <div class="m2-globo hidden" id="m2-globo"></div>
-        <div class="m2-aviso hidden" id="m2-aviso"></div>
-      </div>
 
       <div class="m2-capas" id="m2-capas"></div>
       <div class="m2-marcar">
@@ -1099,11 +1094,24 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <button onclick="m2Todas(false)">Desmarcar todo</button>
       </div>
 
-      <div class="note" style="margin:12px 4px 2px">
-        Todo el mundo, no solo lo explorado: los biomas y las estructuras salen de la <b>semilla</b>, calculados
-        con el generador que trae el propio servidor. Arrastra para moverte, rueda para acercar, y haz clic en un
-        icono o en cualquier sitio para ver qué hay. Las estructuras están donde el juego las pondrá, aunque nadie
-        haya ido nunca — <b>ojo con destriparle la exploración a los demás</b>.
+      <div class="m2-top">
+        <span class="m2-ir">
+          X <input id="m2-x" inputmode="numeric" placeholder="0" onkeydown="if(event.key==='Enter')m2Ir()">
+          Z <input id="m2-z" inputmode="numeric" placeholder="0" onkeydown="if(event.key==='Enter')m2Ir()">
+        </span>
+        <button class="btn small ghost" id="m2-btn-ir" onclick="m2Ir()">Ir</button>
+        <div class="m2-donde" id="m2-donde">Mueve el ratón por el mapa</div>
+      </div>
+
+      <div class="m2-lienzo" id="m2-lienzo">
+        <canvas id="m2-bio"></canvas>
+        <canvas id="m2-ico"></canvas>
+        <div class="m2-zoom">
+          <button id="m2-btn-mas" onclick="m2Zoom(2)" title="Acercar">+</button>
+          <button id="m2-btn-menos" onclick="m2Zoom(.5)" title="Alejar">−</button>
+        </div>
+        <div class="m2-globo hidden" id="m2-globo"></div>
+        <div class="m2-aviso hidden" id="m2-aviso"></div>
       </div>
     </div>
   </section>
@@ -2994,52 +3002,11 @@ const M2 = {
   slime:null,               // {cx, cz, n, datos} del trozo pedido
   verSlime:false, verAparicion:true,
   porColor:new Map(),       // "r,g,b" → bioma, para decir el bioma sin pedir nada
-  pintando:false, listo:false, tEstr:0, aviso:'',
+  pintando:false, listo:false, aviso:'',
 };
 const M2_MAX_ICONOS = 3000;
-
-/* Con el mapa muy abierto hay miles de naufragios y de ruinas: dibujarlos
-   taparía el mapa entero de iconos y no se vería ni un bioma.
-
-   La regla no es una lista de "este sí, este no" que haya que ir ajustando:
-   cada estructura va en una rejilla de tantos bloques (`paso`, que sale del
-   propio juego), así que sus iconos caerían a `paso × escala` píxeles unos de
-   otros. Si eso es menos que un icono y medio, ese tipo se calla hasta que te
-   acerques. Las raras (mansiones, ciudades antiguas) tienen la rejilla enorme y
-   por eso se ven de lejos, sin que nadie lo haya decidido a mano. */
-/* CUÁNTOS ICONOS CABEN
-   Al alejar el mapa, cada tipo por separado sigue estando "bien repartido" —y
-   sin embargo el mapa entero se convierte en una alfombra de iconos, porque son
-   veinte tipos a la vez. Lo que sobra es el TOTAL, no cada uno.
-
-   Así que hay un presupuesto de iconos por pantalla (uno cada ~41×41 px, que es
-   más o menos como se ve Chunkbase) y se reparte empezando por los que menos
-   hay: las mansiones y las ciudades antiguas entran siempre, y los naufragios,
-   que salen a miles, solo cuando ya te has acercado lo bastante como para que
-   quepan. No hay ni una constante por tipo: se decide con lo que de verdad hay
-   en el trozo de mundo que se está mirando.
-
-   Los tipos que se quedan fuera salen en su casilla con una lupa, y pulsándola
-   se ven igual — la regla decide por defecto, no manda. */
-function m2Presupuesto(){ return Math.max(120, Math.round(M2.w*M2.h/1700)); }
-
-function m2Decidir(){
-  if (!M2.est || !M2.areaPedida) return;
-  const enPantalla = (M2.w/M2.esc) * (M2.h/M2.esc) / M2.areaPedida;
-  for (const t of M2.est.tipos) t.enVista = Math.round((M2.cuenta[t.k]||0) * enPantalla);
-  const orden = M2.est.tipos.slice().sort((a,b)=>(a.enVista||0)-(b.enVista||0));
-  let usado = 0, tope = m2Presupuesto();
-  for (const t of orden){
-    t.cabe = (usado + (t.enVista||0)) <= tope;
-    if (t.cabe) usado += (t.enVista||0);
-  }
-}
-
-function m2SaleAhora(tipo){
-  if (M2.apagados.has(tipo.k)) return false;
-  if (M2.forzados.has(tipo.k)) return true;
-  return tipo.cabe !== false;
-}
+const M2_SLIME_DESDE = 1/8;      // píxeles por bloque mínimos para dibujar chunks
+const M2_SLIME_ZOOM  = 1/4;      // a esto se acerca solo al encender los slimes
 
 async function m2Cargar(){
   if (M2.listo) { m2Medir(); m2Pinta(); return; }
@@ -3059,15 +3026,18 @@ async function m2Cargar(){
   $('m2-version').textContent = d.version ? ('Java ' + d.version) : '—';
   $('m2-dimension').textContent = d.dimension || 'Overworld';
   for (const k in d.leyenda){
-    const b=d.leyenda[k], c=b.c;
-    M2.porColor.set(parseInt(c.slice(1),16), b);
+    const b=d.leyenda[k];
+    M2.porColor.set(parseInt(b.c.slice(1),16), b);
   }
+  // Las fortalezas vienen enteras (son 128 en todo el mundo, no hace falta
+  // pedirlas por trozos) y se pegan a la lista de cada viaje.
+  M2.fortalezas = (d.fortalezas || []).map(p => ['stronghold', p[0], p[1]]);
   const ia=new Image(); ia.src=MK_ICON('spawn'); M2.iconos.set('__aparicion', ia);
   ia.onload=()=>m2Iconos();
   for (const t of d.tipos){
     if (t.oculto) M2.apagados.add(t.k);
     const im=new Image(); im.src = MK_ICON(t.icono);
-    im.onload=()=>{ t.hay=true; m2Iconos(); };
+    im.onload=()=>m2Iconos();
     M2.iconos.set(t.k, im);
   }
   try{
@@ -3095,30 +3065,12 @@ function m2CopiarSemilla(){
   } else m2CopiarAPelo(s, bien);
 }
 function m2CopiarAPelo(s, bien){
-  // sin permiso de portapapeles (o sin https) queda el truco de siempre
   try{
     const a=document.createElement('textarea'); a.value=s;
     a.style.position='fixed'; a.style.opacity='0';
     document.body.appendChild(a); a.select(); document.execCommand('copy');
     a.remove(); bien();
   }catch(_){ $('m2-semilla-pista').textContent='cópiala a mano'; }
-}
-
-/* Marcar o desmarcar todas las capas de golpe. Al marcar todo se fuerzan
-   también las que el zoom esconde: si alguien pulsa «marcar todo», quiere
-   verlas, no que el mapa decida por él. */
-function m2Todas(encender){
-  if (!M2.est) return;
-  M2.apagados.clear(); M2.forzados.clear();
-  for (const t of M2.est.tipos){
-    if (encender) M2.forzados.add(t.k);
-    else M2.apagados.add(t.k);
-  }
-  M2.verSlime = encender && M2.esc >= M2_SLIME_DESDE;
-  M2.verAparicion = encender;
-  // Se vuelven a pedir por si la lista que hay en memoria es de otro sitio:
-  // «marcar todo» tiene que enseñar todo lo que hay AQUÍ, no lo que quedó.
-  m2Guardar(); m2Capas(); m2PideSlime(); m2PideEstructuras(); m2Iconos();
 }
 
 function m2Guardar(){
@@ -3178,10 +3130,7 @@ function m2Dibuja(){
   for (let tz=t0z; tz<=t1z; tz++) for (let tx=t0x; tx<=t1x; tx++){
     const x=m2ax(tx*paso), y=m2az(tz*paso);
     const im=M2.azulejos.get(bpp+'/'+tx+'/'+tz);
-    if (im instanceof Image){
-      g.drawImage(im, x, y, lado, lado);
-      continue;
-    }
+    if (im instanceof Image){ g.drawImage(im, x, y, lado, lado); continue; }
     const p=m2Padre(bpp,tx,tz);           // mientras llega, el de arriba estirado
     if (p) g.drawImage(p.im, p.ox*TAM/p.f, p.oz*TAM/p.f, TAM/p.f, TAM/p.f, x, y, lado, lado);
     faltan.push([tx,tz, Math.abs(x+lado/2-M2.w/2)+Math.abs(y+lado/2-M2.h/2)]);
@@ -3192,9 +3141,8 @@ function m2Dibuja(){
 }
 
 function m2Padre(bpp,tx,tz){
-  const ns=M2.est.niveles;
   let f=1;
-  for (const b of ns){
+  for (const b of M2.est.niveles){
     if (b < bpp) continue;
     if (b > bpp) f = b/bpp;
     const px=Math.floor(tx/f), pz=Math.floor(tz/f);
@@ -3232,9 +3180,8 @@ function m2Limpiar(){
    que no hay nada que se pueda haber copiado mal.
 
    Solo se dibujan de cerca: un chunk son 16 bloques, y con el mapa abierto
-   serían rayas de un píxel que no dirían nada. */
-const M2_SLIME_DESDE = 1/8;      // píxeles por bloque mínimos para dibujarlos
-
+   serían rayas de un píxel que no dirían nada. Por eso al encender la capa el
+   mapa se acerca solo hasta donde se ven. */
 let m2TimerSlime=null;
 function m2PideSlime(){
   clearTimeout(m2TimerSlime);
@@ -3250,14 +3197,16 @@ function m2PideSlime(){
       M2.slime={clave, cx, cz, n:lado, datos:new Uint8Array(await r.arrayBuffer())};
       m2Iconos();
     }catch(_){}
-  }, 250);
+  }, 220);
 }
 
 function m2DibujaSlime(g){
   const s=M2.slime;
   if (!s || !M2.verSlime || M2.esc < M2_SLIME_DESDE) return;
   const lado=16*M2.esc;
-  g.fillStyle='rgba(90, 220, 90, .30)';
+  g.fillStyle='rgba(90, 220, 90, .34)';
+  g.strokeStyle='rgba(60, 190, 60, .55)';
+  g.lineWidth=1;
   for (let j=0;j<s.n;j++){
     const y=m2az((s.cz+j)*16);
     if (y<-lado || y>M2.h) continue;
@@ -3266,11 +3215,82 @@ function m2DibujaSlime(g){
       const x=m2ax((s.cx+i)*16);
       if (x<-lado || x>M2.w) continue;
       g.fillRect(x, y, lado, lado);
+      if (lado > 6) g.strokeRect(x+.5, y+.5, lado-1, lado-1);
     }
   }
 }
 
+/* ---------- las reglas de coordenadas ---------- */
+/* Números por el borde de arriba (X) y por el de la izquierda (Z), como en
+   Chunkbase. Sin esto el mapa es bonito y no dice dónde estás: había que mover
+   el ratón y mirar el cartel para orientarse. */
+function m2Reglas(g){
+  // una marca cada ~130 px, redondeada a 1/2/5 × potencia de diez para que los
+  // números sean de los que uno se sabe (1000, 2000, 5000) y no 1337
+  const objetivo = 130 / M2.esc;
+  const p = Math.pow(10, Math.floor(Math.log10(objetivo)));
+  const paso = [1,2,5,10].map(m=>m*p).find(v=>v>=objetivo) || p*10;
+  const fmt = v => (Math.abs(v)>=10000 ? (v/1000).toFixed(v%1000?1:0)+'k'
+                                       : String(Math.round(v)));
+  g.font='700 11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  g.textBaseline='middle';
+
+  const pinta=(txt, x, y)=>{
+    const an=g.measureText(txt).width+12;
+    g.fillStyle='rgba(10,13,17,.82)';
+    if (g.roundRect){ g.beginPath(); g.roundRect(x-an/2, y-9, an, 18, 9); g.fill(); }
+    else g.fillRect(x-an/2, y-9, an, 18);
+    g.fillStyle='#e8edf3'; g.textAlign='center'; g.fillText(txt, x, y+.5);
+  };
+
+  // Las etiquetas «X →» y «Z ↓» van en el centro de cada borde, así que se
+  // saltan los números que caerían encima: pisados no se leen ni unos ni otros.
+  const x0=m2dex(0), x1=m2dex(M2.w);
+  for (let v=Math.ceil(x0/paso)*paso; v<=x1; v+=paso){
+    const px=m2ax(v);
+    if (px>36 && px<M2.w-36 && Math.abs(px-M2.w/2)>44) pinta(fmt(v), px, 16);
+  }
+  const z0=m2dez(0), z1=m2dez(M2.h);
+  for (let v=Math.ceil(z0/paso)*paso; v<=z1; v+=paso){
+    const py=m2az(v);
+    if (py>34 && py<M2.h-14 && Math.abs(py-M2.h/2)>22) pinta(fmt(v), 40, py);
+  }
+  pinta('X →', M2.w/2, 16);
+  pinta('Z ↓', 40, M2.h/2);
+}
+
 /* ---------- los iconos ---------- */
+/* CUÁNTOS ICONOS CABEN
+   Al alejar el mapa, cada tipo por separado sigue estando "bien repartido" —y
+   sin embargo el mapa entero se convierte en una alfombra de iconos, porque son
+   veinte tipos a la vez. Lo que sobra es el TOTAL, no cada uno.
+
+   Así que hay un presupuesto de iconos por pantalla (uno cada ~41×41 px, que es
+   más o menos como se ve Chunkbase) y se reparte empezando por los que menos
+   hay: las mansiones y las ciudades antiguas entran siempre, y los naufragios,
+   que salen a miles, solo cuando ya te has acercado lo bastante. No hay ni una
+   constante por tipo: se decide con lo que de verdad hay en el trozo que se
+   está mirando. */
+function m2Presupuesto(){ return Math.max(120, Math.round(M2.w*M2.h/1700)); }
+
+function m2Decidir(){
+  if (!M2.est || !M2.areaPedida) return;
+  const enPantalla = (M2.w/M2.esc) * (M2.h/M2.esc) / M2.areaPedida;
+  for (const t of M2.est.tipos) t.enVista = Math.round((M2.cuenta[t.k]||0) * enPantalla);
+  const orden = M2.est.tipos.slice().sort((a,b)=>(a.enVista||0)-(b.enVista||0));
+  let usado = 0, tope = m2Presupuesto();
+  for (const t of orden){
+    t.cabe = (usado + (t.enVista||0)) <= tope;
+    if (t.cabe) usado += (t.enVista||0);
+  }
+}
+
+function m2SaleAhora(tipo){
+  if (M2.apagados.has(tipo.k)) return false;
+  if (M2.forzados.has(tipo.k)) return true;
+  return tipo.cabe !== false;
+}
+
 function m2Iconos(){
   if (!M2.listo) return;
   const c=$('m2-ico'), g=c.getContext('2d'), d=M2.dpr;
@@ -3313,6 +3333,7 @@ function m2Iconos(){
       M2.enPantalla.push(['__aparicion', ap[0], ap[2], px, py]);
     }
   }
+  m2Reglas(g);
   const falta = M2.recorte ? 'Acércate para ver las estructuras'
               : (dibujados > M2_MAX_ICONOS ? 'Hay más de los que caben — acércate' : M2.aviso);
   const a=$('m2-aviso');
@@ -3333,7 +3354,7 @@ function m2PideEstructuras(){
     try{ d = await api('/api/mapa2/estructuras?'+q); }catch(_){}
     if (!d || !d.ok) return;
     M2.recorte = !!d.demasiado;
-    M2.estructuras = d.estructuras || [];
+    M2.estructuras = (d.estructuras || []).concat(M2.fortalezas || []);
     M2.cuenta = {};
     for (const [k] of M2.estructuras) M2.cuenta[k]=(M2.cuenta[k]||0)+1;
     M2.areaPedida = Math.abs((m2dex(M2.w)-m2dex(0)+2*mx) * (m2dez(M2.h)-m2dez(0)+2*mz)) || 1;
@@ -3346,54 +3367,95 @@ function m2PideEstructuras(){
 function m2Capas(){
   const w=$('m2-capas'); if (!w || !M2.est) return;
   w.innerHTML='';
-  // Estas dos no son estructuras, así que van aparte y siempre delante.
-  const extra=(id, activo, etq, icono, nota)=>{
+  const chip=(id, activo, etq, icono, cuenta)=>{
     const b=document.createElement('button');
     b.className='m2-cap'+(activo?' on':''); b.id='m2cap-'+id;
-    if (nota) b.title=nota;
     if (icono){ const im=document.createElement('img'); im.src=icono; im.alt='';
       im.onerror=()=>{ im.style.visibility='hidden'; }; b.appendChild(im); }
     const e=document.createElement('span'); e.className='et'; e.textContent=etq;
     b.appendChild(e);
+    if (cuenta!==undefined){ const c=document.createElement('span'); c.className='n';
+      c.textContent=cuenta; b.appendChild(c); }
     return b;
   };
+
+  // El punto de aparición y los slimes no son estructuras: van delante, y al
+  // encenderlos LLEVAN EL MAPA a donde se ven. Encender una capa y que no pase
+  // nada visible es lo que hacía pensar que estaba rota.
   if (M2.est.aparicion){
-    const b=extra('aparicion', M2.verAparicion, 'Punto de aparición', MK_ICON('spawn'));
-    b.onclick=()=>{ M2.verAparicion=!M2.verAparicion; m2Guardar(); m2Capas(); m2Iconos(); };
+    const b=chip('aparicion', M2.verAparicion, 'Punto de aparición', MK_ICON('spawn'));
+    b.title='Te lleva al punto de aparición del mundo';
+    b.onclick=()=>{
+      M2.verAparicion=!M2.verAparicion;
+      if (M2.verAparicion) m2Volar(M2.est.aparicion[0], M2.est.aparicion[2]);
+      m2Guardar(); m2Capas(); m2Iconos();
+    };
     w.appendChild(b);
   }
   {
-    const lejos = M2.esc < M2_SLIME_DESDE;
-    const b=extra('slime', M2.verSlime && !lejos, 'Chunks de slime', MK_ICON('slime'),
-                  lejos ? 'Acércate: un chunk son 16 bloques' : '');
-    if (lejos && M2.verSlime) b.className+=' lejos';
-    b.onclick=()=>{ M2.verSlime=!M2.verSlime; m2Guardar(); m2Capas(); m2PideSlime(); m2Iconos(); };
+    const b=chip('slime', M2.verSlime, 'Chunks de slime', MK_ICON('slime'));
+    b.title='Un chunk de cada diez. Al encenderlo el mapa se acerca hasta que se ven';
+    b.onclick=()=>{
+      M2.verSlime=!M2.verSlime;
+      if (M2.verSlime && M2.esc < M2_SLIME_DESDE) m2Volar(M2.cx, M2.cz, M2_SLIME_ZOOM);
+      m2Guardar(); m2Capas(); m2PideSlime(); m2Iconos();
+    };
     w.appendChild(b);
   }
   for (const t of M2.est.tipos){
     const n=M2.cuenta[t.k]||0;
-    const sale=m2SaleAhora(t);
-    const lejos=!sale && !M2.apagados.has(t.k);    // apagado por el zoom, no por nadie
-    const b=document.createElement('button');
-    b.className='m2-cap'+(sale?' on':'')+(lejos?' lejos':'');
-    b.id='m2cap-'+t.k;
-    if (lejos) b.title='Muy lejos para dibujarlos todos — pulsa para verlos igual';
+    const b=chip(t.k, m2SaleAhora(t), t.es, MK_ICON(t.icono), n);
     b.onclick=()=>{
-      if (lejos) M2.forzados.add(t.k);
-      else if (M2.apagados.has(t.k)){ M2.apagados.delete(t.k); M2.forzados.delete(t.k); }
+      if (M2.apagados.has(t.k)){ M2.apagados.delete(t.k); M2.forzados.add(t.k); }
+      else if (!m2SaleAhora(t)){ M2.forzados.add(t.k); }
       else { M2.apagados.add(t.k); M2.forzados.delete(t.k); }
       m2Guardar(); m2Capas(); m2Iconos();
     };
-    const im=document.createElement('img'); im.src=MK_ICON(t.icono); im.alt='';
-    im.onerror=()=>{ im.style.visibility='hidden'; };
-    b.appendChild(im);
-    const e=document.createElement('span'); e.className='et'; e.textContent=t.es;
-    b.appendChild(e);
-    const c=document.createElement('span'); c.className='n'; c.textContent=n;
-    b.appendChild(c);
     w.appendChild(b);
   }
 }
+
+/* Marcar o desmarcar todas las capas de golpe. Al marcar todo se fuerzan
+   también las que el zoom esconde: si alguien pulsa «marcar todo», quiere
+   verlas, no que el mapa decida por él. */
+function m2Todas(encender){
+  if (!M2.est) return;
+  M2.apagados.clear(); M2.forzados.clear();
+  for (const t of M2.est.tipos){
+    if (encender) M2.forzados.add(t.k);
+    else M2.apagados.add(t.k);
+  }
+  M2.verSlime = encender && M2.esc >= M2_SLIME_DESDE;
+  M2.verAparicion = encender;
+  m2Guardar(); m2Capas(); m2PideSlime(); m2PideEstructuras(); m2Iconos();
+}
+
+/* ---------- moverse ---------- */
+function m2Volar(x, z, esc){
+  M2.cx=x; M2.cz=z;
+  if (esc) M2.esc=Math.max(1/512, Math.min(1, esc));
+  m2Pinta(); m2Guardar(); m2PideEstructuras(); m2PideSlime(); m2Capas();
+}
+
+function m2Ir(){
+  const x=parseInt(($('m2-x').value||'').replace(/[^\d-]/g,''), 10);
+  const z=parseInt(($('m2-z').value||'').replace(/[^\d-]/g,''), 10);
+  if (isNaN(x) || isNaN(z)) return;
+  m2Volar(x, z, M2.esc < 1/32 ? 1/16 : M2.esc);
+}
+
+/* Al acercar o alejar, el punto bajo el cursor se queda quieto: es lo que hace
+   que el zoom se sienta como agarrar el mapa y no como saltar de sitio. */
+function m2Escalar(f, px, pz){
+  const antes=M2.esc;
+  M2.esc = Math.max(1/512, Math.min(1, M2.esc*f));
+  if (M2.esc===antes) return;
+  const wx=(px-M2.w/2)/antes + M2.cx, wz=(pz-M2.h/2)/antes + M2.cz;
+  M2.cx = wx - (px-M2.w/2)/M2.esc;
+  M2.cz = wz - (pz-M2.h/2)/M2.esc;
+  m2Pinta(); m2Guardar(); m2PideEstructuras(); m2PideSlime(); m2Capas();
+}
+function m2Zoom(f){ m2Escalar(f, M2.w/2, M2.h/2); }
 
 /* ---------- ratón, dedo y rueda ---------- */
 function m2Enganchar(){
@@ -3404,6 +3466,7 @@ function m2Enganchar(){
   let arrastrando=false, movido=0, pinza=0;
 
   caja.addEventListener('pointerdown', ev=>{
+    if (ev.target.closest('.m2-zoom')) return;
     caja.setPointerCapture(ev.pointerId);
     punteros.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
     arrastrando=true; movido=0; caja.classList.add('arrastrando');
@@ -3442,7 +3505,6 @@ function m2Enganchar(){
   };
   caja.addEventListener('pointerup', soltar);
   caja.addEventListener('pointercancel', soltar);
-  caja.addEventListener('pointerleave', ()=>{ $('m2-cruz').classList.add('hidden'); });
 
   caja.addEventListener('wheel', ev=>{
     ev.preventDefault();
@@ -3458,36 +3520,16 @@ function m2Enganchar(){
   addEventListener('resize', ()=>{ m2Medir(); m2Pinta(); });
 }
 
-/* Al acercar o alejar, el punto bajo el cursor se queda quieto: es lo que hace
-   que el zoom se sienta como agarrar el mapa y no como saltar de sitio. */
-function m2Escalar(f, px, pz){
-  const antes=M2.esc;
-  M2.esc = Math.max(1/512, Math.min(1, M2.esc*f));
-  if (M2.esc===antes) return;
-  const wx=(px-M2.w/2)/antes + M2.cx, wz=(pz-M2.h/2)/antes + M2.cz;
-  M2.cx = wx - (px-M2.w/2)/M2.esc;
-  M2.cz = wz - (pz-M2.h/2)/M2.esc;
-  m2Pinta(); m2Guardar(); m2PideEstructuras(); m2PideSlime(); m2Capas();
-}
-function m2Zoom(f){ m2Escalar(f, M2.w/2, M2.h/2); }
-
-function m2Ir(){
-  const v=($('m2-ir').value||'').match(/-?\d+/g);
-  if (!v || v.length<2) return;
-  M2.cx=parseInt(v[0]); M2.cz=parseInt(v[v.length-1]);
-  if (M2.esc < 1/32) M2.esc = 1/16;
-  $('m2-ir').value='';
-  m2Pinta(); m2Guardar(); m2PideEstructuras(); m2PideSlime();
-}
-
 /* ---------- decir qué hay debajo del ratón ---------- */
 /* El nombre del bioma sale de LEER EL COLOR del píxel ya dibujado y buscarlo en
-   la leyenda. Cada bioma tiene un color distinto, así que es exacto — y no
-   cuesta ni una petición, que es lo que permite que se actualice al mover el
-   ratón sin ahogar al servidor. */
+   la leyenda: cada bioma tiene un color distinto, así que es exacto y no cuesta
+   ni una petición.
+   Pero si ese trozo aún no ha llegado, debajo hay fondo y no hay color que
+   buscar — y ahí es donde antes se quedaba sin nombre. En ese caso se le
+   pregunta al servidor, con un respiro para no ahogarlo mientras se mueve el
+   ratón. Así SIEMPRE sale el bioma. */
+let m2TimerBioma=null, m2UltimoBioma='';
 function m2Mirar(px,py){
-  const cr=$('m2-cruz');
-  cr.classList.remove('hidden'); cr.style.left=px+'px'; cr.style.top=py+'px';
   const x=Math.floor(m2dex(px)), z=Math.floor(m2dez(py));
   let nombre='';
   try{
@@ -3496,7 +3538,26 @@ function m2Mirar(px,py){
     const b=M2.porColor.get((d[0]<<16)|(d[1]<<8)|d[2]);
     if (b) nombre = LANG==='en' ? b.en : b.es;
   }catch(_){}
-  $('m2-donde').innerHTML = `<b>X ${x}</b> &nbsp; <b>Z ${z}</b>` + (nombre? ' &nbsp;·&nbsp; '+esc(nombre) : '');
+  if (nombre){
+    m2UltimoBioma = nombre;
+    clearTimeout(m2TimerBioma);
+  } else {
+    nombre = m2UltimoBioma;                 // lo último que se supo, no un hueco
+    clearTimeout(m2TimerBioma);
+    m2TimerBioma = setTimeout(()=>m2PreguntaBioma(x, z), 160);
+  }
+  $('m2-donde').innerHTML = `<b>X ${x}</b> &nbsp; <b>Z ${z}</b>`
+    + (nombre ? ' &nbsp;·&nbsp; '+esc(nombre) : '');
+}
+
+async function m2PreguntaBioma(x, z){
+  try{
+    const d = await api(`/api/mapa2/bioma?x=${x}&z=${z}`);
+    if (!d || !d.ok) return;
+    m2UltimoBioma = LANG==='en' ? d.en : d.es;
+    $('m2-donde').innerHTML = `<b>X ${x}</b> &nbsp; <b>Z ${z}</b> &nbsp;·&nbsp; `
+      + esc(m2UltimoBioma);
+  }catch(_){}
 }
 
 function m2Clic(px,py){

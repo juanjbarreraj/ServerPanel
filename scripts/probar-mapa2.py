@@ -106,7 +106,9 @@ with sync_playwright() as pw:
     afirmar(pintado_ico > 20, "los iconos están dibujados (%d muestras opacas)" % pintado_ico)
 
     print("── decir el bioma sin pedir nada ──")
-    pag.mouse.move(640, 450)
+    caja = pag.locator("#m2-lienzo").bounding_box()
+    CX, CY = caja["x"] + caja["width"]/2, caja["y"] + caja["height"]/2
+    pag.mouse.move(CX, CY)
     pag.wait_for_timeout(300)
     donde = pag.text_content("#m2-donde")
     print("      «%s»" % donde)
@@ -123,7 +125,8 @@ with sync_playwright() as pw:
     pag.wait_for_timeout(200)
 
     print("── ir a un sitio ──")
-    pag.fill("#m2-ir", "17752 -14598")
+    pag.fill("#m2-x", "17752")
+    pag.fill("#m2-z", "-14598")
     pag.click("#m2-btn-ir")
     pag.wait_for_timeout(1200)
     centro = pag.evaluate("() => [Math.round(M2.cx), Math.round(M2.cz)]")
@@ -131,7 +134,7 @@ with sync_playwright() as pw:
 
     print("── acercar y alejar ──")
     e0 = pag.evaluate("() => M2.esc")
-    pag.mouse.move(640, 450)
+    pag.mouse.move(CX, CY)
     pag.mouse.wheel(0, -600)
     pag.wait_for_timeout(1200)
     e1 = pag.evaluate("() => M2.esc")
@@ -141,9 +144,9 @@ with sync_playwright() as pw:
 
     print("── arrastrar ──")
     c0 = pag.evaluate("() => [M2.cx, M2.cz]")
-    pag.mouse.move(700, 450)
+    pag.mouse.move(CX + 60, CY)
     pag.mouse.down()
-    pag.mouse.move(500, 350, steps=8)
+    pag.mouse.move(CX - 140, CY - 100, steps=8)
     pag.mouse.up()
     pag.wait_for_timeout(900)
     c1 = pag.evaluate("() => [M2.cx, M2.cz]")
@@ -204,6 +207,34 @@ with sync_playwright() as pw:
     afirmar("Java" in cab["version"], "la versión se ve: %s" % cab["version"])
     afirmar(cab["cols"] >= 2, "las capas van en rejilla (%d columnas)" % cab["cols"])
     afirmar(cab["etiquetas"] >= 14, "cada capa lleva su nombre (%d)" % cab["etiquetas"])
+
+    print("── las reglas de coordenadas ──")
+    reglas = pag.evaluate("""() => {
+      const c=document.getElementById('m2-ico');
+      const d=c.getContext('2d',{willReadFrequently:true});
+      // franja de arriba: si hay reglas, hay pastillas oscuras con texto claro
+      const arriba=d.getImageData(0,0,c.width,Math.round(40*(window.devicePixelRatio>2?2:window.devicePixelRatio||1))).data;
+      let claro=0; for (let i=0;i<arriba.length;i+=4*11) if (arriba[i]>200 && arriba[i+3]>200) claro++;
+      return claro;
+    }""")
+    afirmar(reglas > 30, "hay números de coordenadas en el borde (%d muestras)" % reglas)
+
+    print("── la capa de aparición lleva el mapa al spawn ──")
+    pag.evaluate("() => { M2.cx=99999; M2.cz=99999; M2.verAparicion=false; m2Capas(); }")
+    pag.click("#m2cap-aparicion")
+    pag.wait_for_timeout(900)
+    centro2 = pag.evaluate("() => [Math.round(M2.cx), Math.round(M2.cz)]")
+    ap2 = pag.evaluate("() => M2.est.aparicion")
+    afirmar(centro2 == [ap2[0], ap2[2]], "pulsar «Punto de aparición» va al spawn %s" % centro2)
+
+    print("── la capa de slime se acerca sola ──")
+    pag.evaluate("() => { M2.esc=1/64; M2.verSlime=false; m2Pinta(); m2Capas(); }")
+    pag.click("#m2cap-slime")
+    pag.wait_for_timeout(1200)
+    e2 = pag.evaluate("() => M2.esc")
+    afirmar(e2 >= 1/8, "pulsar «Chunks de slime» acerca el mapa (escala %.4f)" % e2)
+    pag.wait_for_function("() => M2.slime && M2.slime.datos.length>0", timeout=40000)
+    afirmar(True, "y los chunks llegan solos")
 
     pag.click("#m2-semilla-caja")
     pag.wait_for_timeout(400)

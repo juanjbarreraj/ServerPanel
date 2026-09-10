@@ -3450,6 +3450,74 @@ def api_m2_slime():
     return r
 
 
+def _m2_fortalezas(semilla):
+    """Dónde están las fortalezas del End. Se las preguntamos a Minecraft.
+
+    POR QUÉ ASÍ Y NO CALCULÁNDOLAS
+    Las fortalezas no van en rejilla como el resto: van en anillos concéntricos,
+    y para colocar cada una el juego busca en espiral un bioma que le valga,
+    gastando números al azar por el camino. Reimplementar eso a mano tiene mil
+    sitios donde equivocarse, y el fallo saldría como fortalezas en sitios
+    plausibles y falsos. Intenté usar la clase del propio Minecraft desde fuera y
+    no se deja: sus etiquetas de bioma no están enlazadas sin un servidor entero.
+
+    Pero el servidor SÍ lo sabe. `/locate structure minecraft:stronghold` da la
+    más cercana a un punto, y eso no genera nada: son cuentas que el servidor ya
+    tiene hechas. Preguntando desde una corona de puntos alrededor de cada
+    anillo salen todas.
+
+    Son 128 y no cambian nunca, así que esto se hace UNA vez por mundo y se
+    guarda. Si el servidor está apagado, se devuelve lo guardado (o nada) y el
+    mapa sigue funcionando sin esa capa.
+    """
+    fichero = DATA_DIR / ("fortalezas-%s.json" % semilla)
+    try:
+        guardado = json.loads(fichero.read_text())
+        if guardado.get("completo"):
+            return guardado["puntos"]
+    except Exception:
+        guardado = None
+
+    # No se mira si systemd dice que el servidor está vivo: se intenta y ya. El
+    # primer `locate` que falle corta la faena y deja lo que hubiera, que es
+    # exactamente lo mismo pero sin depender de que systemctl esté disponible.
+
+    import math
+    hallados = {}
+    # Los anillos: el primero a ~2000 bloques y cada uno ~3000 más lejos. Se
+    # pregunta desde una corona de puntos por anillo, con el doble de puntos que
+    # fortalezas espera haber, para que ninguna quede escondida detrás de otra.
+    coronas = [(2048, 8), (5120, 14), (8192, 24), (11264, 32),
+               (14336, 40), (17408, 48), (20480, 56), (23552, 52)]
+    for radio, cuantos in coronas:
+        for i in range(cuantos):
+            a = 2 * math.pi * i / cuantos
+            x, z = int(math.cos(a) * radio), int(math.sin(a) * radio)
+            ok, salida = rcon_try(
+                "execute positioned %d 100 %d run locate structure minecraft:stronghold" % (x, z))
+            if not ok:
+                # el servidor se cayó a media faena: se guarda lo que haya, sin
+                # marcarlo como completo, y se reintenta la próxima vez
+                break
+            m = re.search(r"is at \[(-?\d+), ~, (-?\d+)\]", salida or "")
+            if m:
+                hallados[(int(m.group(1)), int(m.group(2)))] = True
+        else:
+            continue
+        break
+
+    puntos = sorted([x + 8, z + 8] for x, z in hallados)
+    completo = len(puntos) >= 100          # las 128, menos las que caen encima
+    try:
+        fichero.write_text(json.dumps({"completo": completo, "puntos": puntos,
+                                       "cuando": time.strftime("%Y-%m-%d %H:%M")}))
+    except Exception:
+        pass
+    _syslog("[mapa2] fortalezas: %d encontradas%s"
+            % (len(puntos), "" if completo else " (incompleto, se reintentará)"))
+    return puntos
+
+
 @app.get("/api/mapa2/estado")
 def api_m2_estado():
     """Todo lo que la pestaña necesita para dibujarse: colores, tipos, estado."""
@@ -3488,6 +3556,7 @@ def api_m2_estado():
             k = e.tipo_de(m)
             if k:
                 paso[k] = min(paso.get(k, 1 << 30), datos[0] * 16)
+    paso["stronghold"] = 2000      # van en anillos, muy separadas
     # Solo los tipos que PUEDEN salir aquí. Antes se mandaban los veinte y la
     # rejilla enseñaba «Fortaleza del Nether · 0» y «Ciudad del End · 0» en un
     # mapa del overworld: una casilla que nunca se va a encender solo estorba.
@@ -3499,6 +3568,15 @@ def api_m2_estado():
             k = e.tipo_de(m)
             if k:
                 posibles.add(k)
+    # Las fortalezas no salen de la rejilla: se le preguntan al servidor y se
+    # guardan. Solo se ofrecen como capa si de verdad tenemos alguna.
+    fortalezas = []
+    try:
+        fortalezas = _m2_fortalezas(salud["semilla"])
+    except Exception:
+        pass
+    if fortalezas:
+        posibles.add("stronghold")
     tipos = []
     for k in sorted(e.TIPOS, key=lambda k: e.TIPOS[k][5]):
         if k not in posibles:
@@ -3509,7 +3587,7 @@ def api_m2_estado():
     return jsonify(ok=True, semilla=str(salud["semilla"]), y=salud.get("y"),
                    niveles=b.NIVELES, tam=b.TAM, leyenda=leyenda, tipos=tipos,
                    aparicion=punto_de_aparicion(), version=mc_version(),
-                   dimension="Overworld")
+                   dimension="Overworld", fortalezas=fortalezas)
 
 
 # signed=True o Flask no acepta coordenadas negativas y media mitad del
