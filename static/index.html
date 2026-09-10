@@ -537,6 +537,22 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .m2-cap img{width:26px; height:26px; flex:0 0 26px; image-rendering:pixelated; opacity:.4; transition:opacity .18s}
 .m2-cap.on{color:var(--ink)}
 .m2-cap.on img{opacity:1}
+/* Al pasar por encima, el icono se enciende y el cuadro se marca. Es la misma
+   señal que deja el clic, pero a medias: enseña QUÉ vas a encender antes de
+   encenderlo, que en una tira de veinte cuadraditos apagados es la diferencia
+   entre elegir y probar suerte. El clic sigue mandando: `.on` va después.
+
+   Solo donde de verdad hay un ratón. En el móvil el navegador deja el :hover
+   pegado en lo último que se tocó, así que una capa apagada se quedaría
+   iluminada como si estuviera encendida — justo la señal que aquí importa. */
+@media (hover:hover){
+  .m2-cap:hover img{opacity:1}
+  .m2-cap:hover{color:var(--ink)}
+  .m2-cap:hover{box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06),
+    0 0 0 2px rgba(111,212,78,.45) inset}
+  .m2-cap.on:hover{box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06),
+    0 0 0 2px var(--slime) inset}
+}
 .m2-cap.on{box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06),
   0 0 0 2px var(--slime) inset}
 .m2-cap .n{opacity:.5; font-weight:400}
@@ -3122,7 +3138,12 @@ const M2_SLIME_DESDE = 1/4;      // 4 px por chunk: menos que eso es una mancha
 const M2_SLIME_ZOOM  = 3/4;      // 12 px por chunk, como en Chunkbase
 
 async function m2Cargar(){
-  if (M2.listo) { m2Medir(); m2Pinta(); return; }
+  // La tira de iconos es SIEMPRE la vista de entrada. La lista con nombres es
+  // para mirar algo puntual («¿cuál era el de las ruinas?»), no para quedarse:
+  // ocupa cuatro filas y empuja el mapa fuera de la pantalla. Así que no se
+  // guarda la elección, y volver a esta pestaña, o recargar, devuelve la tira.
+  M2.modo = 'tira';
+  if (M2.listo) { m2Capas(); m2Medir(); m2Pinta(); return; }
   let d=null;
   try{ d = await api('/api/mapa2/estado'); }catch(_){}
   const caja=$('m2-caja'), off=$('m2-apagado');
@@ -3169,7 +3190,6 @@ async function m2Cargar(){
     if (Array.isArray(g.on)) M2.forzados = new Set(g.on);
     if (typeof g.slime==='boolean') M2.verSlime = g.slime;
     if (typeof g.apar==='boolean') M2.verAparicion = g.apar;
-    if (g.modo==='lista' || g.modo==='tira') M2.modo = g.modo;
   }catch(_){}
   m2PideHechas();
   m2Capas(); m2Enganchar(); m2Medir(); m2Pinta(); m2PideEstructuras(); m2PideSlime();
@@ -3204,7 +3224,7 @@ function m2Guardar(){
   try{ localStorage.setItem('panel_m2', JSON.stringify(
     {cx:Math.round(M2.cx), cz:Math.round(M2.cz), esc:M2.esc,
      off:[...M2.apagados], on:[...M2.forzados],
-     slime:M2.verSlime, apar:M2.verAparicion, modo:M2.modo})); }catch(_){}
+     slime:M2.verSlime, apar:M2.verAparicion})); }catch(_){}
 }
 
 /* ---------- tamaño del lienzo ---------- */
@@ -3561,11 +3581,11 @@ function m2PideEstructuras(){
 }
 
 /* ---------- las casillas de encender y apagar ---------- */
-/* Tira de iconos ↔ lista con nombres. La preferencia se guarda: es de las
-   cosas que se eligen una vez y molestan si vuelven solas a lo de antes. */
+/* Tira de iconos ↔ lista con nombres. NO se guarda a propósito: la lista es
+   para una consulta suelta y la tira es la casa. Ver m2Cargar(). */
 function m2Modo(){
   M2.modo = (M2.modo==='tira') ? 'lista' : 'tira';
-  m2Guardar(); m2Capas();
+  m2Capas();
 }
 
 function m2Capas(){
@@ -3584,9 +3604,13 @@ function m2Capas(){
   const chip=(id, activo, etq, icono, cuenta)=>{
     const b=document.createElement('button');
     b.className='m2-cap'+(activo?' on':''); b.id='m2cap-'+id;
-    // En la tira no hay nombre a la vista, así que el nombre va en el título:
-    // sin esto, veinte cuadraditos sin explicación.
-    b.title = etq + (cuenta!==undefined ? ' · '+cuenta+' a la vista' : '');
+    // En la tira no hay nombre a la vista, así que el nombre sale al pasar por
+    // encima, en el mismo cartel de Minecraft que usan los objetos del
+    // inventario. Va en `data-nombre` y NO en `title`: el título del navegador
+    // tarda un segundo largo en salir y encima saldrían los dos.
+    b.dataset.nombre = etq;
+    if (cuenta!==undefined) b.dataset.pista = cuenta+' a la vista';
+    b.setAttribute('aria-label', etq);
     if (icono){ const im=document.createElement('img'); im.src=icono; im.alt='';
       im.onerror=()=>{ im.style.visibility='hidden'; }; b.appendChild(im); }
     const e=document.createElement('span'); e.className='et'; e.textContent=etq;
@@ -3601,7 +3625,7 @@ function m2Capas(){
   // nada visible es lo que hacía pensar que estaba rota.
   if (M2.est.aparicion){
     const b=chip('aparicion', M2.verAparicion, 'Punto de aparición', MK_ICON('spawn'));
-    b.title='Te lleva al punto de aparición del mundo';
+    b.dataset.pista='Te lleva al punto de aparición del mundo';
     b.onclick=()=>{
       M2.verAparicion=!M2.verAparicion;
       if (M2.verAparicion) m2Volar(M2.est.aparicion[0], M2.est.aparicion[2]);
@@ -3611,7 +3635,7 @@ function m2Capas(){
   }
   {
     const b=chip('slime', M2.verSlime, 'Chunks de slime', MK_ICON('slime'));
-    b.title='Un chunk de cada diez. Al encenderlo el mapa se acerca hasta que se ven';
+    b.dataset.pista='Un chunk de cada diez. Al encenderlo el mapa se acerca';
     b.onclick=()=>{
       M2.verSlime=!M2.verSlime;
       // Acercar SIEMPRE que se esté más lejos de lo cómodo. Antes solo saltaba
@@ -4443,6 +4467,20 @@ async function changePw(){
 (function(){
   const tip=$('mctip');
   document.addEventListener('mouseover', e=>{
+    // Las capas del mapa usan el mismo cartel que los objetos del inventario,
+    // pero con texto llano: en la tira son veinte cuadraditos sin nombre y hay
+    // que poder saber cuál es cuál sin encenderlos uno a uno.
+    const cap = e.target.closest ? e.target.closest('.m2-cap[data-nombre]') : null;
+    // En una pantalla táctil `mouseover` salta al TOCAR, y el cartel aparecería
+    // en el sitio donde estuvo el ratón por última vez, o sea en ninguno. Ahí
+    // los nombres se ven con el botón de la lista.
+    if (cap && matchMedia('(hover:hover)').matches){
+      tip.innerHTML = '<div>' + esc(cap.dataset.nombre) + '</div>'
+        + (cap.dataset.pista ? '<div style="color:#a9b2ba; font-size:11px">'
+                               + esc(cap.dataset.pista) + '</div>' : '');
+      tip.style.display='block';
+      return;
+    }
     const s = e.target.closest ? e.target.closest('.slot.has') : null;
     if (!s || !s.dataset.tip){ tip.style.display='none'; return; }
     let lines=[];
@@ -4466,7 +4504,8 @@ async function changePw(){
     }
   });
   document.addEventListener('mouseout', e=>{
-    if (e.target.closest && e.target.closest('.slot.has')) tip.style.display='none';
+    if (e.target.closest && (e.target.closest('.slot.has') || e.target.closest('.m2-cap')))
+      tip.style.display='none';
   });
 })();
 
