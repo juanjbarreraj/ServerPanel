@@ -107,11 +107,14 @@ class MundoFalso:
     uno de verdad atascándose.
     """
 
-    def __init__(self, carpeta, ritmo=400.0, tope=None, semilla_gens=97, sin_disco=False):
+    def __init__(self, carpeta, ritmo=400.0, tope=None, semilla_gens=97, sin_disco=False,
+                 retraso=0.0, sordo=()):
         self.carpeta = carpeta
         self.ritmo = ritmo
         self.tope = tope
         self.sin_disco = sin_disco
+        self.retraso = retraso           # lo que tarda en contestar (servidor ocupado)
+        self.sordo = set(sordo)          # órdenes que ejecuta y NO contesta
         self.semilla_gens = semilla_gens
         self.hechos = {}                 # (cx,cz) → [(x,y,z,mob)]
         self.cola = {}                   # (cx,cz) → cuándo estará
@@ -129,40 +132,53 @@ class MundoFalso:
         return [(cx * 16 + 8, 30, cz * 16 + 8, mob)]
 
     def manda(self, cmd):
+        """La respuesta, o None si esta vez el juego no llega a contestar."""
+        if self.retraso:
+            time.sleep(self.retraso)     # un servidor ocupado tarda en contestar
         with self.lock:
             self.ordenes.append(cmd)
-            p = cmd.split()
-            if p[:1] == ["list"]:
-                return "There are 0 of a max of 5 players online:"
-            if p[:1] == ["save-all"]:
-                # las frases son las del jar de 26.2, comprobadas en
-                # assets/minecraft/lang/en_us.json
-                if self.sin_disco:
-                    return "Unable to save the game (is there enough disk space?)"
-                self._guardar()
-                return "Saved the game"
-            if p[:2] == ["forceload", "add"] or p[:2] == ["forceload", "remove"]:
-                x0, z0, x1, z1 = (int(v) for v in p[2:6])
-                cx0, cz0, cx1, cz1 = x0 >> 4, z0 >> 4, x1 >> 4, z1 >> 4
-                cuantos = (cx1 - cx0 + 1) * (cz1 - cz0 + 1)
-                trozos = {(x, z) for x in range(cx0, cx1 + 1) for z in range(cz0, cz1 + 1)}
-                if p[1] == "add":
-                    # el tope de verdad del juego: 256 chunks por orden
-                    if cuantos > 256:
-                        return ("Too many chunks in the specified area "
-                                "(maximum 256, but specified %d)" % cuantos)
-                    self.forzados |= trozos
-                    self.pico = max(self.pico, len(self.forzados))
-                    ahora = time.time()
-                    for i, c in enumerate(sorted(trozos)):
-                        if c not in self.hechos and c not in self.cola:
-                            self.cola[c] = ahora + (i + 1) / self.ritmo
-                    return ("Marked %d chunks in minecraft:overworld from %d, %d "
-                            "to %d, %d to be force loaded" % (cuantos, cx0, cz0, cx1, cz1))
-                self.forzados -= trozos
-                return ("Unmarked %d chunks in minecraft:overworld from %d, %d "
-                        "to %d, %d for force loading" % (cuantos, cx0, cz0, cx1, cz1))
-            return "Unknown or incomplete command"
+            salida = self._ejecuta(cmd)
+            # «Sordo»: la orden SE EJECUTA pero la respuesta no llega. Es lo que
+            # pasa de verdad cuando el hilo principal del juego va ahogado, y es
+            # el caso que dejaba chunks forzados para siempre: el panel daba el
+            # servidor por muerto y se iba sin quitar lo que sí había puesto.
+            if any(cmd.startswith(x) for x in self.sordo):
+                return None
+            return salida
+
+    def _ejecuta(self, cmd):
+        p = cmd.split()
+        if p[:1] == ["list"]:
+            return "There are 0 of a max of 5 players online:"
+        if p[:1] == ["save-all"]:
+            # las frases son las del jar de 26.2, comprobadas en
+            # assets/minecraft/lang/en_us.json
+            if self.sin_disco:
+                return "Unable to save the game (is there enough disk space?)"
+            self._guardar()
+            return "Saved the game"
+        if p[:2] == ["forceload", "add"] or p[:2] == ["forceload", "remove"]:
+            x0, z0, x1, z1 = (int(v) for v in p[2:6])
+            cx0, cz0, cx1, cz1 = x0 >> 4, z0 >> 4, x1 >> 4, z1 >> 4
+            cuantos = (cx1 - cx0 + 1) * (cz1 - cz0 + 1)
+            trozos = {(x, z) for x in range(cx0, cx1 + 1) for z in range(cz0, cz1 + 1)}
+            if p[1] == "add":
+                # el tope de verdad del juego: 256 chunks por orden
+                if cuantos > 256:
+                    return ("Too many chunks in the specified area "
+                            "(maximum 256, but specified %d)" % cuantos)
+                self.forzados |= trozos
+                self.pico = max(self.pico, len(self.forzados))
+                ahora = time.time()
+                for i, c in enumerate(sorted(trozos)):
+                    if c not in self.hechos and c not in self.cola:
+                        self.cola[c] = ahora + (i + 1) / self.ritmo
+                return ("Marked %d chunks in minecraft:overworld from %d, %d "
+                        "to %d, %d to be force loaded" % (cuantos, cx0, cz0, cx1, cz1))
+            self.forzados -= trozos
+            return ("Unmarked %d chunks in minecraft:overworld from %d, %d "
+                    "to %d, %d for force loading" % (cuantos, cx0, cz0, cx1, cz1))
+        return "Unknown or incomplete command"
 
     def _guardar(self):
         ahora = time.time()
@@ -191,6 +207,8 @@ class _Manejador(socketserver.BaseRequestHandler):
             rid, tipo = struct.unpack("<ii", cuerpo[:8])
             texto = cuerpo[8:-2].decode("utf-8", "replace")
             salida = "" if tipo == 3 else self.server.mundo.manda(texto)
+            if salida is None:
+                continue                 # ejecutada y sin contestar: que espere
             datos = struct.pack("<ii", rid, 2 if tipo == 3 else 0) + salida.encode() + b"\x00\x00"
             s.sendall(struct.pack("<i", len(datos)) + datos)
 
@@ -267,7 +285,9 @@ mundo.hechos.clear()
 
 # ─────────────────────────────────────────── 2. el trabajo entero
 print("── el trabajo, de principio a fin ──")
-server._ZONA_LATIDO = 0.4          # el de verdad son 6 s: aquí no hay nada que esperar
+server._ZONA_LATIDO = 0.4          # el de verdad son 5 s: aquí no hay nada que esperar
+server._ZONA_ESPERA_ORDEN = 2      # 30 s de verdad; aquí se quiere que caduque pronto
+server._ZONA_ESPERA_GUARDAR = 3
 CAJA = (0, 0, 31, 31)              # 32x32 chunks = 1024, lo máximo que acepta el botón
 t0 = time.time()
 server._zona_trabajo(*CAJA, 30)
@@ -282,12 +302,26 @@ ok(len(mundo.hechos) == 1024, "el mundo tiene los 1024 escritos (%d)" % len(mund
 
 adds = [o for o in mundo.ordenes if o.startswith("forceload add")]
 quita = [o for o in mundo.ordenes if o.startswith("forceload remove")]
-ok(len(adds) == 4, "cuatro tandas de 256 chunks (%d)" % len(adds))
-ok(len(quita) == len(adds), "una retirada por cada tanda (%d/%d)" % (len(quita), len(adds)))
+esperadas = (1024 // (server._ZONA_LOTE ** 2))
+ok(len(adds) == esperadas, "%d tandas de %d chunks (%d)"
+   % (esperadas, server._ZONA_LOTE ** 2, len(adds)))
+ok(len(quita) >= len(adds), "una retirada por cada tanda (%d/%d)" % (len(quita), len(adds)))
 ok(not mundo.forzados, "no queda ni un chunk forzado al terminar (%d)" % len(mundo.forzados))
-ok(mundo.pico <= 256, "nunca hubo más de 256 chunks forzados a la vez (%d)" % mundo.pico)
+ok(mundo.pico <= server._ZONA_LOTE ** 2,
+   "nunca hubo más de %d chunks forzados a la vez (%d)" % (server._ZONA_LOTE ** 2, mundo.pico))
+ok(not server._ZONA_FORZADOS.exists(), "y el papelito de pendientes queda limpio")
 ok(any(o.startswith("save-all") for o in mundo.ordenes), "se guarda el mundo por el camino")
 
+# La segunda vez sobre lo mismo no debería costar ni un guardado: ya está escrito
+guardados = len([o for o in mundo.ordenes if o.startswith("save-all")])
+mundo.ordenes.clear()
+t0 = time.time()
+server._zona_trabajo(*CAJA, 30)
+otra = time.time() - t0
+ok(dict(server._zona)["hechos"] == 1024, "repetida sobre lo ya generado, sale igual")
+ok(not [o for o in mundo.ordenes if o.startswith("save-all")],
+   "sin pedirle al juego un solo guardado (%d la primera vez)" % guardados)
+ok(otra < tardo, "y mucho más rápido (%.1f s contra %.1f s)" % (otra, tardo))
 # los generadores que el escaneo encontró: la prueba de que la cadena llega hasta el final
 esperados = sum(1 for c in mundo.hechos if mundo.gens_de(*c))
 gens = json.loads((PANEL / "data/spawners.json").read_text())
@@ -336,6 +370,62 @@ ok("disk space" in (est["mensaje"] or ""),
 ok(not lleno.forzados, "y suelta los chunks igualmente (%d)" % len(lleno.forzados))
 
 
+# ─────────────────────────────────────────── 3c. un servidor que va ahogado
+#
+# EL FALLO QUE VIO JUAN. Un RCON se atiende en el hilo principal del juego, el
+# mismo que genera los chunks: mientras trabaja, tarda en contestar. La primera
+# versión esperaba 4 segundos y daba el servidor por muerto justo cuando estaba
+# haciendo lo que le habíamos pedido — y se iba dejando los chunks forzados,
+# porque la orden sí había llegado.
+print("── un servidor que tarda en contestar ──")
+for f in REGION.glob("*.mca"):
+    f.unlink()
+lento = MundoFalso(REGION, retraso=1.2)         # más de lo que espera rcon_try (4 s)... no
+srv.mundo = lento
+server._ZONA_ESPERA_ORDEN = 5                   # aquí sí se le da margen
+server._ZONA_ESPERA_GUARDAR = 5
+server._zona_trabajo(0, 0, 15, 15, 60)
+est = dict(server._zona)
+ok(est["estado"] == "listo", "termina bien aunque tarde en contestar (%s)" % est["estado"])
+ok(est["hechos"] == est["total"], "y los genera todos (%d de %d)" % (est["hechos"], est["total"]))
+ok(not lento.forzados, "sin dejar chunks forzados (%d)" % len(lento.forzados))
+
+print("── un servidor que ejecuta y no contesta ──")
+for f in REGION.glob("*.mca"):
+    f.unlink()
+sordo = MundoFalso(REGION, sordo=("forceload add",))
+srv.mundo = sordo
+server._ZONA_ESPERA_ORDEN = 2
+server._zona_trabajo(0, 0, 15, 15, 60)
+est = dict(server._zona)
+ok(est["estado"] == "listo", "no se corta por una respuesta perdida (%s)" % est["estado"])
+ok(est["hechos"] == est["total"],
+   "y se entera de que sí se generaron, mirando el disco (%d de %d)"
+   % (est["hechos"], est["total"]))
+ok(not sordo.forzados,
+   "y quita lo que había puesto sin enterarse (%d forzados)" % len(sordo.forzados))
+ok(not server._ZONA_FORZADOS.exists(), "sin dejar pendientes apuntados")
+
+print("── y si el panel se muere a media faena ──")
+# Nadie va a quitar esos chunks salvo el papelito: se comprueba que existe
+# mientras se trabaja y que el barrido de la próxima vez se los lleva.
+for f in REGION.glob("*.mca"):
+    f.unlink()
+mudo = MundoFalso(REGION, sordo=("forceload remove",))   # no deja quitarlos
+srv.mundo = mudo
+server._zona_trabajo(0, 0, 7, 7, 30)
+est = dict(server._zona)
+ok(est["estado"] == "error", "lo dice en vez de callarse (%s)" % est["estado"])
+ok("forceload remove all" in (est["mensaje"] or ""),
+   "y explica cómo arreglarlo: %r" % (est["mensaje"] or "")[:90])
+ok(server._ZONA_FORZADOS.exists(), "deja apuntado lo que quedó forzado")
+srv.mundo = MundoFalso(REGION)                 # un servidor sano otra vez
+ok(server._zona_sueltos() > 0, "y el barrido siguiente se lo lleva")
+ok(not server._ZONA_FORZADOS.exists(), "dejando el papelito limpio")
+server._ZONA_ESPERA_ORDEN = 2
+server._ZONA_ESPERA_GUARDAR = 3
+
+
 # ─────────────────────────────────────────── 4. un servidor apagado
 print("── un servidor apagado ──")
 srv.shutdown()
@@ -370,6 +460,23 @@ r = cli.post("/api/mapa2/zona", json={"x0": 0, "z0": 0, "x1": 100, "z1": 100},
 ok(r.status_code == 503, "con el Minecraft apagado, 503 (%d)" % r.status_code)
 ok("enciéndelo" in r.get_json().get("error", ""), "diciendo qué hacer: %r" % r.get_json().get("error"))
 ok(server._zona["estado"] == "quieto", "y tampoco se queda ocupado")
+
+# Encendido pero ahogado NO es lo mismo que apagado, y mandar a Juan a encender
+# algo que ya está encendido es la peor forma de contestarle.
+ahogado = MundoFalso(REGION, retraso=2.0)
+srv3, puerto3 = arranca_rcon(ahogado)
+(MC / "server.properties").write_text(
+    "level-seed=1244994422874902852\nrcon.port=%d\nrcon.password=prueba\n" % puerto3)
+server._ZONA_ESPERA_LISTA = 0.5
+r = cli.post("/api/mapa2/zona", json={"x0": 0, "z0": 0, "x1": 100, "z1": 100},
+             headers={"X-Panel": "1"})
+msg = (r.get_json() or {}).get("error", "")
+ok(r.status_code == 503, "con el Minecraft ahogado, también 503 (%d)" % r.status_code)
+ok("ocupado" in msg and "enciéndelo" not in msg, "pero con otras palabras: %r" % msg)
+ok(server._zona["estado"] == "quieto", "y sin quedarse marcado como ocupado")
+server._ZONA_ESPERA_LISTA = 12
+srv3.shutdown()
+srv3.server_close()
 
 # el recorte: pedir medio mundo no puede generar medio mundo
 mundo2 = MundoFalso(REGION)

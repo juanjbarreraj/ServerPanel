@@ -3631,9 +3631,34 @@ def _m2_generadores(x0, z0, x1, z1, dim="overworld"):
 #
 # El precio, y hay que decirlo en la interfaz: mientras genera, el servidor va
 # más lento, y el mundo ocupa más disco.
-_ZONA_LOTE = 16                 # chunks de lado por tanda: 256, el tope de /forceload
-_ZONA_MAX_CHUNKS = 1024         # 512x512 bloques: un par de minutos y ~50 MB
-_ZONA_LATIDO = 6                # cada cuánto se mira si el juego ya los escribió
+#
+# HABLAR CON UN JUEGO QUE ESTÁ OCUPADO
+# Un RCON se atiende en el HILO PRINCIPAL del servidor, el mismo que genera los
+# chunks. `rcon_try` espera 4 segundos, que es lo correcto para `list` o `say`
+# —el juego contesta en el mismo tick—, y es justo lo que NO vale aquí: mientras
+# genera, ese hilo tarda segundos en llegar a la cola de órdenes, y `save-all
+# flush` encima guarda el mundo entero antes de contestar.
+#
+# La primera versión de este botón usaba esos 4 segundos y se rompía sola: a la
+# segunda tanda el servidor ya iba lento, la orden no contestaba a tiempo, se
+# daba al servidor por muerto y se cortaba el trabajo... dejando 256 chunks
+# cargados a la fuerza, porque la orden SÍ había llegado. Y un forceload
+# sobrevive al reinicio del juego, así que el servidor se quedaba para siempre
+# tickeando un trozo de mundo que no mira nadie. Desde fuera solo se veía «el
+# server va lento» y «el botón no funciona».
+#
+# De ahí las tres reglas de abajo:
+#   · esperar lo que haga falta, y distinguir «no hay servidor» de «está ocupado»
+#   · apuntar cada tanda ANTES de pedirla, y no fiarse de que se quitó
+#   · tandas pequeñas: 64 chunks, no 256
+_ZONA_LOTE = 8                  # chunks de lado por tanda: 64 a la vez, no 256
+_ZONA_MAX_CHUNKS = 1024         # 512x512 bloques: unos minutos y ~50 MB
+_ZONA_LATIDO = 5                # cada cuánto se mira si el juego ya los escribió
+_ZONA_ESPERA_ORDEN = 30         # lo que se le aguanta a un forceload
+_ZONA_ESPERA_GUARDAR = 150      # save-all flush guarda el mundo entero
+_ZONA_TOPE = 900                # 15 min de reloj para el trabajo entero
+_ZONA_ESPERA_LISTA = 12         # lo que se espera al «list» de antes de empezar
+_ZONA_FORZADOS = DATA_DIR / "zona-forzados.json"
 _zona = {"estado": "quieto", "hechos": 0, "total": 0, "mensaje": "",
          "t": 0, "hallados": None, "caja": None}
 _zona_lock = threading.Lock()
@@ -3642,6 +3667,80 @@ _zona_lock = threading.Lock()
 def _zona_estado(**kw):
     with _zona_lock:
         _zona.update(kw)
+
+
+def _rcon_zona(cmd, espera):
+    """(ok, salida, ocupado). `ocupado` = está vivo, pero no contestó a tiempo.
+
+    La diferencia manda: sin conexión, el servidor está apagado y no hay nada que
+    hacer. Sin respuesta a tiempo, está trabajando — y la orden puede haberse
+    ejecutado igual, así que ni se puede dar por perdida ni por hecha.
+    """
+    p = read_properties()
+    try:
+        salida = Rcon("127.0.0.1", int(p.get("rcon.port", 25575)),
+                      p.get("rcon.password", ""), timeout=espera).command(cmd)
+        return True, salida, False
+    except TimeoutError:
+        return False, "no contestó en %d s" % espera, True
+    except Exception as e:
+        return False, (str(e) or type(e).__name__), False
+
+
+def _zona_apuntar(puestos):
+    """Deja escrito en disco qué tandas hemos forzado.
+
+    Es el papelito del que se tira cuando algo sale mal: el panel puede
+    reiniciarse, o morirse a media faena, y los chunks forzados seguirían ahí.
+    """
+    try:
+        if puestos:
+            _ZONA_FORZADOS.write_text(json.dumps([list(p) for p in puestos]))
+        elif _ZONA_FORZADOS.exists():
+            _ZONA_FORZADOS.unlink()
+    except OSError:
+        pass
+
+
+def _zona_quitar(lote, intentos=3):
+    """Quita una tanda del forceload, y no se fía a la primera."""
+    x0, z0, x1, z1 = lote
+    orden = "forceload remove %d %d %d %d" % (x0 * 16, z0 * 16, x1 * 16 + 15, z1 * 16 + 15)
+    for i in range(intentos):
+        ok, _salida, ocupado = _rcon_zona(orden, _ZONA_ESPERA_ORDEN)
+        if ok:
+            return True
+        if not ocupado:
+            return False              # no hay servidor; no lo va a haber en 3 s
+        time.sleep(3)
+    return False
+
+
+def _zona_sueltos():
+    """Quita lo que quedara forzado de un intento anterior. Devuelve cuántas."""
+    try:
+        pendientes = [tuple(p) for p in json.loads(_ZONA_FORZADOS.read_text())]
+    except Exception:
+        return 0
+    quedan = [lote for lote in pendientes if not _zona_quitar(lote, intentos=2)]
+    _zona_apuntar(quedan)
+    return len(pendientes) - len(quedan)
+
+
+def _zona_barrer_al_arrancar():
+    # Al arrancar el panel el juego puede no estar todavía en pie; se le da un
+    # rato. Si tampoco entonces, el papelito sigue ahí para el próximo intento.
+    time.sleep(30)
+    try:
+        n = _zona_sueltos()
+        if n:
+            audit("panel", "quité %d tanda(s) de chunks forzados que quedaron sueltas" % n)
+    except Exception:
+        pass
+
+
+if _ZONA_FORZADOS.exists():
+    threading.Thread(target=_zona_barrer_al_arrancar, daemon=True).start()
 
 
 def _chunks_hechos(cx0, cz0, cx1, cz1):
@@ -3678,32 +3777,38 @@ def _chunks_hechos(cx0, cz0, cx1, cz1):
     return hechos
 
 
-def _zona_espera(lote, quiero, tope, avisa):
+def _zona_espera(lote, quiero, fin, avisa):
     """Espera a que el lote esté generado Y guardado, mirándolo de verdad.
 
-    Devuelve (chunks_escritos, problema). `problema` solo se llena cuando el
-    juego dice en voz alta que no puede guardar; que se acabe el tiempo no es un
-    problema, es un resultado más corto, y así se cuenta.
+    Devuelve (chunks_escritos, problema). `problema` solo se llena cuando algo
+    está roto de verdad: el disco sin sitio o el servidor caído. Que se acabe el
+    tiempo no es un problema, es un resultado más corto, y así se cuenta.
 
-    `save-all flush` es lo que baja a disco lo que el juego ya tiene en memoria;
-    sin él la cabecera de la región no se entera. Se llama cada `_ZONA_LATIDO`
-    segundos y no más a menudo: guarda el mundo entero y no sale gratis.
+    Se mira ANTES de tocar nada: en un trozo por donde ya pasó alguien están los
+    64 chunks escritos, y entonces esta tanda no cuesta ni un segundo ni un
+    guardado. Solo si faltan se llama a `save-all flush`, que es lo que baja a
+    disco lo que el juego tiene en memoria — sin él, la cabecera de la región no
+    se entera de nada.
 
     Se sale por tres sitios: cuando están todos, cuando pasan tres rondas
     seguidas sin un solo chunk nuevo (el servidor no va a hacer más), o cuando se
-    acaba el tiempo. Que un mundo ya explorado termine en la primera ronda es lo
-    normal y está bien: esos chunks ya existían.
+    acaba el tiempo.
     """
     cx0, cz0, cx1, cz1 = lote
-    fin = time.time() + tope
-    hechos = quietas = 0
+    hechos = _chunks_hechos(cx0, cz0, cx1, cz1)
+    avisa(hechos)
+    if hechos >= quiero:
+        return hechos, None
+    quietas = 0
     while True:
         time.sleep(_ZONA_LATIDO)
-        _ok, dice = rcon_try("save-all flush")
+        ok, dice, ocupado = _rcon_zona("save-all flush", _ZONA_ESPERA_GUARDAR)
+        if not ok and not ocupado:
+            return hechos, "El servidor de Minecraft dejó de responder: " + dice[:90]
         # «Unable to save the game (is there enough disk space?)». Sin mirarlo,
         # un disco lleno se ve desde el panel como una búsqueda que no encuentra
         # nada, que es la forma más cara de enterarse.
-        if "Unable to save" in dice:
+        if ok and "Unable to save" in dice:
             return hechos, dice.strip()
         time.sleep(min(1.5, _ZONA_LATIDO / 4.0))    # que termine de escribir
         antes, hechos = hechos, _chunks_hechos(cx0, cz0, cx1, cz1)
@@ -3723,53 +3828,84 @@ def _zona_trabajo(cx0, cz0, cx1, cz1, espera):
             lotes.append((x, z, min(x + _ZONA_LOTE - 1, cx1), min(z + _ZONA_LOTE - 1, cz1)))
     total = (cx1 - cx0 + 1) * (cz1 - cz0 + 1)
     _zona_estado(estado="generando", hechos=0, total=total, mensaje="", hallados=None)
+    _zona_sueltos()                 # lo que quedara de otra vez, fuera primero
+    fin = time.time() + _ZONA_TOPE
     llevamos = 0
     puestos = []
+    problema = None
     try:
         for lote in lotes:
             x0, z0, x1, z1 = lote
             manda = "%d %d %d %d" % (x0 * 16, z0 * 16, x1 * 16 + 15, z1 * 16 + 15)
-            ok, salida = rcon_try("forceload add " + manda)
-            if not ok:
-                _zona_estado(estado="error",
-                             mensaje="No pude hablar con el servidor de Minecraft: " + salida[:120])
-                return
+            # Apuntada ANTES de pedirla. Si la orden llega y la respuesta no, los
+            # chunks quedan forzados igual: apuntarla después es justo lo que
+            # dejaba al servidor cargando un trozo de mundo para siempre.
+            puestos.append(lote)
+            _zona_apuntar(puestos)
+            ok, salida, ocupado = _rcon_zona("forceload add " + manda, _ZONA_ESPERA_ORDEN)
+            if not ok and not ocupado:
+                # No hubo ni conexión: la orden no llegó a ejecutarse, así que
+                # esta tanda no está forzada y no se puede contar como pendiente.
+                # Solo se queda apuntado lo que PUDO llegar (una respuesta que no
+                # vuelve) o lo que se sabe que llegó.
+                puestos.remove(lote)
+                _zona_apuntar(puestos)
+                problema = "No pude hablar con el servidor de Minecraft: " + salida[:100]
+                break
             # Lo que contesta el juego de verdad cuando no puede (comprobado en
             # el jar de 26.2): «Too many chunks in the specified area (maximum
             # 256, but specified N)» y «No chunks were marked for force loading».
-            if ("Too many" in salida or "No chunks were marked" in salida
-                    or "Unknown or incomplete" in salida or "Incorrect argument" in salida):
-                _zona_estado(estado="error", mensaje=salida[:160])
-                return
-            puestos.append(lote)
-            hecho, problema = _zona_espera(lote, (x1 - x0 + 1) * (z1 - z0 + 1), espera,
-                                           lambda n: _zona_estado(hechos=llevamos + n))
-            if problema:
-                _zona_estado(estado="error", mensaje=problema[:160])
-                return
-            # fuera el lote en cuanto está: así el servidor nunca tiene más de
-            # 256 chunks forzados a la vez, que es lo que lo pone de rodillas
-            rcon_try("forceload remove " + manda)
-            puestos.remove(lote)
+            if ok and ("Too many" in salida or "No chunks were marked" in salida
+                       or "Unknown or incomplete" in salida or "Incorrect argument" in salida):
+                puestos.remove(lote)        # el juego dice que no marcó nada
+                _zona_apuntar(puestos)
+                problema = salida[:160]
+                break
+            # Si no contestó a tiempo NO se corta el trabajo: la orden casi seguro
+            # llegó, y quien dice la verdad sobre lo que hay generado no es el
+            # mensaje del juego, es la cabecera de las regiones.
+            hecho, mal = _zona_espera(lote, (x1 - x0 + 1) * (z1 - z0 + 1),
+                                      min(fin, time.time() + espera),
+                                      lambda n: _zona_estado(hechos=llevamos + n))
+            # fuera la tanda en cuanto está: así el servidor nunca tiene más de
+            # 64 chunks forzados a la vez, que es lo que lo pone de rodillas
+            if _zona_quitar(lote):
+                puestos.remove(lote)
+                _zona_apuntar(puestos)
             llevamos += hecho
             _zona_estado(hechos=llevamos)
+            if mal:
+                problema = mal
+                break
+            if time.time() >= fin:
+                break                   # se acabó el reloj: lo hecho, hecho está
     finally:
         # quitar SOLO lo que pusimos: un `forceload remove all` se llevaría por
         # delante los que el admin tuviera puestos a mano
-        for x0, z0, x1, z1 in puestos:
-            rcon_try("forceload remove %d %d %d %d"
-                     % (x0 * 16, z0 * 16, x1 * 16 + 15, z1 * 16 + 15))
+        for lote in list(puestos):
+            if _zona_quitar(lote):
+                puestos.remove(lote)
+        _zona_apuntar(puestos)
+    if puestos:
+        # Esto va delante de cualquier otra pega: es lo único que deja al
+        # servidor peor de como estaba, y lo único que pide una mano.
+        problema = (("Quedaron %d tanda(s) de chunks cargados a la fuerza que no pude quitar. "
+                     "Cuando el servidor responda, en la consola: /forceload remove all")
+                    % len(puestos)) + ((" (%s)" % problema) if problema else "")
 
+    # Aunque algo se torciera, lo que se generó es de verdad y merece leerse: se
+    # escanea igual y luego se cuenta lo que pasó.
     _zona_estado(estado="leyendo", mensaje="")
     guion = PANEL_DIR / "scripts" / "scan-structures.py"
     try:
         r = subprocess.run(["nice", "-n", "19", "python3", str(guion)],
                            capture_output=True, text=True, timeout=3600)
         if r.returncode != 0:
-            _zona_estado(estado="error", mensaje=(r.stderr or r.stdout or "")[-200:])
+            _zona_estado(estado="error",
+                         mensaje=problema or (r.stderr or r.stdout or "")[-200:])
             return
     except Exception as e:
-        _zona_estado(estado="error", mensaje=str(e)[:200])
+        _zona_estado(estado="error", mensaje=problema or str(e)[:200])
         return
 
     _gens["t"] = 0                      # que se relea spawners.json
@@ -3778,7 +3914,8 @@ def _zona_trabajo(cx0, cz0, cx1, cz1, espera):
         hallados = len(_m2_generadores(*caja))
     except Exception:
         hallados = None
-    _zona_estado(estado="listo", hallados=hallados, caja=list(caja), mensaje="")
+    _zona_estado(estado="error" if problema else "listo", hallados=hallados,
+                 caja=list(caja), mensaje=problema[:200] if problema else "")
 
 
 @app.get("/api/mapa2/zona")
@@ -3824,12 +3961,22 @@ def api_m2_zona():
         medio = (cz0 + cz1) // 2
         cz0, cz1 = medio - lado // 2, medio - lado // 2 + lado - 1
     # `espera` es el TOPE por tanda, no una siesta: cada tanda termina en cuanto
-    # los 256 chunks están escritos, y esto es solo hasta cuándo se le aguanta a
-    # un servidor que no avanza.
-    espera = max(30, min(600, float(b.get("espera", 180))))
-    if not rcon_try("list")[0]:
+    # sus 64 chunks están escritos, y esto es solo hasta cuándo se le aguanta a
+    # un servidor que no avanza. El trabajo entero tiene además su propio reloj
+    # (_ZONA_TOPE), para que dieciséis tandas atascadas no sumen una hora.
+    espera = max(30, min(600, float(b.get("espera", 120))))
+    # Doce segundos, no cuatro: si el servidor está con gente dentro puede tardar
+    # un poco en contestar y eso no es estar apagado. Y si de verdad no llega ni
+    # a eso, es que está ahogado, que tampoco es momento de pedirle 1024 chunks:
+    # decirlo con esas palabras evita mandar a Juan a encender algo que ya está
+    # encendido.
+    vivo, _dice, ocupado = _rcon_zona("list", _ZONA_ESPERA_LISTA)
+    if not vivo:
         _zona_estado(estado="quieto")
-        return jsonify(error="El servidor de Minecraft no responde: enciéndelo y vuelve a intentarlo"), 503
+        return jsonify(error=(
+            "El servidor de Minecraft está tan ocupado que no contesta. Espera un momento "
+            "y vuelve a intentarlo" if ocupado else
+            "El servidor de Minecraft no responde: enciéndelo y vuelve a intentarlo")), 503
     audit(u["name"], "genera la zona %d,%d a %d,%d para buscar generadores"
           % (cx0 * 16, cz0 * 16, cx1 * 16, cz1 * 16))
     threading.Thread(target=_zona_trabajo, args=(cx0, cz0, cx1, cz1, espera),

@@ -182,6 +182,23 @@ with sync_playwright() as pw:
     ok("300 de 1024" in txt, "lo dice en vez de fingir que acabó: %r" % txt)
     ok("mal" in (pag.get_attribute("#m2-zona-p", "class") or ""), "y se ve que algo no cuadró")
 
+    # ── una que se rompe pero deja algo hecho ─────────────────────────────
+    # Un error no significa que no haya salido nada: lo generado antes del
+    # tropiezo ya está escaneado, y callárselo sería tirarlo a la basura.
+    print("── una que se rompe a mitad ──")
+    pf.guion = [(0.0, {"estado": "error", "hechos": 448, "hallados": 3,
+                       "mensaje": "Quedaron 2 tanda(s) de chunks cargados a la fuerza "
+                                  "que no pude quitar. Cuando el servidor responda, "
+                                  "en la consola: /forceload remove all"})]
+    pag.click("#m2-zona-btn")
+    pag.wait_for_function("() => document.getElementById('m2-zona-p').textContent"
+                          ".includes('forceload remove all')", timeout=15000)
+    txt = pag.inner_text("#m2-zona-p")
+    ok("mal" in (pag.get_attribute("#m2-zona-p", "class") or ""), "sale en rojo")
+    ok("forceload remove all" in txt, "y dice qué hacer: %r" % txt[:80])
+    ok("3 generadores" in txt, "sin tirar lo que sí encontró: %r" % txt[-42:])
+    ok(not pag.locator("#m2-zona-btn").is_disabled(), "y se puede volver a intentar")
+
     # ── engancharse a una que ya estaba en marcha ─────────────────────────
     print("── al abrir la pestaña ──")
     pf.guion = [(2.0, {"estado": "listo", "hechos": 1024, "hallados": 7})]

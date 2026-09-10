@@ -1186,7 +1186,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
           <img src="/static/markers/spawner.png" alt="" onerror="this.style.display='none'">
           <div>
             <b>Los generadores hay que buscarlos, no se calculan</b>
-            <span>Solo aparecen donde el mundo tenía una cueva, así que la semilla no basta. Este botón le pide al servidor que genere el cuadro marcado en el mapa y lo relee: tarda un par de minutos y el juego va más lento mientras tanto, pero lo que sale no es una predicción, es lo que hay.</span>
+            <span>Solo aparecen donde el mundo tenía una cueva, así que la semilla no basta. Este botón le pide al servidor que genere el cuadro marcado en el mapa y lo relee: tarda unos minutos y el juego va más lento mientras tanto, pero lo que sale no es una predicción, es lo que hay.</span>
           </div>
         </div>
         <div class="m2-zona-b">
@@ -3795,6 +3795,14 @@ function m2ZonaVigila(){
   mirar();
 }
 
+/* Volver a pedir las estructuras UNA vez por búsqueda, no en cada vuelta del
+   reloj: la respuesta de «listo» se repite mientras la pestaña siga abierta. */
+function m2ZonaRefresca(d){
+  if (m2ZonaRefresca._ultima === d.t) return;
+  m2ZonaRefresca._ultima = d.t;
+  m2PideEstructuras();
+}
+
 function m2ZonaPinta(d){
   const b=$('m2-zona-btn'), barra=$('m2-zona-barra'), i=$('m2-zona-i');
   if (!b) return;
@@ -3817,7 +3825,14 @@ function m2ZonaPinta(d){
     i.style.width = '100%';
     m2ZonaDi('leyendo lo que ha salido…');
   } else if (d.estado==='error'){
-    m2ZonaDi(d.mensaje || 'algo ha fallado', true);
+    // Aunque algo se torciera, lo que se generó antes del tropiezo es de verdad
+    // y ya está escaneado: se dice, y se pintan. Un error no tiene por qué
+    // significar que no haya salido nada.
+    const tambien = (typeof d.hallados === 'number' && d.hallados > 0)
+      ? '. Aun así encontré ' + d.hallados + (d.hallados===1 ? ' generador' : ' generadores')
+      : '';
+    m2ZonaDi((d.mensaje || 'algo ha fallado') + tambien, true);
+    m2ZonaRefresca(d);
   } else if (d.estado==='listo'){
     const n = d.hallados;
     // Si el servidor no llegó a generarlo todo hay que decirlo: un «listo, 3
@@ -3829,10 +3844,7 @@ function m2ZonaPinta(d){
             : n===1 ? 'listo, 1 generador en este cuadro'
             : n>1   ? ('listo, ' + n + ' generadores en este cuadro')
             : 'listo') + cojo, !!cojo);
-    if (!m2ZonaPinta._ultima || m2ZonaPinta._ultima !== d.t){
-      m2ZonaPinta._ultima = d.t;      // refrescar una vez por búsqueda, no en cada vuelta
-      m2PideEstructuras();
-    }
+    m2ZonaRefresca(d);
   }
   m2Iconos();
 }

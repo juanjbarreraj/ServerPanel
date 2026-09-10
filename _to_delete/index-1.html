@@ -141,6 +141,12 @@ h1.brand{font-size:1rem; letter-spacing:.06em; margin-bottom:6px; line-height:1.
   transition:padding-top .25s ease}
 #topbar.compacto{padding-top:6px}
 
+/* En «Explorar» la barra no se encoge: se VA. La tira de capas empieza justo
+   debajo y con la barra encogida seguían pisándose, así que ahí se sube entera
+   al bajar y solo vuelve cuando se llega arriba del todo. */
+#topbar{transition:padding-top .25s ease, transform .28s ease, opacity .22s ease}
+#topbar.fuera{transform:translateY(-100%); opacity:0; pointer-events:none}
+
 /* Lo que se encoge. Todo con transición para que no dé un salto. */
 #topbar.compacto header.top{padding:6px 14px; margin-bottom:8px; gap:10px}
 #topbar.compacto header.top img.icon{width:34px; height:34px}
@@ -462,6 +468,158 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .enginebadge{display:inline-flex; align-items:center; gap:8px; padding:8px 14px; border-radius:5px;
   font-size:.8rem; font-weight:700; background:var(--slotbg);
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.5), inset -2px -2px 0 rgba(255,255,255,.09)}
+
+/* ============ mapa del mundo entero (biomas + estructuras) ============ */
+/* Dos lienzos encima del otro: abajo los biomas, arriba iconos, chunks de slime
+   y las reglas de coordenadas. No es por capricho — al pasar el ratón se lee el
+   color del píxel de abajo para decir el bioma sin pedirle nada al servidor, y
+   si lo demás estuviera pintado en el mismo lienzo taparía ese color. */
+.m2-lienzo{position:relative; width:100%; height:calc(100vh - 330px); min-height:min(430px, 60vh);
+  border-radius:8px; overflow:hidden; background:#04060a; touch-action:none; cursor:grab}
+.m2-lienzo.arrastrando{cursor:grabbing}
+.m2-lienzo canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
+
+/* La cabecera, como la de Chunkbase: semilla, versión y dimensión a la vista.
+   La semilla es lo primero que quiere ver cualquiera que abra esto, y hasta
+   ahora había que ir a buscarla a la consola. */
+.m2-cabecera{display:flex; flex-wrap:wrap; gap:10px; margin:0 2px 12px}
+.m2-dato{flex:1 1 190px; min-width:0; background:var(--slotbg); border-radius:6px; padding:8px 12px;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
+.m2-dato label{display:block; font-size:.66rem; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--ink3); opacity:.75; margin-bottom:3px}
+.m2-dato .v{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.92rem; color:var(--ink);
+  font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.m2-dato.pulsa{cursor:pointer; transition:background .18s}
+.m2-dato.pulsa:hover{background:rgba(111,212,78,.08)}
+.m2-dato .pista{font-size:.62rem; color:var(--ink3); opacity:.6}
+
+/* Las capas en rejilla con su nombre al lado, no en pastillas apretadas: con
+   veinte tipos, una fila que se dobla sola es imposible de recorrer con la
+   vista. En rejilla siempre están en el mismo sitio. Y van ENCIMA del mapa,
+   como en Chunkbase: es lo que se toca, y estando debajo obligaba a bajar. */
+/* Dos formas de ver las capas, como en Chunkbase: una TIRA horizontal de
+   iconos grandes que se arrastra, y la LISTA de siempre con el nombre al lado.
+   La tira es la de entrada porque cabe en una línea y deja el mapa más alto;
+   el botón de la derecha cambia de una a otra. */
+.m2-capas-caja{display:flex; align-items:flex-start; gap:8px; margin:0 2px 10px}
+.m2-capas{flex:1; min-width:0}
+
+.m2-capas.tira{display:flex; gap:6px; overflow-x:auto; overflow-y:hidden;
+  padding:0 2px 9px; scroll-behavior:smooth}
+.m2-capas.tira .m2-cap{flex:0 0 auto; width:60px; height:60px; padding:0;
+  justify-content:center; position:relative}
+.m2-capas.tira .m2-cap .et{display:none}
+.m2-capas.tira .m2-cap img{width:44px; height:44px; flex:0 0 44px}
+/* la cuenta, en una esquina: en la tira no cabe al lado del nombre */
+.m2-capas.tira .m2-cap .n{position:absolute; right:3px; bottom:1px; font-size:.58rem;
+  font-weight:700; opacity:.75}
+/* La barra de arrastre A LA VISTA. Escondida (que es como la pinta el
+   navegador por defecto en Mac) nadie sabe que hay más iconos a la derecha. */
+.m2-capas.tira{scrollbar-width:thin; scrollbar-color:#4a5158 var(--slotbg)}
+.m2-capas.tira::-webkit-scrollbar{height:9px}
+.m2-capas.tira::-webkit-scrollbar-track{background:var(--slotbg); border-radius:5px}
+.m2-capas.tira::-webkit-scrollbar-thumb{background:#4a5158; border-radius:5px}
+.m2-capas.tira::-webkit-scrollbar-thumb:hover{background:var(--slime-dark)}
+
+.m2-capas.lista{display:grid; grid-template-columns:repeat(auto-fill, minmax(205px, 1fr));
+  gap:7px}
+.m2-modo{flex:0 0 auto; width:34px; height:60px; border:0; border-radius:5px; cursor:pointer;
+  background:var(--slotbg); color:var(--ink3); font-size:.9rem; line-height:1;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
+.m2-modo:hover{color:var(--slime2)}
+.m2-modo.on{color:var(--ink); box-shadow:inset 2px 2px 0 rgba(0,0,0,.45),
+  inset -2px -2px 0 rgba(255,255,255,.06), 0 0 0 2px var(--slime) inset}
+.m2-cap{display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:5px;
+  font-size:.76rem; font-weight:700; cursor:pointer; user-select:none; border:0; color:var(--ink3);
+  background:var(--slotbg); transition:all .18s var(--spring); text-align:left; width:100%;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
+.m2-cap .et{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.m2-cap img{width:26px; height:26px; flex:0 0 26px; image-rendering:pixelated; opacity:.4; transition:opacity .18s}
+.m2-cap.on{color:var(--ink)}
+.m2-cap.on img{opacity:1}
+/* Al pasar por encima, el icono se enciende y el cuadro se marca. Es la misma
+   señal que deja el clic, pero a medias: enseña QUÉ vas a encender antes de
+   encenderlo, que en una tira de veinte cuadraditos apagados es la diferencia
+   entre elegir y probar suerte. El clic sigue mandando: `.on` va después.
+
+   Solo donde de verdad hay un ratón. En el móvil el navegador deja el :hover
+   pegado en lo último que se tocó, así que una capa apagada se quedaría
+   iluminada como si estuviera encendida — justo la señal que aquí importa. */
+@media (hover:hover){
+  .m2-cap:hover img{opacity:1}
+  .m2-cap:hover{color:var(--ink)}
+  .m2-cap:hover{box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06),
+    0 0 0 2px rgba(111,212,78,.45) inset}
+  .m2-cap.on:hover{box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06),
+    0 0 0 2px var(--slime) inset}
+}
+.m2-cap.on{box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06),
+  0 0 0 2px var(--slime) inset}
+.m2-cap .n{opacity:.5; font-weight:400}
+/* «Buscar generadores en esta zona». No es una capa más: es un trabajo que se
+   le encarga al servidor de Minecraft y que tarda, así que va con su cartel de
+   por qué, su barra de avance y su aviso de que mientras tanto el juego va más
+   lento. Un botón que para el mundo un par de minutos tiene que decirlo antes,
+   no después. */
+.m2-zona{display:none; flex-direction:column; gap:9px; margin:0 2px 12px; padding:10px 12px;
+  border-radius:6px; background:var(--slotbg);
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
+.m2-zona.ver{display:flex}
+.m2-zona-t{display:flex; gap:10px; align-items:flex-start}
+.m2-zona-t img{width:30px; height:30px; flex:0 0 30px; image-rendering:pixelated; margin-top:1px}
+.m2-zona-t b{display:block; font-size:.78rem; color:var(--ink); margin-bottom:3px}
+.m2-zona-t span{display:block; font-size:.72rem; color:var(--ink3); line-height:1.55}
+.m2-zona-b{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+.m2-zona-p{font-size:.73rem; color:var(--ink3); flex:1 1 190px; min-width:0}
+.m2-zona-p.mal{color:#ff8b8b}
+.m2-zona-barra{flex:1 1 150px; min-width:110px; height:7px; border-radius:4px;
+  background:rgba(0,0,0,.45); overflow:hidden}
+.m2-zona-barra i{display:block; height:100%; width:0; background:var(--slime);
+  transition:width .5s linear}
+.m2-marcar{display:flex; gap:14px; margin:0 4px 12px; font-size:.75rem}
+.m2-marcar button{background:none; border:0; color:var(--ink3); cursor:pointer; padding:2px 0;
+  font-size:.75rem; font-weight:700; text-decoration:underline; text-underline-offset:3px}
+.m2-marcar button:hover{color:var(--slime2)}
+
+/* La barra de ir-a y el cartel de dónde estás */
+.m2-top{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:0 2px 9px}
+.m2-ir{display:flex; gap:6px; align-items:center; font-size:.78rem; color:var(--ink3); font-weight:700}
+.m2-ir input{width:88px; text-align:center;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.m2-donde{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.82rem; color:var(--ink3);
+  background:var(--slotbg); padding:6px 10px; border-radius:5px; min-width:0; flex:1 1 220px;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.m2-donde b{color:var(--ink); font-weight:700}
+
+/* Los botones de acercar y alejar van DENTRO del mapa, abajo a la derecha,
+   como en cualquier mapa del mundo. Fuera se perdían entre el resto. */
+.m2-zoom{position:absolute; right:10px; bottom:10px; z-index:4; display:flex; flex-direction:column; gap:5px}
+.m2-zoom button{width:32px; height:32px; border:0; border-radius:6px; cursor:pointer;
+  background:rgba(10,13,17,.86); color:#e8edf3; font-size:1.15rem; font-weight:700; line-height:1;
+  box-shadow:0 2px 8px rgba(0,0,0,.5)}
+.m2-zoom button:hover{background:rgba(111,212,78,.9); color:#0a0d11}
+
+.m2-globo{position:absolute; z-index:5; transform:translate(-50%,-100%); pointer-events:auto;
+  background:#181c21; color:#e8edf3; padding:8px 12px; border-radius:6px; font-size:.78rem; line-height:1.4;
+  white-space:nowrap; box-shadow:0 6px 22px rgba(0,0,0,.55); margin-top:-12px}
+.m2-globo b{display:block; font-size:.9rem; margin-bottom:2px}
+.m2-globo .c{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; opacity:.65; font-size:.74rem}
+/* «Ya fui aquí»: la marca la ve TODO el server, así que debajo va quién la puso.
+   Sin el nombre, un tic puesto por error no hay forma de saber de quién es. */
+.m2-hecha{display:flex; align-items:center; gap:7px; margin-top:8px; cursor:pointer;
+  font-size:.78rem; font-weight:700; color:var(--ink3); user-select:none}
+.m2-hecha input{width:15px; height:15px; accent-color:var(--slime); cursor:pointer; margin:0}
+.m2-hecha.si{color:var(--slime2)}
+.m2-globo .quien{display:block; font-size:.68rem; opacity:.6; margin-top:3px;
+  font-weight:400; white-space:nowrap}
+.m2-aviso{position:absolute; left:50%; bottom:12px; transform:translateX(-50%); z-index:4;
+  background:rgba(10,13,17,.86); color:var(--ink3); padding:6px 13px; border-radius:20px; font-size:.74rem;
+  pointer-events:none; transition:opacity .25s}
+@media (max-width:640px){
+  .m2-lienzo{height:calc(100vh - 380px); min-height:52vh}
+  .m2-ir input{width:74px}
+}
 
 /* ============ mundos ============ */
 /* La barra de progreso es de las pocas cosas del panel que se mira fijamente
@@ -805,7 +963,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <div class="land-xp" id="land-xp"><i></i></div>
     <div id="land-pin">
       <div class="card pin-card">
-        <h3><img class="hico" src="/static/ui/s-candado.png?v=14" alt=""
+        <h3><img class="hico" src="/static/ui/s-candado.png?v=15" alt=""
           onerror="this.outerHTML='🔒 '"><span data-i18n="pin_title">PIN de acceso</span></h3>
         <input id="pin-in" maxlength="32" autocomplete="off" style="margin-top:14px"
                onkeydown="if(event.key==='Enter')sendPin()">
@@ -822,7 +980,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <img class="banner" src="/banner.png" onerror="this.style.display='none'">
     <div class="login-inner">
       <h1 class="brand pxfont"><span class="cube"></span><span id="brand-login">Serve Actual</span></h1>
-      <div class="sub" style="margin-bottom:16px">Panel del servidor — solo con invitación</div>
+      <div class="sub" style="margin-bottom:16px">Panel del servidor, solo con invitación</div>
       <div id="li-creds">
         <div class="field"><label>Usuario</label><input id="li-user" autocomplete="username"></div>
         <div class="field"><label>Contraseña</label><input id="li-pass" type="password" autocomplete="current-password"
@@ -876,9 +1034,9 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <div><div class="lab" data-i18n="t_mem">Memoria del server</div><div class="val px" id="t-mem">—</div></div></div>
     </div>
     <div class="grid two" style="margin-bottom:14px">
-      <div class="card"><h3 data-i18n="ch_tick">Tick — últimos 10 minutos (ms)</h3>
+      <div class="card"><h3 data-i18n="ch_tick">Tick, últimos 10 minutos (ms)</h3>
         <div class="chartwrap"><svg id="ch-tick"></svg><div class="tip" id="tip-tick"></div></div></div>
-      <div class="card"><h3 data-i18n="ch_mem">Memoria usada — últimos 10 minutos (GB)</h3>
+      <div class="card"><h3 data-i18n="ch_mem">Memoria usada, últimos 10 minutos (GB)</h3>
         <div class="chartwrap"><svg id="ch-mem"></svg><div class="tip" id="tip-mem"></div></div></div>
     </div>
     <div class="grid two">
@@ -931,7 +1089,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <div class="pv-right">
           <div class="grid tiles pv-tiles" id="pv-tiles"></div>
           <div class="card hidden" id="pv-admin" style="margin-bottom:14px">
-            <h3><img class="hico" src="/static/ui/s-posicion.png?v=14" alt="" onerror="this.outerHTML='📍 '">Posición y control</h3>
+            <h3><img class="hico" src="/static/ui/s-posicion.png?v=15" alt="" onerror="this.outerHTML='📍 '">Posición y control</h3>
             <div id="pv-pos" class="note" style="margin-top:0">…</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
               <button class="btn small" id="pv-tp" onclick="tpAbrir()">🧍 Teleport</button>
@@ -957,16 +1115,16 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- MAPA -->
   <section id="tab-map" class="hidden">
     <div class="card hidden" id="mapa-congelado" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-reiniciar.png?v=14" alt="" onerror="this.outerHTML='⏸️ '">El mapa está en pausa</h3>
+      <h3><img class="hico" src="/static/ui/s-reiniciar.png?v=15" alt="" onerror="this.outerHTML='⏸️ '">El mapa está en pausa</h3>
       <div class="note" id="mapa-congelado-n" style="margin-top:0"></div>
       <button class="btn small warn hidden" id="mapa-congelado-b" onclick="verMapa()">Actualizar el mapa</button>
     </div>
     <div class="card" style="padding:10px">
       <iframe id="map-frame" title="Mapa del mundo" style="width:100%; height:calc(100vh - 250px); min-height:min(480px, 70vh); border:0; border-radius:8px; background:#04060a"></iframe>
-      <div class="note" style="margin:8px 4px 2px" data-i18n="map_note">El mundo real en 3D — arrastra para girar, rueda para acercar. Se actualiza cada noche con lo que construyeron en el día.</div>
+      <div class="note" style="margin:8px 4px 2px" data-i18n="map_note">El mundo real en 3D</div>
     </div>
     <div class="card hidden" id="map-mk" style="margin-top:14px">
-      <h3>📍 Lugares del server</h3>
+      <h3><img class="hico" src="/static/ui/s-posicion.png?v=15" alt="" onerror="this.outerHTML='📍 '">Lugares del server</h3>
       <div class="note" style="margin-top:0">Los marcadores aparecen sobre el mapa. Las coordenadas son las del juego (F3).</div>
       <div class="formrow" style="margin-top:10px; flex-wrap:wrap">
         <input id="mk-name" placeholder="Nombre (ej: Base de Jakobino)" style="min-width:200px">
@@ -985,10 +1143,79 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
       <div class="pgrid" id="mk-list" style="margin-top:4px"></div>
       <div id="mk-scan-row" class="hidden">
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:14px">
-          <button class="btn small" onclick="mkMarcadores()"><img class="bico" src="/static/ui/s-posicion.png?v=14" alt="" onerror="this.outerHTML='📍 '">Actualizar los iconos</button>
-          <button class="btn small ghost" onclick="mkScan()"><img class="bico" src="/static/ui/mapa.png?v=14" alt="" onerror="this.outerHTML='🔎 '">Volver a dibujar el mapa entero</button>
+          <button class="btn small" onclick="mkMarcadores()"><img class="bico" src="/static/ui/s-posicion.png?v=15" alt="" onerror="this.outerHTML='📍 '">Actualizar los iconos</button>
+          <button class="btn small ghost" onclick="mkScan()"><img class="bico" src="/static/ui/mapa.png?v=15" alt="" onerror="this.outerHTML='🔎 '">Volver a dibujar el mapa entero</button>
         </div>
-        <div class="note"><b>Los iconos</b> busca aldeas, cámaras de desafío, ciudades antiguas y demás en lo que ya exploraron y las pone en el mapa: tarda segundos, o unos minutos la primera vez. <b>Volver a dibujar</b> además repinta el terreno y tarda más de una hora — normalmente no hace falta, porque el mapa se actualiza solo cada noche.</div>
+        <div class="note">Volver a dibujar repinta el terreno y tarda más de una hora; normalmente no hace falta, porque el mapa se actualiza solo cada noche.</div>
+        <div class="note" id="mk-estado" style="margin-top:8px"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MAPA DEL MUNDO ENTERO — biomas y estructuras calculados de la semilla -->
+  <section id="tab-mapa2" class="hidden">
+    <div class="card hidden" id="m2-apagado" style="margin-bottom:14px">
+      <h3><img class="hico" src="/static/ui/explorar.png?v=15" alt="" onerror="this.outerHTML='🧭 '">El explorador no está encendido</h3>
+      <div class="note" id="m2-apagado-n" style="margin-top:0"></div>
+    </div>
+
+    <div class="card hidden" id="m2-caja" style="padding:10px">
+      <div class="m2-cabecera">
+        <div class="m2-dato pulsa" id="m2-semilla-caja" onclick="m2CopiarSemilla()" title="Pulsa para copiar">
+          <label>Semilla</label><div class="v" id="m2-semilla">—</div>
+          <div class="pista" id="m2-semilla-pista">pulsa para copiarla</div>
+        </div>
+        <div class="m2-dato"><label>Versión</label><div class="v" id="m2-version">—</div></div>
+        <div class="m2-dato"><label>Dimensión</label><div class="v" id="m2-dimension">Overworld</div></div>
+      </div>
+
+      <div class="m2-capas-caja">
+        <div class="m2-capas tira" id="m2-capas"></div>
+        <button class="m2-modo" id="m2-modo" onclick="m2Modo()"
+                title="Ver los nombres de cada capa">▾</button>
+      </div>
+      <div class="m2-marcar">
+        <button onclick="m2Todas(true)">Marcar todo</button>
+        <button onclick="m2Todas(false)">Desmarcar todo</button>
+      </div>
+
+      <!-- Los generadores no salen de la semilla, hay que generar el terreno.
+           Este botón se lo pide al servidor de verdad. Solo admin y moderador. -->
+      <div class="m2-zona" id="m2-zona">
+        <div class="m2-zona-t">
+          <img src="/static/markers/spawner.png" alt="" onerror="this.style.display='none'">
+          <div>
+            <b>Los generadores hay que buscarlos, no se calculan</b>
+            <span>Solo aparecen donde el mundo tenía una cueva, así que la semilla no basta. Este botón le pide al servidor que genere el cuadro marcado en el mapa y lo relee: tarda unos minutos y el juego va más lento mientras tanto, pero lo que sale no es una predicción, es lo que hay.</span>
+          </div>
+        </div>
+        <div class="m2-zona-b">
+          <button class="btn small" id="m2-zona-btn" onclick="m2Zona()"
+                  onmouseenter="m2ZonaPrevia(true)" onmouseleave="m2ZonaPrevia(false)"
+                  onfocus="m2ZonaPrevia(true)" onblur="m2ZonaPrevia(false)">Buscar en esta zona</button>
+          <div class="m2-zona-barra hidden" id="m2-zona-barra"><i id="m2-zona-i"></i></div>
+          <span class="m2-zona-p" id="m2-zona-p"></span>
+        </div>
+      </div>
+
+      <div class="m2-top">
+        <span class="m2-ir">
+          X <input id="m2-x" inputmode="numeric" placeholder="0" onkeydown="if(event.key==='Enter')m2Ir()">
+          Z <input id="m2-z" inputmode="numeric" placeholder="0" onkeydown="if(event.key==='Enter')m2Ir()">
+        </span>
+        <button class="btn small ghost" id="m2-btn-ir" onclick="m2Ir()">Ir</button>
+        <div class="m2-donde" id="m2-donde">Mueve el ratón por el mapa</div>
+      </div>
+
+      <div class="m2-lienzo" id="m2-lienzo">
+        <canvas id="m2-bio"></canvas>
+        <canvas id="m2-ico"></canvas>
+        <div class="m2-zoom">
+          <button id="m2-btn-mas" onclick="m2Zoom(2)" title="Acercar">+</button>
+          <button id="m2-btn-menos" onclick="m2Zoom(.5)" title="Alejar">−</button>
+        </div>
+        <div class="m2-globo hidden" id="m2-globo"></div>
+        <div class="m2-aviso hidden" id="m2-aviso"></div>
       </div>
     </div>
   </section>
@@ -998,7 +1225,6 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <div class="card">
       <h3><img class="hico" src="/static/ui/historia.png?v=11" alt=""
            onerror="this.outerHTML='🕰️ '"><span data-i18n="hist_title">Lo que ha pasado en el server</span></h3>
-      <div class="note" style="margin-top:0" data-i18n="hist_note">Sale del registro del propio servidor. Sin plugins ni mods.</div>
       <div class="note hidden" id="hi-relleno"></div>
       <div class="hi-f" style="margin-top:12px" id="hi-filtros"></div>
       <div class="hilist" id="hi-lista"></div>
@@ -1011,7 +1237,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- MODERATION -->
   <section id="tab-mod" class="hidden">
     <div class="card" id="joinreq-card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-puerta.png?v=11" alt="" onerror="this.outerHTML=''">Solicitudes de ingreso — tocando la puerta</h3>
+      <h3><img class="hico" src="/static/ui/s-puerta.png?v=11" alt="" onerror="this.outerHTML=''">Solicitudes de ingreso, tocando la puerta</h3>
       <div style="overflow-x:auto"><table id="jr-table">
         <thead><tr><th>Jugador</th><th class="right">Intentos</th><th>Último intento</th><th class="right"></th></tr></thead>
         <tbody></tbody></table></div>
@@ -1019,7 +1245,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
     <div class="grid two">
       <div class="card">
-        <h3>Whitelist — quién puede entrar</h3>
+        <h3>Whitelist, quién puede entrar</h3>
         <div class="formrow"><input id="wl-name" placeholder="Nombre exacto de Minecraft"><button class="btn small" onclick="wlAdd()">Aceptar jugador</button></div>
         <div style="overflow-x:auto"><table id="wl-table"><thead><tr><th>Nombre</th><th class="right"></th></tr></thead><tbody></tbody></table></div>
       </div>
@@ -1069,7 +1295,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
     <div class="card">
       <h3>Plugins instalados</h3>
-      <div class="drop" id="drop"><img class="dico" src="/static/ui/s-tolva.png?v=14" alt=""
+      <div class="drop" id="drop"><img class="dico" src="/static/ui/s-tolva.png?v=15" alt=""
         onerror="this.outerHTML='⬆️ '">Arrastra un plugin .jar aquí, o haz clic para elegirlo</div>
       <input type="file" id="plug-file" accept=".jar" class="hidden">
       <div style="overflow-x:auto; margin-top:12px"><table id="plug-table">
@@ -1088,7 +1314,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <select id="nu-role"><option value="mod">Moderador</option><option value="viewer">Observador</option><option value="admin">Admin</option></select>
         <button class="btn small" onclick="createUser()">Crear</button>
       </div>
-      <div class="note">Pásale a cada amigo su usuario + contraseña temporal — el panel los obliga a cambiarla en su primer ingreso.</div>
+      <div class="note">Pásale a cada amigo su usuario + contraseña temporal, el panel los obliga a cambiarla en su primer ingreso.</div>
     </div>
     <div id="users-list"></div>
     <div class="card" style="margin-top:14px"><h3>Actividad reciente del panel</h3>
@@ -1098,7 +1324,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- MEMORIAS DEL SERVER -->
   <section id="tab-memories" class="hidden">
     <div class="card">
-      <h3><img class="hico" src="/static/ui/s-camara.png?v=14" alt=""
+      <h3><img class="hico" src="/static/ui/s-camara.png?v=15" alt=""
         onerror="this.outerHTML='🖼️ '"><span data-i18n="mem_title">Memorias del server</span></h3>
       <div class="memtabs" style="margin-top:12px">
         <button class="btn small" id="memtab-g" onclick="memMode('g')"><img class="bico"
@@ -1125,21 +1351,21 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <section id="tab-sistema" class="hidden">
     <div class="grid two" style="margin-bottom:14px">
       <div class="card">
-        <h3><img class="hico" src="/static/ui/sistema.png?v=14" alt="" onerror="this.outerHTML='⚙️ '">Estado del sistema</h3>
+        <h3><img class="hico" src="/static/ui/sistema.png?v=15" alt="" onerror="this.outerHTML='⚙️ '">Estado del sistema</h3>
         <div class="kv" id="sys-kv">cargando…</div>
         <div class="formrow" style="margin-top:12px">
           <input id="sys-pin" placeholder="PIN público (4-32)" maxlength="32">
           <button class="btn small" onclick="sysSetPin()">Guardar PIN</button>
         </div>
-        <div class="note">El PIN es la puerta de la vista pública. Cámbialo cuando quieras — las sesiones ya abiertas siguen vivas hasta 30 días.</div>
+        <div class="note">El PIN es la puerta de la vista pública. Cámbialo cuando quieras, las sesiones ya abiertas siguen vivas hasta 30 días.</div>
       </div>
       <div class="card">
-        <h3><img class="hico" src="/static/ui/s-candado.png?v=14" alt="" onerror="this.outerHTML='🔐 '">Verificación en dos pasos (tu cuenta)</h3>
+        <h3><img class="hico" src="/static/ui/s-candado.png?v=15" alt="" onerror="this.outerHTML='🔐 '">Verificación en dos pasos (tu cuenta)</h3>
         <div id="sys-2fa">cargando…</div>
       </div>
     </div>
     <div class="card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-mundo.png?v=14" alt="" onerror="this.outerHTML='🌎 '">Versión de Minecraft</h3>
+      <h3><img class="hico" src="/static/ui/s-mundo.png?v=15" alt="" onerror="this.outerHTML='🌎 '">Versión de Minecraft</h3>
       <div id="ver-kv">cargando…</div>
       <div class="actions" style="margin-top:12px">
         <button class="btn small hidden" id="ver-ahora" onclick="verAhora()">Actualizar ahora</button>
@@ -1154,20 +1380,20 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
 
     <div class="card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-reiniciar.png?v=14" alt="" onerror="this.outerHTML='🔄 '">Lo que se actualiza solo</h3>
+      <h3><img class="hico" src="/static/ui/s-reiniciar.png?v=15" alt="" onerror="this.outerHTML='🔄 '">Lo que se actualiza solo</h3>
       <div id="sys-auto" class="note">cargando…</div>
     </div>
     <div class="card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-herramientas.png?v=14" alt="" onerror="this.outerHTML='🧰 '">Operaciones</h3>
+      <h3><img class="hico" src="/static/ui/s-herramientas.png?v=15" alt="" onerror="this.outerHTML='🧰 '">Operaciones</h3>
       <div class="actions">
-        <button class="btn small" onclick="sysOp('regen_icons','¿Regenerar todos los íconos? (1-2 min)')"><img class="bico" src="/static/ui/s-paleta.png?v=14" alt="" onerror="this.outerHTML='🎨 '">Regenerar íconos</button>
-        <button class="btn small warn" onclick="sysOp('restart_panel','¿Reiniciar el panel? (~10 seg fuera)')"><img class="bico" src="/static/ui/s-reiniciar.png?v=14" alt="" onerror="this.outerHTML='♻️ '">Reiniciar panel</button>
-        <button class="btn small danger" onclick="sysPaper()"><img class="bico" src="/static/ui/s-paper.png?v=14" alt="" onerror="this.outerHTML='📄 '">Migrar a Paper</button>
-        <a class="btn small ghost" href="/api/system/backup_extras"><img class="bico" src="/static/ui/copias.png?v=14" alt="" onerror="this.outerHTML='💾 '">Respaldo (fotos+cuentas)</a>
+        <button class="btn small" onclick="sysOp('regen_icons','¿Regenerar todos los íconos? (1-2 min)')"><img class="bico" src="/static/ui/s-paleta.png?v=15" alt="" onerror="this.outerHTML='🎨 '">Regenerar íconos</button>
+        <button class="btn small warn" onclick="sysOp('restart_panel','¿Reiniciar el panel? (~10 seg fuera)')"><img class="bico" src="/static/ui/s-reiniciar.png?v=15" alt="" onerror="this.outerHTML='♻️ '">Reiniciar panel</button>
+        <button class="btn small danger" onclick="sysPaper()"><img class="bico" src="/static/ui/s-paper.png?v=15" alt="" onerror="this.outerHTML='📄 '">Migrar a Paper</button>
+        <a class="btn small ghost" href="/api/system/backup_extras"><img class="bico" src="/static/ui/copias.png?v=15" alt="" onerror="this.outerHTML='💾 '">Respaldo (fotos+cuentas)</a>
       </div>
       <div class="note">Las copias del MUNDO viven en la pestaña Copias, y lo del mapa (actualizar iconos o volver a dibujarlo) está abajo del todo en la pestaña Mapa. La migración a Paper deja el server ~3 min fuera y habilita plugins.</div>
     </div>
-    <div class="card"><h3><img class="hico" src="/static/ui/consola.png?v=14" alt="" onerror="this.outerHTML='📜 '">Registro del sistema</h3>
+    <div class="card"><h3><img class="hico" src="/static/ui/consola.png?v=15" alt="" onerror="this.outerHTML='📜 '">Registro del sistema</h3>
       <div class="console" style="height:220px; color:#c3c2b7" id="sys-log">…</div></div>
   </section>
 
@@ -1180,7 +1406,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
 
     <div class="card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-mundo.png?v=14" alt="" onerror="this.outerHTML='🌎 '">El mundo de ahora</h3>
+      <h3><img class="hico" src="/static/ui/s-mundo.png?v=15" alt="" onerror="this.outerHTML='🌎 '">El mundo de ahora</h3>
       <div id="mu-activo">cargando…</div>
       <div class="actions" style="margin-top:12px">
         <button class="btn small" id="mu-prep" onclick="muPreparar()">Descargar este mundo</button>
@@ -1188,19 +1414,19 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <a class="btn small ghost" href="#" id="mu-ultima" onclick="return muUltimaCopia(event)">Última copia de seguridad</a>
       </div>
       <div class="note">«Descargar este mundo» lo empaqueta tal y como está ahora: primero pausa el guardado del
-        servidor, comprime y lo reanuda. Por eso tarda un poco y no es un enlace directo — una copia hecha en
+        servidor, comprime y lo reanuda. Por eso tarda un poco y no es un enlace directo, una copia hecha en
         caliente sale con trozos a medio escribir y no lo notas hasta que intentas cargarla.</div>
     </div>
 
     <div class="card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/copias.png?v=14" alt="" onerror="this.outerHTML='📦 '">Mundos guardados</h3>
+      <h3><img class="hico" src="/static/ui/copias.png?v=15" alt="" onerror="this.outerHTML='📦 '">Mundos guardados</h3>
       <div id="mu-lista">cargando…</div>
       <div class="note" id="mu-disco"></div>
     </div>
 
     <div class="card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-tolva.png?v=14" alt="" onerror="this.outerHTML='⬆️ '">Subir un mundo</h3>
-      <div class="drop" id="mu-drop"><img class="dico" src="/static/ui/s-tolva.png?v=14" alt=""
+      <h3><img class="hico" src="/static/ui/s-tolva.png?v=15" alt="" onerror="this.outerHTML='⬆️ '">Subir un mundo</h3>
+      <div class="drop" id="mu-drop"><img class="dico" src="/static/ui/s-tolva.png?v=15" alt=""
         onerror="this.outerHTML='⬆️ '">Arrastra aquí el .zip o .tar.gz del mundo, o haz clic para elegirlo</div>
       <input type="file" id="mu-file" accept=".zip,.tar,.gz,.tgz" class="hidden">
       <div class="hidden" id="mu-subiendo">
@@ -1213,7 +1439,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
 
     <div class="card hidden" id="mu-traer" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/jugadores.png?v=14" alt="" onerror="this.outerHTML='⚔️ '">Traer los jugadores de otro mundo</h3>
+      <h3><img class="hico" src="/static/ui/jugadores.png?v=15" alt="" onerror="this.outerHTML='⚔️ '">Traer los jugadores de otro mundo</h3>
       <div class="note" style="margin-top:0">Copia el historial de todos al mundo que está activo ahora.
         Sirve para estrenar mapa sin que nadie pierda lo suyo: el ranking del panel lee estos mismos
         ficheros, así que la tabla sigue donde estaba.</div>
@@ -1227,12 +1453,12 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <label class="chip"><input type="checkbox" id="mu-tr-inv"> Inventario y experiencia</label>
       </div>
       <div class="note">Lo que había se guarda antes de pisarlo. El inventario es el único con truco:
-        llegan con sus cosas, pero se les reescribe la posición al spawn del mundo nuevo — las
+        llegan con sus cosas, pero se les reescribe la posición al spawn del mundo nuevo, las
         coordenadas del mundo viejo aquí pueden ser el interior de una montaña o el vacío.</div>
     </div>
 
     <div class="card">
-      <h3><img class="hico" src="/static/ui/s-brote.png?v=14" alt="" onerror="this.outerHTML='🌱 '">Estrenar un mundo</h3>
+      <h3><img class="hico" src="/static/ui/s-brote.png?v=15" alt="" onerror="this.outerHTML='🌱 '">Estrenar un mundo</h3>
       <div class="formrow">
         <input id="mu-nn" style="flex:1; min-width:200px" placeholder="Nombre (ej: Temporada 2)" maxlength="48">
         <input id="mu-semilla" placeholder="Semilla (opcional)" maxlength="48" style="max-width:200px">
@@ -1247,7 +1473,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 <!-- qué hacer con el mundo recién subido -->
 <div class="modal-bg" id="mu-modal" onclick="if(event.target.id==='mu-modal')cerrar('mu-modal')">
   <div class="modal" style="max-width:560px" onclick="event.stopPropagation()">
-    <h3 style="margin-top:0">🌎 Mundo subido</h3>
+    <h3 style="margin-top:0"><img class="hico" src="/static/ui/s-mundo.png?v=15" alt="" onerror="this.outerHTML='🌎 '">Mundo subido</h3>
     <div class="note" id="mu-m-info" style="margin-top:0"></div>
     <div class="err hidden" id="mu-m-aviso"></div>
     <div id="mu-m-ops" style="margin-top:14px">
@@ -1274,7 +1500,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 <!-- password modal -->
 <div class="modal-bg" id="tp-modal" onclick="if(event.target.id==='tp-modal')cerrar('tp-modal')">
   <div class="modal" style="max-width:520px" onclick="event.stopPropagation()">
-    <h3 style="margin-top:0">🧍 Teleport — <span id="tp-quien"></span></h3>
+    <h3 style="margin-top:0">🧍 Teleport, <span id="tp-quien"></span></h3>
     <div class="hi-f" id="tp-tipos" style="margin-bottom:12px"></div>
     <div id="tp-jug" class="hidden">
       <div class="note" style="margin-top:0">Lo mando junto a otro que esté conectado.</div>
@@ -1290,7 +1516,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
       <div class="note" id="tp-pista"></div>
     </div>
     <h3 style="margin:16px 0 4px; font-size:.95rem">Efectos antes de moverlo <span class="hi-sub">(opcional)</span></h3>
-    <div class="note" style="margin-top:0">Se aplican justo antes del salto — útil para caer de alto o llegar al Nether.</div>
+    <div class="note" style="margin-top:0">Se aplican justo antes del salto, útil para caer de alto o llegar al Nether.</div>
     <div id="tp-efectos"></div>
     <div id="tp-err" class="note" style="color:#ffb4a8"></div>
     <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px">
@@ -1302,7 +1528,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 
 <div class="modal-bg" id="ef-modal" onclick="if(event.target.id==='ef-modal')cerrar('ef-modal')">
   <div class="modal" style="max-width:520px" onclick="event.stopPropagation()">
-    <h3 style="margin-top:0">✨ Efectos — <span id="ef-quien"></span></h3>
+    <h3 style="margin-top:0">✨ Efectos, <span id="ef-quien"></span></h3>
     <div class="note" style="margin-top:0">Solo funciona con el jugador conectado.</div>
     <div id="ef-efectos"></div>
     <div id="ef-err" class="note" style="color:#ffb4a8"></div>
@@ -1364,7 +1590,7 @@ let ME = null, BRAND = 'Serve Actual';
 let tickHist = [], memHist = [];
 let GEAR = null;   // current player card data
 const $ = id => document.getElementById(id);
-const ICONV = 14;   // sube este número cuando cambien los renders (revienta el caché)
+const ICONV = 15;   // sube este número cuando cambien los renders (revienta el caché)
 const ICON = id => `/icons/${id}.png?v=${ICONV}`;   // self-hosted, extracted from the official client
 
 /* ---------- i18n (todo lo público es bilingüe; la vista de mods queda en español) ---------- */
@@ -1373,18 +1599,18 @@ try{ LANG = localStorage.getItem('panel_lang') || 'es'; }catch(_){}
 const I18N = {
  es:{welcome:'Bienvenidos al Panel del servidor', mods:'Moderadores', pin_title:'PIN de acceso',
   pin_btn:'Entrar',
-  pin_wrong:'PIN incorrecto', pin_unset:'El PIN aún no está configurado — avísale al admin.',
-  pin_rate:'Demasiados intentos — espera 5 minutos',
+  pin_wrong:'PIN incorrecto', pin_unset:'El PIN aún no está configurado, avísale al admin.',
+  pin_rate:'Demasiados intentos, espera 5 minutos',
   tab_dash:'Inicio', tab_players:'Jugadores', tab_mem:'Memorias', tab_map:'Mapa',
-  map_note:'El mundo real en 3D — arrastra para girar, rueda para acercar. Se actualiza cada noche con lo que construyeron en el día.',
+  map_note:'El mundo real en 3D',
   t_state:'Servidor', t_online:'Jugadores en línea', t_tick:'Tiempo de tick', t_mem:'Memoria del server',
   st_on:'En línea', st_boot:'Arrancando', st_off:'Apagado',
-  ch_tick:'Tick — últimos 10 minutos (ms)', ch_mem:'Memoria usada — últimos 10 minutos (GB)',
+  ch_tick:'Tick, últimos 10 minutos (ms)', ch_mem:'Memoria usada, últimos 10 minutos (GB)',
   conn_now:'Conectados ahora', nobody:'Nadie conectado ahora', join_data:'Datos para entrar',
   kv_ver:'Versión', kv_engine:'Motor', kv_diff:'Dificultad', kv_view:'Distancia de visión', kv_wl:'En la whitelist',
   copy:'Copiar', copied:'Dirección copiada', players_book:'Libro de jugadores',
   pl_note:'Las estadísticas vienen directo de los archivos del servidor. Toca un jugador para ver su ficha.',
-  pl_empty:'Aún no hay estadísticas — aparecen cuando la gente juega.', collecting:'recolectando datos…',
+  pl_empty:'Aún no hay estadísticas, aparecen cuando la gente juega.', collecting:'recolectando datos…',
   back_players:'← Todos los jugadores', inv_btn:'🎒 Inventario', hist_add:'➕ Subir skin antigua',
   sort_by:'Ordenar por', sort_alpha:'Alfabético (A-Z)', sort_hours:'Más horas jugadas', sort_mobs:'Más mobs matados',
   sort_placed:'Más bloques puestos', sort_deaths:'Más muertes', sort_pvp:'Más jugadores matados',
@@ -1395,7 +1621,6 @@ const I18N = {
   sort_xp:'Nivel de experiencia', sort_seen:'Conectado más recientemente', lvl_short:'Nv.',
   tab_hist:'Historia',
   hist_title:'Lo que ha pasado en el server',
-  hist_note:'Sale del registro del propio servidor. Sin plugins ni mods.',
   hist_all:'Todo', hist_ses:'Sesiones', hist_dea:'Muertes', hist_adv:'Logros',
   hist_more:'Ver más atrás', hist_empty:'Todavía no hay nada por aquí.',
   hist_played:'jugó {0}', hist_online:'lleva {0} conectado',
@@ -1415,26 +1640,26 @@ const I18N = {
   th_km:'Km caminados', th_seen:'Última vez', online_tag:'(en línea)',
   now:'ahora mismo', min_ago:'hace {0} min', h_ago:'hace {0} h', d_ago:'hace {0} días',
   mem_title:'Memorias del server', mem_global:'Globales', mem_indiv:'Individuales',
-  mem_note:'El álbum del server — mira y comparte los mejores momentos.',
+  mem_note:'El álbum del server, mira y comparte los mejores momentos.',
   mem_up:'Subir una foto nueva', mem_up_to:'Subir a la carpeta de {0}', mem_desc:'Descripción (obligatoria):',
   mem_by:'subida por', mem_back:'← Todas las carpetas', mem_photos:'foto(s)', mem_none:'Aún no hay fotos aquí',
   close:'Cerrar', del:'Borrar', view_skin:'🧍 Ver skin en 3D', skin_walk:'▶ Caminar', skin_stop:'⏸ Quieto',
-  skin_hist:'Skins guardadas por el panel', skin_none:'El archivo arranca hoy — cada día el panel guarda la skin de todos.',
+  skin_hist:'Skins guardadas por el panel', skin_none:'El archivo arranca hoy, cada día el panel guarda la skin de todos.',
   skin_namemc:'Ver historial completo en NameMC ↗', logout:'Salir', guest:'invitado'},
  en:{welcome:'Welcome to the Server Panel', mods:'Moderators', pin_title:'Access PIN',
   pin_btn:'Enter',
-  pin_wrong:'Wrong PIN', pin_unset:'The PIN is not configured yet — tell the admin.',
-  pin_rate:'Too many attempts — wait 5 minutes',
+  pin_wrong:'Wrong PIN', pin_unset:'The PIN is not configured yet, tell the admin.',
+  pin_rate:'Too many attempts, wait 5 minutes',
   tab_dash:'Home', tab_players:'Players', tab_mem:'Memories', tab_map:'Map',
-  map_note:'The real world in 3D — drag to rotate, scroll to zoom. Updates every night with what was built during the day.',
+  map_note:'The real world in 3D',
   t_state:'Server', t_online:'Players online', t_tick:'Tick time', t_mem:'Server memory',
   st_on:'Online', st_boot:'Starting', st_off:'Offline',
-  ch_tick:'Tick — last 10 minutes (ms)', ch_mem:'Memory used — last 10 minutes (GB)',
+  ch_tick:'Tick, last 10 minutes (ms)', ch_mem:'Memory used, last 10 minutes (GB)',
   conn_now:'Connected now', nobody:'Nobody online right now', join_data:'How to join',
   kv_ver:'Version', kv_engine:'Engine', kv_diff:'Difficulty', kv_view:'View distance', kv_wl:'Whitelisted',
   copy:'Copy', copied:'Address copied', players_book:'Player book',
   pl_note:'Stats come straight from the server files. Tap a player to open their card.',
-  pl_empty:'No stats yet — they show up once people play.', collecting:'collecting data…',
+  pl_empty:'No stats yet, they show up once people play.', collecting:'collecting data…',
   back_players:'← All players', inv_btn:'🎒 Inventory', hist_add:'➕ Upload old skin',
   sort_by:'Sort by', sort_alpha:'Alphabetical (A-Z)', sort_hours:'Most hours played', sort_mobs:'Most mobs killed',
   sort_placed:'Most blocks placed', sort_deaths:'Most deaths', sort_pvp:'Most players killed',
@@ -1445,7 +1670,6 @@ const I18N = {
   sort_xp:'Experience level', sort_seen:'Most recently online', lvl_short:'Lv.',
   tab_hist:'History',
   hist_title:'What has happened on the server',
-  hist_note:"Read from the server's own log. No plugins, no mods.",
   hist_all:'All', hist_ses:'Sessions', hist_dea:'Deaths', hist_adv:'Advancements',
   hist_more:'Further back', hist_empty:'Nothing here yet.',
   hist_played:'played {0}', hist_online:'online for {0}',
@@ -1465,11 +1689,11 @@ const I18N = {
   th_km:'Km walked', th_seen:'Last seen', online_tag:'(online)',
   now:'just now', min_ago:'{0} min ago', h_ago:'{0} h ago', d_ago:'{0} days ago',
   mem_title:'Server Memories', mem_global:'Global', mem_indiv:'Individual',
-  mem_note:'The server album — browse and share the best moments.',
+  mem_note:'The server album, browse and share the best moments.',
   mem_up:'Upload a new photo', mem_up_to:"Upload to {0}'s folder", mem_desc:'Description (required):',
   mem_by:'uploaded by', mem_back:'← All folders', mem_photos:'photo(s)', mem_none:'No photos here yet',
   close:'Close', del:'Delete', view_skin:'🧍 View 3D skin', skin_walk:'▶ Walk', skin_stop:'⏸ Stop',
-  skin_hist:'Skins archived by the panel', skin_none:'The archive starts today — the panel saves everyone\'s skin daily.',
+  skin_hist:'Skins archived by the panel', skin_none:'The archive starts today, the panel saves everyone\'s skin daily.',
   skin_namemc:'Full history on NameMC ↗', logout:'Log out', guest:'guest'}
 };
 function t(k, a){ let s=(I18N[LANG]&&I18N[LANG][k])||I18N.es[k]||k; if(a!==undefined) s=s.replace('{0}',a); return s; }
@@ -1566,9 +1790,9 @@ function esc(s){ const d=document.createElement('div'); d.textContent=s; return 
 function ago(ts){ const s=(Date.now()/1000-ts); if(s<120) return t('now');
   if(s<7200) return t('min_ago', Math.round(s/60)); if(s<172800) return t('h_ago', Math.round(s/3600));
   return t('d_ago', Math.round(s/86400)); }
-const MOD_DEFAULTS=['view_dashboard','view_players','whitelist','ban','kick','say','player_actions','memories','memories_upload','markers_add'];
-const PUB_DEFAULTS=['view_dashboard','view_players','memories','memories_upload','markers_add'];
-const VIEW_DEFAULTS=['view_dashboard','view_players','memories','markers_add'];
+const MOD_DEFAULTS=['view_dashboard','view_players','whitelist','ban','kick','say','player_actions','memories','memories_upload','markers_add','mapa_semilla'];
+const PUB_DEFAULTS=['view_dashboard','view_players','memories','memories_upload','markers_add','mapa_semilla'];
+const VIEW_DEFAULTS=['view_dashboard','view_players','memories','markers_add','mapa_semilla'];
 function hasPerm(p){
   if (!ME) return false;
   if (ME.role==='admin') return true;
@@ -1643,6 +1867,7 @@ const TABS = [
   ['dash',()=>t('tab_dash'),UI('inicio'),'🏠', () => hasPerm('view_dashboard')],
   ['players',()=>t('tab_players'),UI('jugadores'),'⚔️', () => hasPerm('view_players')],
   ['map',()=>t('tab_map'),UI('mapa'),'🗺️', () => hasPerm('view_dashboard')],
+  ['mapa2',()=>'Explorar',UI('explorar'),'🧭', () => hasPerm('mapa_semilla')],
   ['historia',()=>t('tab_hist'),UI('historia'),'🕰️', () => hasPerm('view_dashboard')],
   ['mod',()=>'Moderación',UI('moderacion'),'🔨', () => hasPerm('whitelist')||hasPerm('ban')||hasPerm('say')],
   ['memories',()=>t('tab_mem'),UI('memorias'),'🖼️', () => hasPerm('memories')],
@@ -1678,6 +1903,17 @@ function buildTabs(){
     const b = document.getElementById('topbar');
     if (!b) return;
     const y = Math.max(0, window.scrollY), ahora = Date.now();
+    // En Explorar manda otra regla: la barra se va del todo al bajar y solo
+    // vuelve al llegar arriba. Encogerla no bastaba — la tira de capas está
+    // pegada debajo y las dos se pisaban igual.
+    if (TAB_ACTIVA === 'mapa2'){
+      b.classList.remove('compacto');
+      if (y <= 6) b.classList.remove('fuera');
+      else if (y > 40) b.classList.add('fuera');
+      ultimo = y;
+      return;
+    }
+    b.classList.remove('fuera');
     // Al encogerse la barra, la página entera se acorta y el navegador puede
     // mover el scroll por su cuenta. Sin esta pausa, ese movimiento se lee como
     // "el usuario ha subido" y la barra se pone a parpadear sola.
@@ -1697,7 +1933,13 @@ function buildTabs(){
   }, {passive:true});
 })();
 
+let TAB_ACTIVA = 'dash';      // la mira el vigilante del scroll de arriba
 function show(id){
+  TAB_ACTIVA = id;
+  // Al salir de Explorar la barra tiene que volver, esté donde esté el scroll:
+  // si no, se queda escondida en una pestaña que no la esconde nunca.
+  const tb = document.getElementById('topbar');
+  if (tb && id !== 'mapa2') tb.classList.remove('fuera');
   for (const [t] of TABS){
     const sec=$('tab-'+t), btn=$('tabbtn-'+t);
     if (sec) sec.classList.toggle('hidden', t!==id);
@@ -1716,6 +1958,7 @@ function show(id){
   if (id==='users'){ loadUsers(); loadAudit(); }
   if (id==='sistema'){ loadSistema(); verCargar(); if(!window._sysT) window._sysT=setInterval(()=>{ if(!$('tab-sistema').classList.contains('hidden')) loadSistema(); },5000); }
   if (id==='mundo') muCargar();
+  if (id==='mapa2') m2Cargar();
   window._curTab=id;
 }
 
@@ -1784,7 +2027,7 @@ function drawChart(svgId,tipId,pts,color,unit,guide){
     for (const p of pts){ const dd=Math.abs(X(p[0])-mx); if(dd<bd){bd=dd; best=p;} }
     const tip=$(tipId); tip.style.display='block';
     tip.style.left=(X(best[0])/W*100)+'%'; tip.style.top='32px';
-    tip.textContent=`${new Date(best[0]).toLocaleTimeString()} — ${best[1].toFixed(1)} ${unit}`;
+    tip.textContent=`${new Date(best[0]).toLocaleTimeString()}, ${best[1].toFixed(1)} ${unit}`;
   };
   svg.onmouseleave=()=>$(tipId).style.display='none';
 }
@@ -1932,7 +2175,7 @@ function pvStrip(info){
   hist.forEach(h=>{
     const isCur = cur && h.hash===cur;
     const d=document.createElement('div'); d.className='sk'+(isCur?' cur':'');
-    d.title=(isCur?(LANG==='en'?'Current skin — ':'Skin actual — '):'')+h.date+(h.ts?` ${hhmm(h.ts)}`:'');
+    d.title=(isCur?(LANG==='en'?'Current skin, ':'Skin actual, '):'')+h.date+(h.ts?` ${hhmm(h.ts)}`:'');
     d.onclick=()=>{ pvSkin(`/skinhist/${PV_UUID}/${encodeURIComponent(h.file)}`, h.slim); toast('Skin del '+h.date); };
     if (ME && ME.role==='admin'){
       d.oncontextmenu=async(e)=>{                 // click derecho = borrar (solo admin)
@@ -2063,7 +2306,7 @@ function advSteps(l){
   const cab = faltan ? t('adv_steps').replace('{0}',faltan).replace('{1}',l.steps.length)
                      : t('adv_done_all');
   return `<div class="advsteps">
-    <div class="sh">${esc(advTitle(l))} — ${cab}</div>
+    <div class="sh">${esc(advTitle(l))}, ${cab}</div>
     ${l.steps.map(s=>`<div class="advstep ${s.d?'ok':''}">
       <span>${s.d?'✔':'·'}</span><span>${esc(s.en||s.es||s.id)}</span>
       ${s.d?`<span class="sd">${esc(String(s.d).slice(0,10))}</span>`:''}</div>`).join('')}
@@ -2088,7 +2331,7 @@ function statCol(title, total, rows, key){
   return col;
 }
 async function pvAddSkin(){
-  const date=prompt('Fecha de esa skin (AAAA-MM-DD) — puede ser aproximada:','2021-01-01');
+  const date=prompt('Fecha de esa skin (AAAA-MM-DD), puede ser aproximada:','2021-01-01');
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())){ if(date!==null) toast('Formato: AAAA-MM-DD'); return; }
   const inp=$('pv-skinfile'); inp.value='';
   inp.onchange=async()=>{
@@ -2160,7 +2403,7 @@ function tipLines(it){
   }
   if (it.unbreakable) L.push(plain('Irrompible', '#5555FF'));
   if (it.max_damage!=null && it.damage!=null) L.push(plain(`Durabilidad: ${it.max_damage-it.damage} / ${it.max_damage}`, '#FFFFFF'));
-  if (it.inside && it.inside.length) L.push(plain(`📦 ${it.inside.length} ítems adentro — toca para abrir`, '#8aeb67'));
+  if (it.inside && it.inside.length) L.push(plain(`📦 ${it.inside.length} ítems adentro, toca para abrir`, '#8aeb67'));
   return L;
 }
 const FOIL=new Set(['enchanted_golden_apple','experience_bottle','written_book','end_crystal','nether_star']);
@@ -2281,7 +2524,7 @@ async function openPlayer(uuid, name, online){
     <div class="mrow"><button class="btn ghost" onclick="closePC()">Cerrar</button></div>`;
   $('ender-btn').dataset.tip = JSON.stringify([
     {seg:[{t:'Cofre de Ender', c:'#FF55FF'}]},
-    {seg:[{t:enderCount ? `${enderCount} ítems guardados — toca para abrir` : 'vacío', c:'#AAAAAA', i:true}]}]);
+    {seg:[{t:enderCount ? `${enderCount} ítems guardados, toca para abrir` : 'vacío', c:'#AAAAAA', i:true}]}]);
   const inv = new Array(36).fill(null);
   const legacyArmor = {103:'head',102:'chest',101:'legs',100:'feet','-106':'offhand'};
   const eq = {...g.equipment};
@@ -2301,7 +2544,7 @@ async function openPlayer(uuid, name, online){
 }
 function openEnder(){
   if (!GEAR) return;
-  $('ct-body').innerHTML = `<h3 style="margin-bottom:12px"><img src="/icons/ender_chest.png?v=9" onerror="this.src='/static/ender_chest.png'" style="width:22px;height:22px;image-rendering:auto;vertical-align:-5px"> Cofre de Ender — ${esc(GEAR.name)}</h3>
+  $('ct-body').innerHTML = `<h3 style="margin-bottom:12px"><img src="/icons/ender_chest.png?v=9" onerror="this.src='/static/ender_chest.png'" style="width:22px;height:22px;image-rendering:auto;vertical-align:-5px"> Cofre de Ender, ${esc(GEAR.name)}</h3>
     <div class="slotgrid" id="ct-grid"></div>
     <div class="mrow"><button class="btn ghost" onclick="$('ct-modal').classList.remove('open')">Cerrar</button></div>`;
   const arr=new Array(27).fill(null);
@@ -2341,7 +2584,7 @@ async function playerAct(name, act){
   const labels={heal:'curar',feed:'alimentar',kill:'matar'};
   if (act==='kill' && !confirm(`¿Seguro que quieres matar a ${name}?`)) return;
   const r = await api('/api/player/action', {name, act});
-  toast(r.error || `Listo — acabas de ${labels[act]} a ${name}`);
+  toast(r.error || `Listo, acabas de ${labels[act]} a ${name}`);
 }
 
 /* ---------- moderación ---------- */
@@ -2362,7 +2605,7 @@ async function loadJoinReq(){
   if (!r.requests.length) tb.innerHTML='<tr><td colspan="4">Nadie está tocando la puerta.</td></tr>';
 }
 async function jrAccept(n){ const r=await api('/api/joinreq/accept',{name:n});
-  toast(r.output||'Aceptado — ya puede entrar'); loadJoinReq(); loadWhitelist(); }
+  toast(r.output||'Aceptado, ya puede entrar'); loadJoinReq(); loadWhitelist(); }
 async function jrDismiss(n){ await api('/api/joinreq/dismiss',{name:n}); toast(n+' ignorado'); loadJoinReq(); }
 
 async function loadWhitelist(){
@@ -2397,7 +2640,7 @@ async function doSay(){ const m=$('say-msg').value.trim(); if(!m) return;
   const r=await api('/api/say',{message:m}); toast(r.ok?'Enviado a todos en el juego':'Falló'); $('say-msg').value=''; }
 async function doRestart(){
   if(!confirm('¿Reiniciar el servidor ahora? Todos salen ~30 segundos.')) return;
-  await api('/api/restart',{}); toast('Reiniciando — vuelve en ~30s');
+  await api('/api/restart',{}); toast('Reiniciando, vuelve en ~30s');
 }
 
 /* ---------- consola ---------- */
@@ -2426,7 +2669,7 @@ async function loadBackups(){
       <td class="right"><a class="btn small ghost" href="/api/backups/download/${encodeURIComponent(b.name)}">Descargar</a></td>`;
     tb.appendChild(tr);
   }
-  if (!r.backups.length) tb.innerHTML='<tr><td colspan="4">Aún no hay copias — la primera llega esta noche, o presiona "Hacer copia ahora".</td></tr>';
+  if (!r.backups.length) tb.innerHTML='<tr><td colspan="4">Aún no hay copias, la primera llega esta noche, o presiona "Hacer copia ahora".</td></tr>';
 }
 async function backupNow(){ const r=await api('/api/backups/now',{}); toast(r.output||r.error||'Iniciada'); setTimeout(loadBackups,65000); }
 
@@ -2435,10 +2678,10 @@ async function loadPlugins(){
   const r=await api('/api/plugins');
   const badge=$('engine-badge'), note=$('engine-note');
   if (r.engine==='paper'){
-    badge.innerHTML='<span class="dot good"></span>Paper — plugins habilitados';
+    badge.innerHTML='<span class="dot good"></span>Paper, plugins habilitados';
     note.textContent='Sube plugins .jar y reinicia el servidor para activarlos.';
   } else {
-    badge.innerHTML='<span class="dot warn"></span>Vanilla — plugins todavía no';
+    badge.innerHTML='<span class="dot warn"></span>Vanilla, plugins todavía no';
     note.textContent='Para usar plugins hay que cambiar el motor a Paper (misma dirección, mismo mundo, tus amigos no notan nada). Pídele a Claude la migración cuando quieras.';
   }
   const tb=$('plug-table').querySelector('tbody'); tb.innerHTML='';
@@ -2481,7 +2724,7 @@ async function verCargar(refrescar){
   let r; try{ r = await api('/api/actualizar/estado' + (refrescar ? '?refrescar=1' : '')); }
   catch(e){ return; }
   if (!r.disponible){
-    $('ver-kv').innerHTML = '<span class="note">Falta <code>scripts/actualizar.py</code> — haz Commit + Sync.</span>';
+    $('ver-kv').innerHTML = '<span class="note">Falta <code>scripts/actualizar.py</code>, haz Commit + Sync.</span>';
     return;
   }
   const c = r.congelado, trabajando = (r.trabajo||{}).estado === 'trabajando';
@@ -2509,7 +2752,7 @@ async function verCargar(refrescar){
     if (c){
       $('mapa-congelado-n').textContent =
         'El servidor pasó a Minecraft ' + (c.version||'?') + ' y BlueMap todavía no la soporta. ' +
-        'Lo que ves es el mapa de antes, completo — solo deja de añadirse el terreno nuevo. ' +
+        'Lo que ves es el mapa de antes, completo, solo deja de añadirse el terreno nuevo. ' +
         'El panel lo reintenta solo cada día.';
       $('mapa-congelado-b').classList.toggle('hidden', !(ME && ME.role === 'admin'));
     }
@@ -2740,7 +2983,7 @@ async function muSubir(f){
     let r;
     try { r = await api('/api/mundos/trozo', fd, true); }
     catch (e){
-      if (++fallos > 3){ toast('Se cortó la subida — vuelve a intentarlo'); break; }
+      if (++fallos > 3){ toast('Se cortó la subida, vuelve a intentarlo'); break; }
       await new Promise(s => setTimeout(s, 1500 * fallos)); continue;
     }
     fallos = 0;
@@ -2849,12 +3092,987 @@ async function muTraer(){
   toast(r.output || r.error || 'Hecho'); muCargar();
 }
 
+/* ================== mapa del mundo entero (biomas + estructuras) ==================
+   El otro mapa enseña lo que se ha explorado, en 3D. Este enseña el mundo entero,
+   plano y por colores, calculado desde la semilla: es lo mismo que hace Chunkbase,
+   pero preguntándole al generador que viene dentro del propio server.jar.
+
+   CÓMO SE DIBUJA
+   Igual que cualquier mapa de los que se arrastran: el mundo está partido en
+   azulejos de 256 px y solo se piden los que se ven. Cada nivel de zoom es una
+   cantidad de bloques por píxel (4, 8, 16… 512) y los azulejos de cada nivel se
+   guardan en el servidor para siempre — la semilla no cambia, así que un trozo
+   calculado una vez no hay que volver a calcularlo nunca.
+
+   MIENTRAS LLEGA EL AZULEJO BUENO se estira el del nivel de más arriba, que casi
+   siempre ya está en memoria. Por eso al acercarse se ve borroso un instante y
+   luego nítido, en vez de verse un agujero negro. */
+const M2 = {
+  est:null,                 // lo que contesta /api/mapa2/estado
+  cx:0, cz:0,               // qué punto del mundo está en el centro
+  esc:1/8,                  // píxeles de pantalla por bloque
+  azulejos:new Map(),       // "bpp/tx/tz" → Image | 'cargando' | {falla:t}
+  pidiendo:0,
+  iconos:new Map(),         // tipo → Image
+  apagados:new Set(),       // los que el usuario apagó
+  forzados:new Set(),       // los que pidió ver aunque el mapa esté muy abierto
+  estructuras:[], cuenta:{}, recorte:null,
+  slime:null,               // {cx, cz, n, datos} del trozo pedido
+  verSlime:false, verAparicion:true,
+  porColor:new Map(),       // "r,g,b" → bioma, para decir el bioma sin pedir nada
+  hechas:{},                // "tipo:x:z" → {por, t}: lo que ya visitó alguien
+  variantes:{},             // "village_snowy" → {icono, es, en}: dibujo propio
+  modo:'tira',              // 'tira' (iconos) o 'lista' (icono + nombre)
+  lejosDensas:false,        // tesoros y minas piden estar cerca
+  zonaCaja:null, zonaEstado:'quieto', zonaPrevia:null, zonaCojo:false,  // «buscar en esta zona»
+  pintando:false, listo:false, aviso:'',
+};
+const M2_MAX_ICONOS = 3000;
+/* Un chunk mide 16 bloques, así que en pantalla mide 16·escala píxeles.
+   Con la escala de entrada (1/8) eso son DOS píxeles: se dibujaban, sí, pero
+   eran una neblina verde translúcida sobre un mapa que ya es verde — o sea,
+   invisibles. Y el salto automático solo entraba por debajo de 1/8, que es
+   justo la escala de entrada, así que encender la capa no hacía nada visible.
+   Ahora el mínimo es 4 px por chunk y al encenderla se acerca hasta 12. */
+const M2_SLIME_DESDE = 1/4;      // 4 px por chunk: menos que eso es una mancha
+const M2_SLIME_ZOOM  = 3/4;      // 12 px por chunk, como en Chunkbase
+
+async function m2Cargar(){
+  // La tira de iconos es SIEMPRE la vista de entrada. La lista con nombres es
+  // para mirar algo puntual («¿cuál era el de las ruinas?»), no para quedarse:
+  // ocupa cuatro filas y empuja el mapa fuera de la pantalla. Así que no se
+  // guarda la elección, y volver a esta pestaña, o recargar, devuelve la tira.
+  M2.modo = 'tira';
+  if (M2.listo) { m2Capas(); m2Medir(); m2Pinta(); return; }
+  let d=null;
+  try{ d = await api('/api/mapa2/estado'); }catch(_){}
+  const caja=$('m2-caja'), off=$('m2-apagado');
+  if (!d || !d.ok){
+    off.classList.remove('hidden'); caja.classList.add('hidden');
+    $('m2-apagado-n').innerHTML = d && d.ayuda
+      ? esc(d.ayuda).replace(/(sudo bash[^\s]*[^\.]*)/, '<code>$1</code>')
+      : 'No consigo hablar con el lector de biomas. ' + esc((d&&d.motivo)||'');
+    return;
+  }
+  off.classList.add('hidden'); caja.classList.remove('hidden');
+  M2.est = d; M2.listo = true;
+  $('m2-semilla').textContent = d.semilla || '—';
+  $('m2-version').textContent = d.version ? ('Java ' + d.version) : '—';
+  $('m2-dimension').textContent = d.dimension || 'Overworld';
+  for (const k in d.leyenda){
+    const b=d.leyenda[k];
+    M2.porColor.set(parseInt(b.c.slice(1),16), b);
+  }
+  // Las fortalezas vienen enteras (son 128 en todo el mundo, no hace falta
+  // pedirlas por trozos) y se pegan a la lista de cada viaje.
+  M2.fortalezas = (d.fortalezas || []).map(p => ['stronghold', p[0], p[1]]);
+  const ia=new Image(); ia.src=MK_ICON('spawn'); M2.iconos.set('__aparicion', ia);
+  ia.onload=()=>m2Iconos();
+  for (const t of d.tipos){
+    if (t.oculto) M2.apagados.add(t.k);
+    const im=new Image(); im.src = MK_ICON(t.icono);
+    im.onload=()=>m2Iconos();
+    M2.iconos.set(t.k, im);
+  }
+  // Los iconos de variante (aldea nevada, generador de zombis…). El servidor
+  // solo manda los que TIENEN fichero, así que aquí no hay nada que adivinar:
+  // lo que no esté en esta lista se dibuja con el icono de su capa.
+  M2.variantes = d.variantes || {};
+  for (const [v, info] of Object.entries(M2.variantes)){
+    const im=new Image(); im.src = MK_ICON(info.icono);
+    im.onload=()=>m2Iconos();
+    M2.iconos.set(v, im);
+  }
+  try{
+    const g = JSON.parse(localStorage.getItem('panel_m2') || '{}');
+    if (typeof g.cx==='number'){ M2.cx=g.cx; M2.cz=g.cz; M2.esc=g.esc||M2.esc; }
+    if (Array.isArray(g.off)) M2.apagados = new Set(g.off);
+    if (Array.isArray(g.on)) M2.forzados = new Set(g.on);
+    if (typeof g.slime==='boolean') M2.verSlime = g.slime;
+    if (typeof g.apar==='boolean') M2.verAparicion = g.apar;
+  }catch(_){}
+  m2PideHechas();
+  m2Capas(); m2Enganchar(); m2Medir(); m2Pinta(); m2PideEstructuras(); m2PideSlime();
+  // Por si hay una búsqueda de generadores en marcha, la haya pedido esta
+  // pestaña o cualquier otra: el trabajo es del servidor, no del navegador.
+  if (m2ZonaPuede()) m2ZonaVigila();
+}
+
+/* La semilla, de un clic. Es el dato que la gente quiere copiar para pegarlo en
+   Chunkbase o en un mundo nuevo, y escribir veinte cifras a mano es pedir que se
+   equivoquen en una. */
+function m2CopiarSemilla(){
+  const s = (M2.est && M2.est.semilla) || '';
+  if (!s) return;
+  const pista = $('m2-semilla-pista');
+  const bien = ()=>{ pista.textContent = '✓ copiada'; setTimeout(()=>{
+    pista.textContent = 'pulsa para copiarla'; }, 1800); };
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(s).then(bien).catch(()=>m2CopiarAPelo(s, bien));
+  } else m2CopiarAPelo(s, bien);
+}
+function m2CopiarAPelo(s, bien){
+  try{
+    const a=document.createElement('textarea'); a.value=s;
+    a.style.position='fixed'; a.style.opacity='0';
+    document.body.appendChild(a); a.select(); document.execCommand('copy');
+    a.remove(); bien();
+  }catch(_){ $('m2-semilla-pista').textContent='cópiala a mano'; }
+}
+
+function m2Guardar(){
+  try{ localStorage.setItem('panel_m2', JSON.stringify(
+    {cx:Math.round(M2.cx), cz:Math.round(M2.cz), esc:M2.esc,
+     off:[...M2.apagados], on:[...M2.forzados],
+     slime:M2.verSlime, apar:M2.verAparicion})); }catch(_){}
+}
+
+/* ---------- tamaño del lienzo ---------- */
+function m2Medir(){
+  const caja=$('m2-lienzo'); if (!caja) return;
+  const r=caja.getBoundingClientRect(), d=Math.min(2, window.devicePixelRatio||1);
+  M2.w=r.width; M2.h=r.height; M2.dpr=d;
+  for (const id of ['m2-bio','m2-ico']){
+    const c=$(id);
+    if (c.width!==Math.round(r.width*d) || c.height!==Math.round(r.height*d)){
+      c.width=Math.round(r.width*d); c.height=Math.round(r.height*d);
+    }
+  }
+}
+
+/* ---------- de mundo a pantalla y al revés ---------- */
+const m2ax = x => (x - M2.cx)*M2.esc + M2.w/2;
+const m2az = z => (z - M2.cz)*M2.esc + M2.h/2;
+const m2dex = p => (p - M2.w/2)/M2.esc + M2.cx;
+const m2dez = p => (p - M2.h/2)/M2.esc + M2.cz;
+
+/* Qué nivel de detalle toca: el más fino cuyos píxeles no haya que encoger
+   mucho. Pedir uno más fino de la cuenta multiplica por cuatro el trabajo del
+   servidor para que luego el navegador tire la mitad de los píxeles. */
+function m2Nivel(){
+  const q = 1/M2.esc, ns = M2.est.niveles;
+  let mejor = ns[0];
+  for (const b of ns) if (b <= q*1.35) mejor = b;
+  return mejor;
+}
+
+function m2Pinta(){
+  if (M2.pintando) return;
+  M2.pintando = true;
+  requestAnimationFrame(()=>{ M2.pintando=false; m2Dibuja(); m2Iconos(); });
+}
+
+/* ---------- los biomas ---------- */
+function m2Dibuja(){
+  if (!M2.listo) return;
+  const c=$('m2-bio'), g=c.getContext('2d'), TAM=M2.est.tam, d=M2.dpr;
+  g.setTransform(d,0,0,d,0,0);
+  g.imageSmoothingEnabled=false;          // que los bordes de bioma queden secos
+  g.fillStyle='#04060a'; g.fillRect(0,0,M2.w,M2.h);
+
+  const bpp=m2Nivel(), paso=TAM*bpp, lado=paso*M2.esc;
+  const t0x=Math.floor(m2dex(0)/paso), t1x=Math.floor(m2dex(M2.w)/paso);
+  const t0z=Math.floor(m2dez(0)/paso), t1z=Math.floor(m2dez(M2.h)/paso);
+  const faltan=[];
+  for (let tz=t0z; tz<=t1z; tz++) for (let tx=t0x; tx<=t1x; tx++){
+    const x=m2ax(tx*paso), y=m2az(tz*paso);
+    const im=M2.azulejos.get(bpp+'/'+tx+'/'+tz);
+    if (im instanceof Image){ g.drawImage(im, x, y, lado, lado); continue; }
+    const p=m2Padre(bpp,tx,tz);           // mientras llega, el de arriba estirado
+    if (p) g.drawImage(p.im, p.ox*TAM/p.f, p.oz*TAM/p.f, TAM/p.f, TAM/p.f, x, y, lado, lado);
+    faltan.push([tx,tz, Math.abs(x+lado/2-M2.w/2)+Math.abs(y+lado/2-M2.h/2)]);
+  }
+  faltan.sort((a,b)=>a[2]-b[2]);          // del centro hacia fuera
+  for (const [tx,tz] of faltan) m2PideAzulejo(bpp,tx,tz);
+  m2Limpiar();
+}
+
+function m2Padre(bpp,tx,tz){
+  let f=1;
+  for (const b of M2.est.niveles){
+    if (b < bpp) continue;
+    if (b > bpp) f = b/bpp;
+    const px=Math.floor(tx/f), pz=Math.floor(tz/f);
+    const im=M2.azulejos.get(b+'/'+px+'/'+pz);
+    if (im instanceof Image) return {im, f, ox:tx-px*f, oz:tz-pz*f};
+  }
+  return null;
+}
+
+function m2PideAzulejo(bpp,tx,tz){
+  const k=bpp+'/'+tx+'/'+tz, y=M2.azulejos.get(k);
+  if (y instanceof Image || y==='cargando') return;
+  if (y && y.falla && Date.now()-y.falla < 6000) return;   // no machacar al servidor
+  if (M2.pidiendo >= 4) return;
+  M2.azulejos.set(k,'cargando'); M2.pidiendo++;
+  const im=new Image();
+  im.onload =()=>{ M2.pidiendo--; M2.azulejos.set(k,im); m2Pinta(); };
+  im.onerror=()=>{ M2.pidiendo--; M2.azulejos.set(k,{falla:Date.now()}); m2Pinta(); };
+  im.src=`/api/mapa2/azulejo/${bpp}/${tx}/${tz}.png`;
+}
+
+/* La memoria no es infinita: al pasear mucho se acumulan miles de azulejos. */
+function m2Limpiar(){
+  if (M2.azulejos.size < 700) return;
+  let n=0;
+  for (const k of M2.azulejos.keys()){
+    if (n++ > 300) break;
+    if (M2.azulejos.get(k) !== 'cargando') M2.azulejos.delete(k);
+  }
+}
+
+/* ---------- los chunks de slime ---------- */
+/* Uno de cada diez chunks deja aparecer slimes bajo tierra, y cuáles depende
+   solo de la semilla. La cuenta la hace la función del propio Minecraft, así
+   que no hay nada que se pueda haber copiado mal.
+
+   Solo se dibujan de cerca: un chunk son 16 bloques, y con el mapa abierto
+   serían rayas de un píxel que no dirían nada. Por eso al encender la capa el
+   mapa se acerca solo hasta donde se ven. */
+let m2TimerSlime=null;
+/* ---------- chunks de slime: la cuenta se hace AQUÍ ----------
+   Antes se le pedían al lector de biomas por HTTP. No hacía falta y era frágil:
+   si ese servicio está apagado, o corriendo una versión compilada antes de que
+   existiera ese endpoint, la respuesta no llegaba y la capa se quedaba muda sin
+   decir nada (`if (!r.ok) return;`). Y la cuenta no necesita el generador para
+   nada: sale de la semilla y del número de chunk, y punto.
+
+   La fórmula es la del jar (WorldgenRandom.seedSlimeChunk):
+
+     semilla + (int)(x*x*4987142) + (int)(x*5947611)
+             + (long)(int)(z*z)*4392871 + (int)(z*389711)   ^ 987234911
+
+   y con eso un java.util.Random: nextInt(10) === 0.
+
+   OJO con los desbordamientos: los sumandos marcados como (int) se calculan en
+   32 bits Y SE DESBORDAN antes de ensancharse a 64. Respetarlo es la diferencia
+   entre acertar y sacar chunks plausibles pero falsos. Comprobado contra el
+   generador de verdad: 160.000 chunks, cero diferencias.
+
+   90.000 chunks tardan 12 ms, así que se calcula del tirón y no hay que pedir
+   nada a nadie. */
+const M2_M48 = (1n << 48n) - 1n, M2_MULT = 0x5DEECE66Dn, M2_ADD = 0xBn;
+const m2i32 = v => BigInt.asIntN(32, v);
+const m2i64 = v => BigInt.asIntN(64, v);
+
+function m2EsSlime(semilla, cx, cz){
+  const x = BigInt(cx), z = BigInt(cz);
+  let s = m2i64(semilla
+              + m2i32(m2i32(x * x) * 4987142n)
+              + m2i32(x * 5947611n)
+              + m2i32(z * z) * 4392871n
+              + m2i32(z * 389711n));
+  let st = (m2i64(s ^ 987234911n) ^ M2_MULT) & M2_M48;
+  for (;;){                       // nextInt(10), con el descarte de sesgo de Java
+    st = (st * M2_MULT + M2_ADD) & M2_M48;
+    const bits = Number(st >> 17n);
+    const val = bits % 10;
+    if (bits - val + 9 < 2147483648) return val === 0;
+  }
+}
+
+function m2PideSlime(){
+  clearTimeout(m2TimerSlime);
+  if (!M2.verSlime || M2.esc < M2_SLIME_DESDE){ M2.slime=null; return; }
+  m2TimerSlime = setTimeout(()=>{
+    const cx=Math.floor(m2dex(0)/16)-2, cz=Math.floor(m2dez(0)/16)-2;
+    const lado=Math.min(400, Math.max(Math.ceil(M2.w/M2.esc/16), Math.ceil(M2.h/M2.esc/16))+5);
+    const clave=cx+'/'+cz+'/'+lado;
+    if (M2.slime && M2.slime.clave===clave) return;
+    let semilla;
+    try{ semilla = BigInt((M2.est && M2.est.semilla) || '0'); }catch(_){ return; }
+    if (!semilla && semilla !== 0n) return;
+    const datos=new Uint8Array(lado*lado);
+    for (let j=0;j<lado;j++)
+      for (let i=0;i<lado;i++)
+        if (m2EsSlime(semilla, cx+i, cz+j)) datos[j*lado+i]=1;
+    M2.slime={clave, cx, cz, n:lado, datos};
+    m2Iconos();
+  }, 120);
+}
+
+function m2DibujaSlime(g){
+  const s=M2.slime;
+  if (!s || !M2.verSlime || M2.esc < M2_SLIME_DESDE) return;
+  const lado=16*M2.esc;
+  // Verde vivo con borde OSCURO. El verde sobre verde no se ve; lo que separa
+  // un chunk de slime del bosque de debajo es la retícula negra.
+  g.fillStyle='rgba(106, 240, 96, .42)';
+  g.strokeStyle='rgba(12, 40, 10, .85)';
+  g.lineWidth=1;
+  for (let j=0;j<s.n;j++){
+    const y=m2az((s.cz+j)*16);
+    if (y<-lado || y>M2.h) continue;
+    for (let i=0;i<s.n;i++){
+      if (!s.datos[j*s.n+i]) continue;
+      const x=m2ax((s.cx+i)*16);
+      if (x<-lado || x>M2.w) continue;
+      g.fillRect(x, y, lado, lado);
+      if (lado > 3) g.strokeRect(x+.5, y+.5, lado-1, lado-1);
+    }
+  }
+}
+
+/* ---------- las reglas de coordenadas ---------- */
+/* Números por el borde de arriba (X) y por el de la izquierda (Z), como en
+   Chunkbase. Sin esto el mapa es bonito y no dice dónde estás: había que mover
+   el ratón y mirar el cartel para orientarse. */
+function m2Reglas(g){
+  // una marca cada ~130 px, redondeada a 1/2/5 × potencia de diez para que los
+  // números sean de los que uno se sabe (1000, 2000, 5000) y no 1337
+  const objetivo = 130 / M2.esc;
+  const p = Math.pow(10, Math.floor(Math.log10(objetivo)));
+  const paso = [1,2,5,10].map(m=>m*p).find(v=>v>=objetivo) || p*10;
+  const fmt = v => (Math.abs(v)>=10000 ? (v/1000).toFixed(v%1000?1:0)+'k'
+                                       : String(Math.round(v)));
+  g.font='700 11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  g.textBaseline='middle';
+
+  const pinta=(txt, x, y)=>{
+    const an=g.measureText(txt).width+12;
+    g.fillStyle='rgba(10,13,17,.82)';
+    if (g.roundRect){ g.beginPath(); g.roundRect(x-an/2, y-9, an, 18, 9); g.fill(); }
+    else g.fillRect(x-an/2, y-9, an, 18);
+    g.fillStyle='#e8edf3'; g.textAlign='center'; g.fillText(txt, x, y+.5);
+  };
+
+  // Las etiquetas «X →» y «Z ↓» van en el centro de cada borde, así que se
+  // saltan los números que caerían encima: pisados no se leen ni unos ni otros.
+  const x0=m2dex(0), x1=m2dex(M2.w);
+  for (let v=Math.ceil(x0/paso)*paso; v<=x1; v+=paso){
+    const px=m2ax(v);
+    if (px>36 && px<M2.w-36 && Math.abs(px-M2.w/2)>44) pinta(fmt(v), px, 16);
+  }
+  const z0=m2dez(0), z1=m2dez(M2.h);
+  for (let v=Math.ceil(z0/paso)*paso; v<=z1; v+=paso){
+    const py=m2az(v);
+    if (py>34 && py<M2.h-14 && Math.abs(py-M2.h/2)>22) pinta(fmt(v), 40, py);
+  }
+  pinta('X →', M2.w/2, 16);
+  pinta('Z ↓', 40, M2.h/2);
+}
+
+/* ---------- los iconos ---------- */
+/* CUÁNTOS ICONOS CABEN
+   Al alejar el mapa, cada tipo por separado sigue estando "bien repartido" —y
+   sin embargo el mapa entero se convierte en una alfombra de iconos, porque son
+   veinte tipos a la vez. Lo que sobra es el TOTAL, no cada uno.
+
+   Así que hay un presupuesto de iconos por pantalla (uno cada ~41×41 px, que es
+   más o menos como se ve Chunkbase) y se reparte empezando por los que menos
+   hay: las mansiones y las ciudades antiguas entran siempre, y los naufragios,
+   que salen a miles, solo cuando ya te has acercado lo bastante. No hay ni una
+   constante por tipo: se decide con lo que de verdad hay en el trozo que se
+   está mirando. */
+function m2Presupuesto(){ return Math.max(120, Math.round(M2.w*M2.h/1700)); }
+
+function m2Decidir(){
+  if (!M2.est || !M2.areaPedida) return;
+  const enPantalla = (M2.w/M2.esc) * (M2.h/M2.esc) / M2.areaPedida;
+  for (const t of M2.est.tipos) t.enVista = Math.round((M2.cuenta[t.k]||0) * enPantalla);
+  const orden = M2.est.tipos.slice().sort((a,b)=>(a.enVista||0)-(b.enVista||0));
+  let usado = 0, tope = m2Presupuesto();
+  for (const t of orden){
+    t.cabe = (usado + (t.enVista||0)) <= tope;
+    if (t.cabe) usado += (t.enVista||0);
+  }
+}
+
+function m2SaleAhora(tipo){
+  if (M2.apagados.has(tipo.k)) return false;
+  if (M2.forzados.has(tipo.k)) return true;
+  return tipo.cabe !== false;
+}
+
+function m2Iconos(){
+  if (!M2.listo) return;
+  const c=$('m2-ico'), g=c.getContext('2d'), d=M2.dpr;
+  g.setTransform(d,0,0,d,0,0);
+  g.clearRect(0,0,M2.w,M2.h);
+  m2DibujaSlime(g);
+  const t = Math.max(14, Math.min(26, 15 + Math.log2(M2.esc*64)*2)) || 18;
+  let dibujados=0;
+  M2.enPantalla=[];
+  m2Decidir();
+  const salen=new Set(M2.est.tipos.filter(m2SaleAhora).map(t=>t.k));
+  for (const [k,x,z,sub] of M2.estructuras){
+    if (!salen.has(k)) continue;
+    const px=m2ax(x), py=m2az(z);
+    if (px<-t || py<-t || px>M2.w+t || py>M2.h+t) continue;
+    if (++dibujados > M2_MAX_ICONOS) break;
+    const hecha = M2.hechas && M2.hechas[m2Clave(k,x,z)];
+    const im=M2.iconos.get((sub && M2.variantes[sub]) ? sub : k);
+    // Lo ya visitado se apaga a medias en vez de desaparecer: sigue estando
+    // ahí, y quien quiera volver tiene que poder verlo.
+    if (hecha) g.globalAlpha = 0.38;
+    if (im && im.complete && im.naturalWidth){
+      g.drawImage(im, px-t/2, py-t/2, t, t);
+    } else {                              // sin icono, un punto: nunca un hueco
+      g.beginPath(); g.arc(px,py,t/3,0,6.284);
+      g.fillStyle='#ffd35c'; g.fill();
+      g.lineWidth=1.5; g.strokeStyle='rgba(0,0,0,.65)'; g.stroke();
+    }
+    g.globalAlpha = 1;
+    if (hecha){
+      const r=Math.max(4, t*0.30), cx=px+t/2-r*0.5, cy=py-t/2+r*0.5;
+      g.beginPath(); g.arc(cx,cy,r,0,6.284);
+      g.fillStyle='#6fd44e'; g.fill();
+      g.lineWidth=Math.max(1, r*0.28); g.strokeStyle='#0a0d11'; g.stroke();
+      g.beginPath();
+      g.moveTo(cx-r*0.45, cy); g.lineTo(cx-r*0.1, cy+r*0.4); g.lineTo(cx+r*0.5, cy-r*0.42);
+      g.lineWidth=Math.max(1.2, r*0.32); g.strokeStyle='#0a0d11';
+      g.lineCap='round'; g.lineJoin='round'; g.stroke();
+    }
+    M2.enPantalla.push([k,x,z,px,py,sub]);
+  }
+  // El punto de aparición: dónde cae la gente al entrar. No se calcula, se lee
+  // del mundo, así que es exacto aunque lo hayan movido con /setworldspawn.
+  const ap=M2.est.aparicion;
+  if (ap && M2.verAparicion){
+    const px=m2ax(ap[0]), py=m2az(ap[2]);
+    if (px>-20 && py>-20 && px<M2.w+20 && py<M2.h+20){
+      const im=M2.iconos.get('__aparicion');
+      if (im && im.complete && im.naturalWidth) g.drawImage(im, px-11, py-11, 22, 22);
+      else {
+        g.beginPath(); g.arc(px,py,7,0,6.284);
+        g.fillStyle='#ff5b5b'; g.fill();
+        g.lineWidth=2; g.strokeStyle='#fff'; g.stroke();
+      }
+      M2.enPantalla.push(['__aparicion', ap[0], ap[2], px, py]);
+    }
+  }
+  m2ZonaDibuja(g);
+  m2Reglas(g);
+  const falta = M2.recorte ? 'Acércate para ver las estructuras'
+              : (M2.verSlime && M2.esc < M2_SLIME_DESDE) ? 'Acércate para ver los chunks de slime'
+              : M2.lejosDensas ? 'Acércate para ver los tesoros y las minas'
+              : (dibujados > M2_MAX_ICONOS ? 'Hay más de los que caben, acércate' : M2.aviso);
+  const a=$('m2-aviso');
+  a.textContent = falta || '';
+  a.classList.toggle('hidden', !falta);
+}
+
+/* ---------- las estructuras del trozo que se ve ---------- */
+let m2TimerEstr=null;
+function m2PideEstructuras(){
+  clearTimeout(m2TimerEstr);
+  m2TimerEstr = setTimeout(async ()=>{
+    if (!M2.listo) return;
+    const mx=(m2dex(M2.w)-m2dex(0))*0.25, mz=(m2dez(M2.h)-m2dez(0))*0.25;
+    // Los tesoros y las minas cuestan mucho de calcular (una tirada de dado en
+    // CADA chunk), así que solo se piden si alguien tiene esa capa encendida.
+    const densas = (M2.est.tipos||[]).some(t => t.densa && !M2.apagados.has(t.k));
+    const gens = (M2.est.tipos||[]).some(t => t.delMundo && !M2.apagados.has(t.k));
+    const q = `x0=${Math.floor(m2dex(0)-mx)}&z0=${Math.floor(m2dez(0)-mz)}`
+            + `&x1=${Math.ceil(m2dex(M2.w)+mx)}&z1=${Math.ceil(m2dez(M2.h)+mz)}`
+            + (densas ? '&densas=1' : '') + (gens ? '&gens=1' : '');
+    let d=null;
+    try{ d = await api('/api/mapa2/estructuras?'+q); }catch(_){}
+    if (!d || !d.ok) return;
+    M2.recorte = !!d.demasiado;
+    M2.lejosDensas = !!d.lejos_densas;
+    M2.estructuras = (d.estructuras || []).concat(M2.fortalezas || []);
+    M2.cuenta = {};
+    for (const [k] of M2.estructuras) M2.cuenta[k]=(M2.cuenta[k]||0)+1;
+    M2.areaPedida = Math.abs((m2dex(M2.w)-m2dex(0)+2*mx) * (m2dez(M2.h)-m2dez(0)+2*mz)) || 1;
+    M2.ciclo = (M2.ciclo||0) + 1;      // sube cada vez que llegan estructuras
+    m2Decidir(); m2Capas(); m2Iconos();
+  }, 220);
+}
+
+/* ---------- las casillas de encender y apagar ---------- */
+/* Tira de iconos ↔ lista con nombres. NO se guarda a propósito: la lista es
+   para una consulta suelta y la tira es la casa. Ver m2Cargar(). */
+function m2Modo(){
+  M2.modo = (M2.modo==='tira') ? 'lista' : 'tira';
+  m2Capas();
+}
+
+function m2Capas(){
+  const w=$('m2-capas'); if (!w || !M2.est) return;
+  const modo = M2.modo==='lista' ? 'lista' : 'tira';
+  w.className = 'm2-capas ' + modo;
+  const bm=$('m2-modo');
+  if (bm){
+    bm.textContent = modo==='lista' ? '✓' : '▾';
+    bm.classList.toggle('on', modo==='lista');
+    bm.title = modo==='lista' ? 'Volver a la tira de iconos'
+                              : 'Ver los nombres de cada capa';
+  }
+  const izq = w.scrollLeft;            // no perder el sitio al repintar la tira
+  w.innerHTML='';
+  const chip=(id, activo, etq, icono, cuenta)=>{
+    const b=document.createElement('button');
+    b.className='m2-cap'+(activo?' on':''); b.id='m2cap-'+id;
+    // En la tira no hay nombre a la vista, así que el nombre sale al pasar por
+    // encima, en el mismo cartel de Minecraft que usan los objetos del
+    // inventario. Va en `data-nombre` y NO en `title`: el título del navegador
+    // tarda un segundo largo en salir y encima saldrían los dos.
+    b.dataset.nombre = etq;
+    if (cuenta!==undefined) b.dataset.pista = cuenta+' a la vista';
+    b.setAttribute('aria-label', etq);
+    if (icono){ const im=document.createElement('img'); im.src=icono; im.alt='';
+      im.onerror=()=>{ im.style.visibility='hidden'; }; b.appendChild(im); }
+    const e=document.createElement('span'); e.className='et'; e.textContent=etq;
+    b.appendChild(e);
+    if (cuenta!==undefined){ const c=document.createElement('span'); c.className='n';
+      c.textContent=cuenta; b.appendChild(c); }
+    return b;
+  };
+
+  // El punto de aparición y los slimes no son estructuras: van delante, y al
+  // encenderlos LLEVAN EL MAPA a donde se ven. Encender una capa y que no pase
+  // nada visible es lo que hacía pensar que estaba rota.
+  if (M2.est.aparicion){
+    const b=chip('aparicion', M2.verAparicion, 'Punto de aparición', MK_ICON('spawn'));
+    b.dataset.pista='Te lleva al punto de aparición del mundo';
+    b.onclick=()=>{
+      M2.verAparicion=!M2.verAparicion;
+      if (M2.verAparicion) m2Volar(M2.est.aparicion[0], M2.est.aparicion[2]);
+      m2Guardar(); m2Capas(); m2Iconos();
+    };
+    w.appendChild(b);
+  }
+  {
+    const b=chip('slime', M2.verSlime, 'Chunks de slime', MK_ICON('slime'));
+    b.dataset.pista='Un chunk de cada diez. Al encenderlo el mapa se acerca';
+    b.onclick=()=>{
+      M2.verSlime=!M2.verSlime;
+      // Acercar SIEMPRE que se esté más lejos de lo cómodo. Antes solo saltaba
+      // por debajo del mínimo, y el mínimo coincidía con la escala de entrada.
+      if (M2.verSlime && M2.esc < M2_SLIME_ZOOM) m2Volar(M2.cx, M2.cz, M2_SLIME_ZOOM);
+      m2Guardar(); m2Capas(); m2PideSlime(); m2Iconos();
+    };
+    w.appendChild(b);
+  }
+  for (const t of M2.est.tipos){
+    const n=M2.cuenta[t.k]||0;
+    const b=chip(t.k, m2SaleAhora(t), t.es, MK_ICON(t.icono), n);
+    b.onclick=()=>{
+      // A las densas NO se las fuerza aunque el zoom diga que no caben: hay una
+      // mina cada 250 chunks y un tesoro cada 100, así que forzarlas de lejos
+      // tapa el mapa entero con el mismo icono repetido. Se encienden igual,
+      // pero solo se dibujan cuando de verdad caben, y el cartel de abajo dice
+      // que hay que acercarse.
+      if (M2.apagados.has(t.k)){ M2.apagados.delete(t.k); if (!t.densa) M2.forzados.add(t.k); }
+      else if (!m2SaleAhora(t)){ if (!t.densa) M2.forzados.add(t.k); }
+      else { M2.apagados.add(t.k); M2.forzados.delete(t.k); }
+      // Tesoros y minas no vienen si nadie los pide: al encender una de esas
+      // capas hay que volver a preguntar, o la casilla se enciende y no aparece
+      // nada — que es exactamente lo que hacía pensar que estaba rota.
+      m2Guardar(); m2Capas(); if (t.densa || t.delMundo) m2PideEstructuras(); m2Iconos();
+    };
+    w.appendChild(b);
+  }
+  w.scrollLeft = izq;
+  m2ZonaVer();
+}
+
+/* Marcar o desmarcar todas las capas de golpe. Al marcar todo se fuerzan
+   también las que el zoom esconde: si alguien pulsa «marcar todo», quiere
+   verlas, no que el mapa decida por él. */
+function m2Todas(encender){
+  if (!M2.est) return;
+  M2.apagados.clear(); M2.forzados.clear();
+  for (const t of M2.est.tipos){
+    if (encender){ if (!t.densa) M2.forzados.add(t.k); }
+    else M2.apagados.add(t.k);
+  }
+  M2.verSlime = !!encender;
+  M2.verAparicion = encender;
+  m2Guardar(); m2Capas(); m2PideSlime(); m2PideEstructuras(); m2Iconos();
+}
+
+/* ---------- «buscar generadores en esta zona» ----------
+   Un generador no se puede adivinar desde la semilla. El sorteo sí es
+   determinista, pero la sala solo se coloca si justo ahí había una cueva, y eso
+   depende del terreno ya excavado: sin simular las cuevas salen 531 puntos
+   falsos por cada dungeon de verdad, medido en 1024 chunks de esta misma
+   semilla. Chunkbase lo resuelve reimplementando el generador entero en
+   JavaScript, y por eso su propia página avisa de que sus dungeons pueden estar
+   mal o faltar: es una copia del generador, no el generador.
+
+   Aquí hay algo que Chunkbase no tiene: el Minecraft de verdad, encendido. Se le
+   pide que genere el cuadro, se guarda y se lee. No es una predicción, es el
+   mundo. El precio es que tarda y que mientras tanto el servidor va más lento,
+   así que esto no es una capa que se mueva contigo: es un botón que se pulsa. */
+const M2_ZONA_LADO = 32;              // 32x32 chunks = 512x512 bloques
+let m2ZonaTimer = null;
+
+function m2ZonaPuede(){ return !!(ME && (ME.role==='admin' || ME.role==='mod')); }
+
+/* El cuadro que se va a generar: lo que se ve, recortado por el centro a lo que
+   el servidor acepta de una tacada. Se calcula también aquí, además de en el
+   servidor, para poder DIBUJARLO antes de pulsar: nadie debería encargar dos
+   minutos de trabajo sin ver antes qué trozo toca. */
+function m2ZonaCaja(){
+  const alCentro=(a,b)=>{
+    if (b-a+1 <= M2_ZONA_LADO) return [a,b];
+    const i = Math.floor((a+b)/2) - (M2_ZONA_LADO>>1);
+    return [i, i+M2_ZONA_LADO-1];
+  };
+  const [cx0,cx1] = alCentro(Math.floor(m2dex(0)/16), Math.floor(m2dex(M2.w)/16));
+  const [cz0,cz1] = alCentro(Math.floor(m2dez(0)/16), Math.floor(m2dez(M2.h)/16));
+  return {x0:cx0*16, z0:cz0*16, x1:cx1*16+15, z1:cz1*16+15,
+          chunks:(cx1-cx0+1)*(cz1-cz0+1)};
+}
+
+/* El cartel solo sale si sirve de algo: sin permiso el botón daría 403, y con la
+   capa de generadores apagada el trabajo acabaría sin que se viera nada. */
+function m2ZonaVer(){
+  const z=$('m2-zona'); if (!z) return;
+  const hay = !!(M2.est && (M2.est.tipos||[]).some(t=>t.k==='spawner'));
+  z.classList.toggle('ver', hay && m2ZonaPuede() && !M2.apagados.has('spawner'));
+}
+
+function m2ZonaPrevia(si){
+  if (!m2ZonaPuede() || !M2.listo) return;
+  M2.zonaPrevia = si ? m2ZonaCaja() : null;
+  m2Iconos();
+}
+
+/* El cuadro, encima del mapa. Dibujarlo contesta sin palabras a «¿qué trozo ha
+   mirado?»: ese, el de la raya. Amarillo mientras trabaja, verde cuando acabó. */
+function m2ZonaDibuja(g){
+  const c = M2.zonaPrevia
+        || ((M2.zonaEstado && M2.zonaEstado!=='quieto') ? M2.zonaCaja : null);
+  if (!c) return;
+  const trabajando = M2.zonaEstado==='generando' || M2.zonaEstado==='leyendo';
+  const x=m2ax(c.x0), y=m2az(c.z0),
+        w=(c.x1-c.x0+1)*M2.esc, h=(c.z1-c.z0+1)*M2.esc;
+  g.save();
+  g.lineWidth = 2;
+  g.setLineDash(M2.zonaPrevia ? [4,4] : trabajando ? [9,6] : [6,4]);
+  g.strokeStyle = M2.zonaEstado==='error' ? '#ff8b8b'
+                : (trabajando || M2.zonaPrevia || M2.zonaCojo) ? '#ffd35c' : '#6fd44e';
+  g.strokeRect(x, y, w, h);
+  g.restore();
+}
+
+function m2ZonaDi(txt, mal){
+  const p=$('m2-zona-p'); if (!p) return;
+  p.textContent = txt || '';
+  p.classList.toggle('mal', !!mal);
+}
+
+async function m2Zona(){
+  if (!M2.listo) return;
+  const c = m2ZonaCaja(), b = $('m2-zona-btn');
+  b.disabled = true;
+  M2.zonaCaja = c; M2.zonaEstado = 'generando'; M2.zonaPrevia = null;
+  m2ZonaDi('encargándoselo al servidor…');
+  m2Iconos();
+  let d=null;
+  try{ d = await api('/api/mapa2/zona', {x0:c.x0, z0:c.z0, x1:c.x1, z1:c.z1}); }catch(_){}
+  if (!d || !d.ok){
+    b.disabled = false;
+    M2.zonaEstado = 'quieto';
+    m2ZonaDi((d && d.error) || 'No pude arrancar la búsqueda', true);
+    m2Iconos();
+    return;
+  }
+  if (Array.isArray(d.caja)) M2.zonaCaja = {x0:d.caja[0], z0:d.caja[1], x1:d.caja[2], z1:d.caja[3]};
+  // Encender la capa: si acaba y está apagada, el trabajo termina y no se ve
+  // nada, que es la peor forma de que algo parezca roto.
+  M2.apagados.delete('spawner'); M2.forzados.add('spawner');
+  m2Guardar(); m2Capas();
+  m2ZonaVigila();
+}
+
+/* Se pregunta cada pocos segundos y se para sola al terminar. El trabajo vive en
+   el servidor, no en esta pestaña: si alguien recarga o entra desde otro sitio,
+   al abrir el mapa se engancha al que ya hay en marcha. */
+function m2ZonaVigila(){
+  clearTimeout(m2ZonaTimer);
+  const mirar = async ()=>{
+    let d=null;
+    try{ d = await api('/api/mapa2/zona'); }catch(_){}
+    if (!d || !d.ok) return;
+    m2ZonaPinta(d);
+    if (d.estado==='generando' || d.estado==='leyendo')
+      m2ZonaTimer = setTimeout(mirar, 2500);
+  };
+  mirar();
+}
+
+/* Volver a pedir las estructuras UNA vez por búsqueda, no en cada vuelta del
+   reloj: la respuesta de «listo» se repite mientras la pestaña siga abierta. */
+function m2ZonaRefresca(d){
+  if (m2ZonaRefresca._ultima === d.t) return;
+  m2ZonaRefresca._ultima = d.t;
+  m2PideEstructuras();
+}
+
+function m2ZonaPinta(d){
+  const b=$('m2-zona-btn'), barra=$('m2-zona-barra'), i=$('m2-zona-i');
+  if (!b) return;
+  const trabajando = (d.estado==='generando' || d.estado==='leyendo');
+  // Un resultado de hace media hora no es noticia: se calla y se borra el cuadro
+  // en vez de saludar con el recuento de una búsqueda que ya nadie recuerda.
+  const viejo = !trabajando && d.t && (Date.now()/1000 - d.t > 900);
+  b.disabled = trabajando;
+  barra.classList.toggle('hidden', !trabajando);
+  if (Array.isArray(d.caja)) M2.zonaCaja = {x0:d.caja[0], z0:d.caja[1], x1:d.caja[2], z1:d.caja[3]};
+  M2.zonaEstado = viejo ? 'quieto' : d.estado;
+  M2.zonaCojo = false;
+
+  if (viejo || d.estado==='quieto'){
+    m2ZonaDi('');
+  } else if (d.estado==='generando'){
+    i.style.width = (d.total ? Math.round(d.hechos*100/d.total) : 0) + '%';
+    m2ZonaDi('generando el terreno, ' + (d.hechos||0) + ' de ' + (d.total||0) + ' chunks');
+  } else if (d.estado==='leyendo'){
+    i.style.width = '100%';
+    m2ZonaDi('leyendo lo que ha salido…');
+  } else if (d.estado==='error'){
+    // Aunque algo se torciera, lo que se generó antes del tropiezo es de verdad
+    // y ya está escaneado: se dice, y se pintan. Un error no tiene por qué
+    // significar que no haya salido nada.
+    const tambien = (typeof d.hallados === 'number' && d.hallados > 0)
+      ? '. Aun así encontré ' + d.hallados + (d.hallados===1 ? ' generador' : ' generadores')
+      : '';
+    m2ZonaDi((d.mensaje || 'algo ha fallado') + tambien, true);
+    m2ZonaRefresca(d);
+  } else if (d.estado==='listo'){
+    const n = d.hallados;
+    // Si el servidor no llegó a generarlo todo hay que decirlo: un «listo, 3
+    // generadores» sobre medio cuadro es una respuesta falsa con buena cara.
+    const cojo = (d.total && d.hechos < d.total)
+      ? ', pero solo pude generar ' + d.hechos + ' de ' + d.total + ' chunks' : '';
+    M2.zonaCojo = !!cojo;
+    m2ZonaDi((n===0 ? 'listo, en este cuadro no hay ninguno'
+            : n===1 ? 'listo, 1 generador en este cuadro'
+            : n>1   ? ('listo, ' + n + ' generadores en este cuadro')
+            : 'listo') + cojo, !!cojo);
+    m2ZonaRefresca(d);
+  }
+  m2Iconos();
+}
+
+/* ---------- moverse ---------- */
+function m2Volar(x, z, esc){
+  M2.cx=x; M2.cz=z;
+  if (esc) M2.esc=Math.max(1/512, Math.min(1, esc));
+  m2Pinta(); m2Guardar(); m2PideEstructuras(); m2PideSlime(); m2Capas();
+}
+
+function m2Ir(){
+  const x=parseInt(($('m2-x').value||'').replace(/[^\d-]/g,''), 10);
+  const z=parseInt(($('m2-z').value||'').replace(/[^\d-]/g,''), 10);
+  if (isNaN(x) || isNaN(z)) return;
+  m2Volar(x, z, M2.esc < 1/32 ? 1/16 : M2.esc);
+}
+
+/* Al acercar o alejar, el punto bajo el cursor se queda quieto: es lo que hace
+   que el zoom se sienta como agarrar el mapa y no como saltar de sitio. */
+function m2Escalar(f, px, pz){
+  const antes=M2.esc;
+  M2.esc = Math.max(1/512, Math.min(1, M2.esc*f));
+  if (M2.esc===antes) return;
+  const wx=(px-M2.w/2)/antes + M2.cx, wz=(pz-M2.h/2)/antes + M2.cz;
+  M2.cx = wx - (px-M2.w/2)/M2.esc;
+  M2.cz = wz - (pz-M2.h/2)/M2.esc;
+  m2Pinta(); m2Guardar(); m2PideEstructuras(); m2PideSlime(); m2Capas();
+}
+function m2Zoom(f){ m2Escalar(f, M2.w/2, M2.h/2); }
+
+/* ---------- ratón, dedo y rueda ---------- */
+function m2Enganchar(){
+  const caja=$('m2-lienzo');
+  if (caja.dataset.listo) return;
+  caja.dataset.listo='1';
+  const punteros=new Map();
+  let arrastrando=false, movido=0, pinza=0;
+
+  caja.addEventListener('pointerdown', ev=>{
+    if (ev.target.closest('.m2-zoom')) return;
+    caja.setPointerCapture(ev.pointerId);
+    punteros.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+    arrastrando=true; movido=0; caja.classList.add('arrastrando');
+    $('m2-globo').classList.add('hidden');
+  });
+
+  caja.addEventListener('pointermove', ev=>{
+    const r=caja.getBoundingClientRect();
+    if (!arrastrando){ m2Mirar(ev.clientX-r.left, ev.clientY-r.top); return; }
+    const p=punteros.get(ev.pointerId); if (!p) return;
+    const dx=ev.clientX-p.x, dy=ev.clientY-p.y;
+    p.x=ev.clientX; p.y=ev.clientY;
+    if (punteros.size>=2){
+      const [a,b]=[...punteros.values()];
+      const dist=Math.hypot(a.x-b.x,a.y-b.y);
+      if (pinza) m2Escalar(dist/pinza, (a.x+b.x)/2-r.left, (a.y+b.y)/2-r.top);
+      pinza=dist;
+    } else {
+      M2.cx -= dx/M2.esc; M2.cz -= dy/M2.esc;
+      movido += Math.abs(dx)+Math.abs(dy);
+      m2Pinta();
+    }
+  });
+
+  const soltar = ev=>{
+    punteros.delete(ev.pointerId);
+    if (punteros.size<2) pinza=0;
+    if (punteros.size===0){
+      arrastrando=false; caja.classList.remove('arrastrando');
+      m2Guardar(); m2PideEstructuras(); m2PideSlime();
+      if (movido < 5){
+        const r=caja.getBoundingClientRect();
+        m2Clic(ev.clientX-r.left, ev.clientY-r.top);
+      }
+    }
+  };
+  caja.addEventListener('pointerup', soltar);
+  caja.addEventListener('pointercancel', soltar);
+
+  caja.addEventListener('wheel', ev=>{
+    ev.preventDefault();
+    const r=caja.getBoundingClientRect();
+    m2Escalar(Math.pow(1.0015, -ev.deltaY), ev.clientX-r.left, ev.clientY-r.top);
+  }, {passive:false});
+
+  caja.addEventListener('dblclick', ev=>{
+    const r=caja.getBoundingClientRect();
+    m2Escalar(2, ev.clientX-r.left, ev.clientY-r.top);
+  });
+
+  addEventListener('resize', ()=>{ m2Medir(); m2Pinta(); });
+}
+
+/* ---------- decir qué hay debajo del ratón ---------- */
+/* El nombre del bioma sale de LEER EL COLOR del píxel ya dibujado y buscarlo en
+   la leyenda: cada bioma tiene un color distinto, así que es exacto y no cuesta
+   ni una petición.
+   Pero si ese trozo aún no ha llegado, debajo hay fondo y no hay color que
+   buscar — y ahí es donde antes se quedaba sin nombre. En ese caso se le
+   pregunta al servidor, con un respiro para no ahogarlo mientras se mueve el
+   ratón. Así SIEMPRE sale el bioma. */
+let m2TimerBioma=null, m2UltimoBioma='';
+function m2Mirar(px,py){
+  const x=Math.floor(m2dex(px)), z=Math.floor(m2dez(py));
+  let nombre='';
+  try{
+    const g=$('m2-bio').getContext('2d', {willReadFrequently:true});
+    const d=g.getImageData(Math.round(px*M2.dpr), Math.round(py*M2.dpr), 1, 1).data;
+    const b=M2.porColor.get((d[0]<<16)|(d[1]<<8)|d[2]);
+    if (b) nombre = LANG==='en' ? b.en : b.es;
+  }catch(_){}
+  if (nombre){
+    m2UltimoBioma = nombre;
+    clearTimeout(m2TimerBioma);
+  } else {
+    nombre = m2UltimoBioma;                 // lo último que se supo, no un hueco
+    clearTimeout(m2TimerBioma);
+    m2TimerBioma = setTimeout(()=>m2PreguntaBioma(x, z), 160);
+  }
+  $('m2-donde').innerHTML = `<b>X ${x}</b> &nbsp; <b>Z ${z}</b>`
+    + (nombre ? ' &nbsp;·&nbsp; '+esc(nombre) : '');
+}
+
+async function m2PreguntaBioma(x, z){
+  try{
+    const d = await api(`/api/mapa2/bioma?x=${x}&z=${z}`);
+    if (!d || !d.ok) return;
+    m2UltimoBioma = LANG==='en' ? d.en : d.es;
+    $('m2-donde').innerHTML = `<b>X ${x}</b> &nbsp; <b>Z ${z}</b> &nbsp;·&nbsp; `
+      + esc(m2UltimoBioma);
+  }catch(_){}
+}
+
+/* ---------- «ya fui aquí»: una marca por sitio, compartida ---------- */
+/* La clave es el SITIO (tipo + coordenadas), no un identificador: las
+   estructuras se calculan de la semilla y no tienen uno propio. Mismo sitio,
+   misma marca, para todos. */
+function m2Clave(k,x,z){ return k+':'+x+':'+z; }
+
+async function m2PideHechas(){
+  try{
+    const d = await api('/api/mapa2/hechas');
+    if (d && d.ok) M2.hechas = d.hechas || {};
+  }catch(_){ }
+  m2Iconos();
+}
+
+async function m2Marcar(k,x,z,quiero){
+  const clave=m2Clave(k,x,z);
+  const antes = M2.hechas[clave];
+  // se pinta ya y se corrige si el server dice que no: esperar medio segundo a
+  // que vuelva la respuesta hace que la casilla parezca que no responde
+  if (quiero) M2.hechas[clave]={por:(ME&&ME.name)||'?', t:Math.floor(Date.now()/1000)};
+  else delete M2.hechas[clave];
+  m2Iconos();
+  let d=null;
+  try{ d = await api('/api/mapa2/hecha', {k, x, z, hecha:quiero}); }catch(_){}
+  if (!d || !d.ok){
+    if (antes) M2.hechas[clave]=antes; else delete M2.hechas[clave];
+    toast((d&&d.error) || 'No se pudo guardar la marca');
+  } else if (d.marca) M2.hechas[clave]=d.marca;
+  m2Iconos();
+  if (!$('m2-globo').classList.contains('hidden')){
+    const e=(M2.enPantalla||[]).find(s=>s[0]===k && s[1]===x && s[2]===z);
+    m2Globo(k,x,z, e && e[5]);
+  }
+}
+
+function m2Globo(k,x,z,sub){
+  const globo=$('m2-globo');
+  // El nombre de la variante manda: «Aldea nevada» dice más que «Aldea», y en
+  // un generador saber si son zombis o arañas de cueva es TODO lo que importa.
+  const v = sub && M2.variantes[sub];
+  const t = v ? v
+          : (k==='__aparicion') ? {es:'Punto de aparición', en:'World spawn'}
+          : (M2.est.tipos.find(t=>t.k===k) || {es:k,en:k});
+  let html = `<b>${esc(LANG==='en'?t.en:t.es)}</b><span class="c">X ${x}&nbsp;&nbsp;Z ${z}</span>`;
+  if (k!=='__aparicion'){
+    const m = M2.hechas[m2Clave(k,x,z)];
+    html += `<label class="m2-hecha${m?' si':''}">
+        <input type="checkbox" ${m?'checked':''}
+               onchange="m2Marcar('${esc(k)}',${x},${z},this.checked)">
+        <span>${m ? 'Ya fue alguien' : '¿Ya fuiste? márcalo'}</span></label>`
+      + (m ? `<span class="quien">${esc(m.por||'?')}${m.t?' · '+new Date(m.t*1000).toLocaleDateString():''}</span>` : '');
+  }
+  globo.innerHTML = html;
+}
+
+/* El globo sale ENCIMA del icono, y en un icono pegado al borde de arriba se
+   salía del mapa: media tarjeta cortada y la casilla sin poder pulsarse. Si no
+   cabe arriba, se pone debajo; y a los lados se mete para dentro. */
+function m2ColocaGlobo(ix, iy){
+  const g=$('m2-globo');
+  g.style.transform='translate(-50%,-100%)'; g.style.marginTop='-12px';
+  const r=g.getBoundingClientRect(), caja=$('m2-lienzo').getBoundingClientRect();
+  if (r.top < caja.top + 4){
+    g.style.transform='translate(-50%,0)'; g.style.marginTop='14px';
+  }
+  const r2=g.getBoundingClientRect();
+  let x=ix;
+  if (r2.left < caja.left + 6) x += (caja.left + 6) - r2.left;
+  if (r2.right > caja.right - 6) x -= r2.right - (caja.right - 6);
+  g.style.left=x+'px';
+}
+
+function m2Clic(px,py){
+  const globo=$('m2-globo');
+  for (const [k,x,z,ix,iy,sub] of (M2.enPantalla||[])){
+    if (Math.abs(ix-px)<13 && Math.abs(iy-py)<13){
+      m2Globo(k,x,z,sub);
+      globo.style.left=ix+'px'; globo.style.top=iy+'px';
+      globo.classList.remove('hidden');
+      m2ColocaGlobo(ix, iy);
+      return;
+    }
+  }
+  globo.classList.add('hidden');
+  m2Mirar(px,py);
+}
+
 /* ---------- usuarios ---------- */
 const PERM_LABELS={view_dashboard:'Ver el inicio', view_players:'Ver jugadores y estadísticas', view_console:'Ver la consola en vivo',
   whitelist:'Aceptar / quitar jugadores (whitelist)', ban:'Banear y desbanear', kick:'Expulsar jugadores',
   restart:'Reiniciar el servidor', backups:'Ver y hacer copias', say:'Enviar anuncios', player_actions:'Curar / alimentar / matar jugadores',
   memories:'Ver y subir fotos a Memorias', memories_upload:'Subir fotos a Memorias',
-  markers_add:'Marcar lugares en el mapa'};
+  markers_add:'Marcar lugares en el mapa',
+  mapa_semilla:'Explorar el mundo entero (destripa dónde está todo)'};
 async function loadUsers(){
   const r=await api('/api/users');
   const wrap=$('users-list'); wrap.innerHTML='';
@@ -2897,13 +4115,13 @@ async function createUser(){
   const name=$('nu-name').value.trim(), pass=$('nu-pass').value, role=$('nu-role').value;
   const r=await api('/api/users/create',{name, password:pass, role});
   if (r.error){ toast(r.error); return; }
-  toast(`Cuenta "${name}" creada — pásale la contraseña temporal`);
+  toast(`Cuenta "${name}" creada, pásale la contraseña temporal`);
   $('nu-name').value=''; $('nu-pass').value=''; loadUsers();
 }
 async function resetPw(name){
   const p=prompt(`Nueva contraseña temporal para ${name} (8+):`); if(!p) return;
   const r=await api('/api/users/update',{name, password:p});
-  toast(r.error||'Contraseña restablecida — deberá cambiarla al entrar');
+  toast(r.error||'Contraseña restablecida, deberá cambiarla al entrar');
 }
 async function delUser(name){
   if(!confirm(`¿Eliminar la cuenta del panel "${name}"?`)) return;
@@ -3154,11 +4372,11 @@ async function loadSistema(){
   $('sys-log').textContent = (r.log||[]).join('\n') || 'Nada todavía';
   const w=$('sys-2fa');
   if (r.totp_on){
-    w.innerHTML=`<div class="note" style="margin-top:0">✅ Activo — tu login pide código de la app.</div>
+    w.innerHTML=`<div class="note" style="margin-top:0">✅ Activo, tu login pide código de la app.</div>
       <div class="formrow" style="margin-top:10px"><input id="f2a-off-code" placeholder="Código actual" maxlength="6">
       <button class="btn small danger" onclick="sys2faOff()">Desactivar</button></div>`;
   } else if (!window._2faSetup){
-    w.innerHTML=`<div class="note" style="margin-top:0">Tu cuenta es la llave maestra del server — actívalo.</div>
+    w.innerHTML=`<div class="note" style="margin-top:0">Tu cuenta es la llave maestra del server, actívalo.</div>
       <button class="btn small" style="margin-top:10px" onclick="sys2faStart()">Activar 2FA</button>`;
   }
 }
@@ -3180,7 +4398,7 @@ function sysAuto(lista){
     // ha roto justo cuando todo va bien
     const col = a.pausa ? 'var(--warn)' : (a.ok ? 'var(--good)' : 'var(--crit)');
     const cnota = a.pausa ? 'var(--ink3)' : 'var(--crit)';
-    const nota = a.nota ? ` — <span style="color:${cnota}">${esc(a.nota)}</span>` : '';
+    const nota = a.nota ? `, <span style="color:${cnota}">${esc(a.nota)}</span>` : '';
     return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0">
       <span class="dot" style="background:${col};margin:0"></span>
       <span style="flex:1;min-width:0">${esc(a.nombre)}</span>
@@ -3261,6 +4479,20 @@ async function changePw(){
 (function(){
   const tip=$('mctip');
   document.addEventListener('mouseover', e=>{
+    // Las capas del mapa usan el mismo cartel que los objetos del inventario,
+    // pero con texto llano: en la tira son veinte cuadraditos sin nombre y hay
+    // que poder saber cuál es cuál sin encenderlos uno a uno.
+    const cap = e.target.closest ? e.target.closest('.m2-cap[data-nombre]') : null;
+    // En una pantalla táctil `mouseover` salta al TOCAR, y el cartel aparecería
+    // en el sitio donde estuvo el ratón por última vez, o sea en ninguno. Ahí
+    // los nombres se ven con el botón de la lista.
+    if (cap && matchMedia('(hover:hover)').matches){
+      tip.innerHTML = '<div>' + esc(cap.dataset.nombre) + '</div>'
+        + (cap.dataset.pista ? '<div style="color:#a9b2ba; font-size:11px">'
+                               + esc(cap.dataset.pista) + '</div>' : '');
+      tip.style.display='block';
+      return;
+    }
     const s = e.target.closest ? e.target.closest('.slot.has') : null;
     if (!s || !s.dataset.tip){ tip.style.display='none'; return; }
     let lines=[];
@@ -3284,7 +4516,8 @@ async function changePw(){
     }
   });
   document.addEventListener('mouseout', e=>{
-    if (e.target.closest && e.target.closest('.slot.has')) tip.style.display='none';
+    if (e.target.closest && (e.target.closest('.slot.has') || e.target.closest('.m2-cap')))
+      tip.style.display='none';
   });
 })();
 
@@ -3437,7 +4670,7 @@ function coordTxt(p){
   const dim=DIM_NOM[p.dim]||p.dim||'';
   return `<b>${Math.round(p.x)}</b> <b>${Math.round(p.y)}</b> <b>${Math.round(p.z)}</b>`+
          `<span class="hi-sub"> · ${esc(dim)}${b?' · '+esc(b):''}</span>`+
-         (p.lejano?`<div class="efpel" style="font-size:.8rem">⚠ Esto está a millones de bloques — es un dato corrupto del mundo viejo, no un sitio real. Mandarlo ahí genera terreno basura.</div>`:'');
+         (p.lejano?`<div class="efpel" style="font-size:.8rem">⚠ Esto está a millones de bloques, es un dato corrupto del mundo viejo, no un sitio real. Mandarlo ahí genera terreno basura.</div>`:'');
 }
 
 async function pvCargarPos(uuid){
@@ -3454,7 +4687,7 @@ async function pvCargarPos(uuid){
   html += `<div class="hi-sub" style="margin-top:2px">${viva
       ? 'en vivo, preguntado al servidor'
       : (r.online ? 'no pude preguntarle al servidor; esto es del archivo'
-                  : 'está desconectado — última posición guardada')}</div>`;
+                  : 'está desconectado, última posición guardada')}</div>`;
   if (r.muerte)
     html += `<div class="posgrid" style="margin-top:10px"><div><span class="k">Última muerte</span>${coordTxt(r.muerte)}</div></div>`;
   else
@@ -3500,7 +4733,7 @@ function efPintaSelector(cont, conInterruptor){
       aviso.textContent='⚠ Este hace daño. A nivel alto puede matarlo al instante.';
     } else if (e.tipo==='desconocido'){
       aviso.className='note ef-aviso efdesc';
-      aviso.textContent='No sé si este efecto hace daño — es nuevo o no lo tengo clasificado. Pruébalo con cuidado.';
+      aviso.textContent='No sé si este efecto hace daño, es nuevo o no lo tengo clasificado. Pruébalo con cuidado.';
     } else { aviso.className='note ef-aviso'; aviso.textContent=''; }
   };
   sel.onchange=revisar; revisar();
@@ -3676,6 +4909,7 @@ async function loadMarkers(){
   if (!MK_CAN) return;
   MK_DEL = !!(ME && (ME.role==='admin' || ME.role==='mod'));
   $('mk-scan-row').classList.toggle('hidden', !MK_DEL);
+  if (MK_DEL) mkEstadoIconos();
   mkPickPinta();
   const r=await api('/api/markers').catch(()=>null);
   renderMarkers((r&&r.markers)||[]);
@@ -3704,7 +4938,7 @@ async function mkAdd(){
            z:$('mk-z').value.trim(), icon:MK_SEL, dim:$('mk-dim').value};
   if(!b.name || b.x===''|| b.z===''){ toast('Falta el nombre o las coordenadas'); return; }
   const r=await api('/api/markers/add', b).catch(()=>null);
-  if(r&&r.ok){ toast('Marcador añadido 📍 — aparece en el mapa tras actualizarlo');
+  if(r&&r.ok){ toast('Marcador añadido 📍, aparece en el mapa tras actualizarlo');
     $('mk-name').value=''; $('mk-x').value=''; $('mk-z').value='';
     renderMarkers(r.markers);
   } else toast((r&&r.error)||'No se pudo añadir');
@@ -3712,6 +4946,38 @@ async function mkAdd(){
 async function mkMarcadores(){
   const r=await api('/api/system/map_markers',{}).catch(()=>null);
   toast((r&&r.output)||'No se pudo arrancar');
+  if(r&&r.ok){ mkEstado('Publicando…'); setTimeout(mkEstadoIconos, 6000);
+               setTimeout(mkEstadoIconos, 20000); setTimeout(mkEstadoIconos, 60000); }
+}
+
+/* Qué hay publicado AHORA MISMO sobre el mapa 3D.
+   BlueMap reescribe entero el markers.json de cada dimensión en cada
+   publicación, así que ese fichero es exactamente lo que ve el navegador.
+   Enseñarlo aquí evita el agujero de antes: el bloque se generaba vacío, se
+   comprobaba que salía vacío, y aun así los iconos seguían en el mapa sin
+   forma de saber en qué paso se rompía la cadena. */
+function mkEstado(html){ const e=$('mk-estado'); if(e) e.innerHTML=html; }
+async function mkEstadoIconos(){
+  if(!$('mk-estado') || !MK_DEL) return;
+  const r=await api('/api/system/map_icons_state').catch(()=>null);   // sin cuerpo = GET
+  if(!r||!r.ok){ mkEstado(''); return; }
+  if(r.error){ mkEstado(`<b style="color:var(--crit)">⚠ ${esc(r.error)}</b>`); return; }
+  const filas=(r.mapas||[]).map(m=>{
+    const cs=(m.conjuntos||[]);
+    const qué = m.estado ? esc(m.estado)
+      : (cs.length ? cs.map(c=>`${esc(c.id)} (${c.n})`).join(', ') : 'sin iconos');
+    const cuando = m.cuando ? ' · '+new Date(m.cuando*1000).toLocaleString() : '';
+    return `<div><b>${esc(m.mapa)}</b>: ${qué}${cuando}</div>`;
+  }).join('');
+  // Cuando todo está bien no se dice nada: el sitio es para avisar, no para
+  // felicitarse. Solo aparece si de verdad hay algo que arreglar.
+  let cabeza='';
+  if ((r.sobran||[]).length)
+    cabeza=`<b style="color:var(--warn)">⚠ Sobre el mapa 3D todavía hay iconos que no son lugares: ${esc(r.sobran.join('; '))}. Pulsa «Actualizar los iconos».</b>`;
+  if (r.enlace_ok===false)
+    cabeza+=`${cabeza?'<br>':''}<b style="color:var(--crit)">⚠ ~/bluemap/web ya no es un enlace a lo que sirve la web (${esc(r.enlace||'?')}): lo que escriba BlueMap no se verá.</b>`;
+  if (!cabeza){ mkEstado(''); return; }
+  mkEstado(cabeza+'<div style="margin-top:6px; opacity:.8">'+filas+'</div>');
 }
 async function mkScan(){
   if(!confirm('Vuelve a dibujar el mapa entero. Tarda más de una hora (con prioridad baja, sin molestar al server).\n\nSi solo faltan los ICONOS de las estructuras, usa el otro botón: tarda segundos.\n\n¿Seguir igualmente?')) return;

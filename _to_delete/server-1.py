@@ -38,7 +38,7 @@ DEFAULT_PERMS = {
 }
 ALL_PERMS = ["view_dashboard", "view_players", "view_console", "whitelist",
              "ban", "kick", "restart", "backups", "say", "player_actions",
-             "memories", "memories_upload", "markers_add"]
+             "memories", "memories_upload", "markers_add", "mapa_semilla"]
 DEFAULT_PERMS["mod"]["player_actions"] = True
 DEFAULT_PERMS["viewer"]["player_actions"] = False
 DEFAULT_PERMS["mod"]["memories"] = True         # ver memorias
@@ -47,11 +47,17 @@ DEFAULT_PERMS["viewer"]["memories"] = True
 DEFAULT_PERMS["viewer"]["memories_upload"] = False
 DEFAULT_PERMS["mod"]["markers_add"] = True      # poner lugares en el mapa
 DEFAULT_PERMS["viewer"]["markers_add"] = True
+# El mapa del mundo entero enseña TODAS las estructuras, también las de sitios
+# donde nadie ha estado. Arrancó apagado por si acaso —destripa la exploración—
+# pero Juan decidió que lo vea todo el mundo, así que va encendido. Sigue siendo
+# un permiso: se puede quitar a alguien en concreto desde Moderadores.
+DEFAULT_PERMS["mod"]["mapa_semilla"] = True
+DEFAULT_PERMS["viewer"]["mapa_semilla"] = True
 # vista pública (entra con el PIN compartido): mirar, subir a memorias y
 # marcar lugares en el mapa — borrarlos sigue siendo de moderadores y admin
 DEFAULT_PERMS["public"] = {"view_dashboard": True, "view_players": True,
                            "memories": True, "memories_upload": True,
-                           "markers_add": True}
+                           "markers_add": True, "mapa_semilla": True}
 
 # ------------------------------------------------------------------ helpers
 def hash_pw(pw: str) -> str:
@@ -2822,8 +2828,115 @@ def api_system_map_markers():
     # mismos ficheros de BlueMap y no deben solaparse
     ok = _sys_run_bg("mapa", ["bash", str(script)], timeout=3 * 3600)
     audit(u["name"], "actualizar los iconos del mapa")
-    return jsonify(ok=ok, output="Buscando estructuras y publicando los iconos — mira el registro"
-                   if ok else "Ya hay una actualización del mapa corriendo")
+    return jsonify(ok=ok, output="Publicando los iconos del mapa 3D — tarda segundos"
+                   if ok else _mapa_ocupado_texto())
+
+
+def _mapa_ocupado_texto():
+    """Por qué no arrancó, con el desde-cuándo.
+
+    «Ya hay una actualización del mapa corriendo» a secas mandaba a mirar un
+    registro que no dice cuál ni desde cuándo, y un render nocturno atascado
+    bloquea este botón durante horas sin que se note.
+    """
+    desde = _sys_busy.get("mapa")
+    if not desde:
+        return "No pude arrancar el trabajo del mapa"
+    m = int((time.time() - desde) / 60)
+    return ("Ya hay un trabajo del mapa corriendo desde hace %s — este botón "
+            "espera a que acabe" % (f"{m} min" if m else "menos de un minuto"))
+
+
+# ---------------------------------------------------------- qué hay publicado
+# El mapa 3D lee UN fichero por dimensión: <mapas>/<dim>/live/markers.json, y
+# BlueMap lo reescribe entero en cada `--markers`. O sea que ese fichero ES lo
+# que se ve en el navegador, sin intermediarios ni cachés que valgan.
+#
+# Esto existe porque el bloque de marcadores se dejó vacío, se comprobó que el
+# generador lo dejaba vacío… y los iconos seguían en el mapa. Sin poder mirar
+# el fichero publicado no había forma de saber en qué paso se rompía la
+# cadena, y adivinar desde fuera salió caro.
+def _bluemap_dir():
+    return Path(os.environ.get("BLUEMAP_DIR", Path.home() / "bluemap"))
+
+
+def _bluemap_mapas_dir():
+    """La carpeta donde BlueMap deja los mapas, según su propia config."""
+    bm = _bluemap_dir()
+    raiz = "web/maps"
+    try:
+        m = re.search(r'^\s*root\s*[:=]\s*"?([^"\n]+)"?',
+                      (bm / "config/storages/file.conf").read_text(), re.M)
+        if m:
+            raiz = m.group(1).strip()
+    except Exception:
+        pass
+    p = Path(raiz)
+    return p if p.is_absolute() else bm / p
+
+
+def _iconos_publicados():
+    """Lee lo que hay publicado ahora mismo en el mapa 3D."""
+    import gzip
+    bm, mapas = _bluemap_dir(), _bluemap_mapas_dir()
+    web = bm / "web"
+    fuera = {"mapas": [], "sobran": [], "carpeta": str(mapas),
+             "enlace": None, "enlace_ok": True, "error": None}
+    try:
+        fuera["enlace"] = os.path.realpath(web)
+        # que ~/bluemap/web sea un enlace a lo que sirve Caddy es lo que hace
+        # que escribir el mapa y verlo sean la misma cosa
+        fuera["enlace_ok"] = web.is_symlink() or not web.exists()
+    except Exception:
+        pass
+    if not mapas.is_dir():
+        fuera["error"] = "no encuentro los mapas en %s" % mapas
+        return fuera
+    for d in sorted(p for p in mapas.iterdir() if p.is_dir()):
+        f = d / "live/markers.json"
+        crudo = None
+        for cand in (f, d / "live/markers.json.gz"):
+            try:
+                if cand.exists():
+                    b = cand.read_bytes()
+                    crudo = gzip.decompress(b) if cand.suffix == ".gz" else b
+                    f = cand
+                    break
+            except Exception:
+                pass
+        fila = {"mapa": d.name, "conjuntos": [], "cuando": None, "estado": ""}
+        try:
+            fila["cuando"] = int(f.stat().st_mtime)
+        except Exception:
+            pass
+        if crudo is None:
+            fila["estado"] = "sin fichero"
+            fuera["mapas"].append(fila)
+            continue
+        try:
+            datos = json.loads(crudo)
+        except Exception as e:
+            fila["estado"] = "ilegible (%s)" % e
+            fuera["mapas"].append(fila)
+            continue
+        for clave, cjto in sorted(datos.items()):
+            n = len((cjto or {}).get("markers") or {})
+            fila["conjuntos"].append({"id": clave, "n": n})
+            if clave != "lugares":
+                fuera["sobran"].append("%s → %s" % (d.name, clave))
+        fuera["mapas"].append(fila)
+    return fuera
+
+
+@app.get("/api/system/map_icons_state")
+def api_system_map_icons_state():
+    u = require()
+    if u["role"] not in ("admin", "mod"):
+        abort(403)
+    d = _iconos_publicados()
+    d["ok"] = True
+    d["trabajando"] = bool(_sys_busy.get("mapa"))
+    return jsonify(d)
 
 # ============================================================ mundos (admin)
 #
@@ -3112,7 +3225,11 @@ def api_mundos_cambiar():
     slug = (request.get_json(silent=True) or {}).get("slug") or ""
     if not _slug_ok(slug):
         return jsonify(error="mundo inválido"), 400
-    ok, por = _mundos_run("cambiar a %s" % slug, ["cambiar", slug], timeout=3 * 3600)
+    # Otro mundo es otra semilla: lo que el mapa del mundo entero tenía
+    # calculado ya no vale, y el lector de biomas tiene que volver a
+    # arrancar con la nueva.
+    ok, por = _mundos_run("cambiar a %s" % slug, ["cambiar", slug], timeout=3 * 3600,
+                          al_acabar=lambda bien, d: _m2_olvidar())
     audit(u["name"], f"cambió el mundo activo a {slug}")
     return jsonify(ok=ok, output="Parando el servidor y cambiando de mundo…" if ok else por)
 
@@ -3126,7 +3243,8 @@ def api_mundos_nuevo():
         return jsonify(error="Ponle un nombre al mundo"), 400
     semilla = re.sub(r"[^\w -]", "", (body.get("semilla") or ""))[:48]
     args = ["nuevo", "--nombre", nombre] + (["--semilla", semilla] if semilla else [])
-    ok, por = _mundos_run("estrenar «%s»" % nombre, args, timeout=2 * 3600)
+    ok, por = _mundos_run("estrenar «%s»" % nombre, args, timeout=2 * 3600,
+                          al_acabar=lambda bien, d: _m2_olvidar())
     audit(u["name"], f"estrenó un mundo nuevo: {nombre}")
     return jsonify(ok=ok, output="Guardando el mundo de ahora y generando el nuevo…"
                    if ok else por)
@@ -3284,6 +3402,1001 @@ def api_act_deshacer():
     return jsonify(ok=ok, output="Devolviendo el jar anterior…" if ok else por)
 
 
+
+# ══════════════════════════════════════════ el mapa del mundo entero (semilla)
+#
+# El otro mapa (BlueMap) enseña lo que la gente ha explorado, en 3D. Este
+# enseña el mundo ENTERO —biomas y estructuras— calculado desde la semilla, sin
+# haber pisado nada. Es lo que hace Chunkbase, pero con el generador de verdad:
+# el que viene dentro del server.jar, así que no puede desviarse ni quedarse
+# atrás cuando Minecraft se actualice.
+#
+# Las cuentas las hace un servicio aparte (scripts/Biomas.java, arrancado por
+# systemd) que escucha solo en 127.0.0.1. Si está caído, esta pestaña avisa y
+# el resto del panel sigue igual.
+BIOMAS_URL = os.environ.get("BIOMAS_URL", "http://127.0.0.1:25580")
+_M2 = {"mods": None, "srv": None}
+_m2_lock = threading.Lock()
+# Como mucho tres azulejos calculándose a la vez. El servidor de Minecraft vive
+# en la misma máquina de dos núcleos y no puede notar que alguien abrió el mapa.
+_m2_turno = threading.Semaphore(3)
+_m2_est = {}                    # (semilla, celda_x, celda_z) → estructuras
+_M2_CELDA = 8192                # se calcula por trozos y se guarda lo calculado
+
+
+def _m2_mods():
+    """Carga scripts/biomas.py y scripts/estructuras.py una sola vez."""
+    if _M2["mods"] is None:
+        import sys as _sys
+        ruta = str(PANEL_DIR / "scripts")
+        if ruta not in _sys.path:
+            _sys.path.insert(0, ruta)
+        import biomas as _b, estructuras as _e
+        _e.cargar(str(_mc_jar() or ""))
+        _e.cargar_estructuras(str(_mc_jar() or ""))
+        _M2["mods"] = (_b, _e)
+        _M2["srv"] = _b.Servicio(BIOMAS_URL)
+    return _M2["mods"]
+
+
+def _mc_jar():
+    for p in sorted((MC_DIR / "versions").glob("*/server-*.jar"), reverse=True):
+        return p
+    p = MC_DIR / "server.jar"
+    return p if p.exists() else None
+
+
+def _m2_srv():
+    _m2_mods()
+    return _M2["srv"]
+
+
+def _m2_olvidar():
+    """Se cambió de mundo: fuera todo lo calculado para la semilla de antes."""
+    with _m2_lock:
+        _m2_est.clear()
+        _M2["mods"] = None
+        _M2["srv"] = None
+    try:
+        (DATA_DIR / "semilla.txt").unlink()
+    except OSError:
+        pass
+    try:
+        subprocess.Popen(["sudo", "-n", "systemctl", "restart", "biomas"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def _m2_estructuras(x0, z0, x1, z1):
+    """Las estructuras de ese rectángulo, calculando por celdas y guardándolas.
+
+    Al arrastrar el mapa las peticiones se solapan casi del todo. Calculando por
+    celdas de 8192 bloques, mover un poco el mapa reaprovecha lo de antes y solo
+    cuesta lo que entra nuevo.
+    """
+    b, e = _m2_mods()
+    srv = _m2_srv()
+    semilla = srv.salud()["semilla"]
+    conjuntos = [c for c in e.conjuntos_de("overworld") if not e.por_probabilidad(c)]
+    fuera = []
+    for cz in range(z0 // _M2_CELDA, z1 // _M2_CELDA + 1):
+        for cx in range(x0 // _M2_CELDA, x1 // _M2_CELDA + 1):
+            clave = (semilla, cx, cz)
+            with _m2_lock:
+                hecho = _m2_est.get(clave)
+            if hecho is None:
+                hecho = e.confirmar(srv, semilla,
+                                    cx * _M2_CELDA, cz * _M2_CELDA,
+                                    (cx + 1) * _M2_CELDA - 1, (cz + 1) * _M2_CELDA - 1,
+                                    conjuntos)
+                for s in hecho:
+                    s["k"] = e.tipo_de(s["tipo"])
+                with _m2_lock:
+                    if len(_m2_est) > 400:          # no crecer sin freno
+                        _m2_est.clear()
+                    _m2_est[clave] = hecho
+            for s in hecho:
+                if x0 <= s["x"] <= x1 and z0 <= s["z"] <= z1 and s["k"]:
+                    fuera.append(s)
+    return fuera
+
+
+# ══════════════════════════════════════ «ya fui aquí»: lo comparte todo el server
+#
+# Un tic por estructura, visible para todos, para que nadie se pegue el viaje a
+# un templo que ya vaciaron. Se guarda por SEMILLA: si se cambia de mundo, las
+# marcas del anterior no se mezclan con las del nuevo — y si se vuelve a él,
+# siguen ahí.
+#
+# La clave es tipo:x:z, o sea el sitio, no un id: las estructuras se calculan de
+# la semilla y no tienen identidad propia. Mismo sitio, misma marca.
+HECHO_FILE = DATA_DIR / "estructuras-hechas.json"
+_hecho_lock = threading.Lock()
+HECHO_MAX = 20000               # por semilla; pasado eso deja de aceptar marcas
+
+
+def _hecho_cargar():
+    try:
+        d = json.loads(HECHO_FILE.read_text())
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _hecho_guardar(d):
+    HECHO_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = HECHO_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d))
+    tmp.replace(HECHO_FILE)     # atómico: nunca queda a medias
+
+
+@app.get("/api/mapa2/hechas")
+def api_m2_hechas():
+    """Las marcas de esta semilla. Van todas de una: son cuatro cifras como mucho."""
+    require("mapa_semilla")
+    try:
+        semilla = str(_m2_srv().salud()["semilla"])
+    except Exception:
+        return jsonify(ok=False, hechas={}), 200
+    with _hecho_lock:
+        mias = (_hecho_cargar().get(semilla) or {})
+    return jsonify(ok=True, hechas=mias)
+
+
+@app.post("/api/mapa2/hecha")
+def api_m2_hecha():
+    """Marcar o desmarcar una estructura como visitada."""
+    u = require("mapa_semilla")
+    if not _csrf_ok():
+        abort(403)
+    b = request.get_json(silent=True) or {}
+    k = re.sub(r"[^a-z_]", "", str(b.get("k", ""))[:40])
+    try:
+        x, z = int(b.get("x")), int(b.get("z"))
+    except (TypeError, ValueError):
+        return jsonify(error="coordenadas malas"), 400
+    if not k or max(abs(x), abs(z)) > 30_000_000:
+        return jsonify(error="datos malos"), 400
+    quiero = bool(b.get("hecha"))
+    try:
+        semilla = str(_m2_srv().salud()["semilla"])
+    except Exception:
+        return jsonify(error="el explorador no está encendido"), 503
+    clave = "%s:%d:%d" % (k, x, z)
+    with _hecho_lock:
+        todo = _hecho_cargar()
+        mias = todo.setdefault(semilla, {})
+        if quiero:
+            if len(mias) >= HECHO_MAX and clave not in mias:
+                return jsonify(error="demasiadas marcas guardadas"), 400
+            mias[clave] = {"por": u["name"], "t": int(time.time())}
+        else:
+            mias.pop(clave, None)
+        _hecho_guardar(todo)
+        marca = mias.get(clave)
+    audit(u["name"], "%s %s en %d,%d" % ("marca" if quiero else "desmarca", k, x, z))
+    return jsonify(ok=True, clave=clave, marca=marca)
+
+
+# ══════════════════════════════ generadores de monstruos (del mundo explorado)
+#
+# No salen de la semilla y no pueden: son decoración que se coloca DESPUÉS de
+# excavar las cuevas. Pero en el terreno que ya visitó alguien están escritos, y
+# scan-structures.py los apunta en data/spawners.json cada noche. Aquí solo se
+# leen y se recortan al trozo que se está mirando.
+_gens = {"t": 0, "datos": {}}
+
+
+def _m2_generadores(x0, z0, x1, z1, dim="overworld"):
+    f = DATA_DIR / "spawners.json"
+    try:
+        cuando = f.stat().st_mtime
+    except OSError:
+        return []
+    if _gens["t"] != cuando:
+        try:
+            _gens["datos"] = json.loads(f.read_text())
+            _gens["t"] = cuando
+        except Exception:
+            return []
+    fuera = []
+    for g in (_gens["datos"].get(dim) or []):
+        x, z = g.get("x"), g.get("z")
+        if x is None or z is None or not (x0 <= x <= x1 and z0 <= z <= z1):
+            continue
+        fuera.append({"k": "spawner", "x": int(x), "z": int(z),
+                      "tipo": "spawner_" + str(g.get("mob") or "desconocido")})
+    return fuera
+
+
+# ══════════════════ «buscar generadores en esta zona»: que los genere el juego
+#
+# POR QUÉ ASÍ Y NO CALCULÁNDOLOS
+# Un dungeon no se puede predecir de la semilla sola: el sorteo sí es
+# determinista (está en el jar, `monster_room` tira 10 veces por chunk), pero la
+# habitación solo aparece si en ese punto hay una cueva, y eso depende del
+# terreno ya excavado. Sin simular las cuevas salen 531 puntos falsos por cada
+# dungeon de verdad — medido en 1024 chunks generados con esta misma semilla.
+#
+# Chunkbase lo resuelve reimplementando la generación de terreno en JavaScript y
+# corriéndola en el navegador de quien mira. Por eso su propia página avisa de
+# que sus dungeons «can be wrong or missing»: es una copia del generador, no el
+# generador.
+#
+# Aquí hay algo que Chunkbase no tiene: el Minecraft de verdad, corriendo. Se le
+# pide que genere la zona (`forceload`), se guarda, y se lee el mundo como
+# siempre. No es una predicción: es el mundo. Sale exacto, sin reimplementar
+# nada, y de paso queda pregenerado para quien vaya luego.
+#
+# El precio, y hay que decirlo en la interfaz: mientras genera, el servidor va
+# más lento, y el mundo ocupa más disco.
+#
+# HABLAR CON UN JUEGO QUE ESTÁ OCUPADO
+# Un RCON se atiende en el HILO PRINCIPAL del servidor, el mismo que genera los
+# chunks. `rcon_try` espera 4 segundos, que es lo correcto para `list` o `say`
+# —el juego contesta en el mismo tick—, y es justo lo que NO vale aquí: mientras
+# genera, ese hilo tarda segundos en llegar a la cola de órdenes, y `save-all
+# flush` encima guarda el mundo entero antes de contestar.
+#
+# La primera versión de este botón usaba esos 4 segundos y se rompía sola: a la
+# segunda tanda el servidor ya iba lento, la orden no contestaba a tiempo, se
+# daba al servidor por muerto y se cortaba el trabajo... dejando 256 chunks
+# cargados a la fuerza, porque la orden SÍ había llegado. Y un forceload
+# sobrevive al reinicio del juego, así que el servidor se quedaba para siempre
+# tickeando un trozo de mundo que no mira nadie. Desde fuera solo se veía «el
+# server va lento» y «el botón no funciona».
+#
+# De ahí las tres reglas de abajo:
+#   · esperar lo que haga falta, y distinguir «no hay servidor» de «está ocupado»
+#   · apuntar cada tanda ANTES de pedirla, y no fiarse de que se quitó
+#   · tandas pequeñas: 64 chunks, no 256
+_ZONA_LOTE = 8                  # chunks de lado por tanda: 64 a la vez, no 256
+_ZONA_MAX_CHUNKS = 1024         # 512x512 bloques: unos minutos y ~50 MB
+_ZONA_LATIDO = 5                # cada cuánto se mira si el juego ya los escribió
+_ZONA_ESPERA_ORDEN = 30         # lo que se le aguanta a un forceload
+_ZONA_ESPERA_GUARDAR = 150      # save-all flush guarda el mundo entero
+_ZONA_TOPE = 900                # 15 min de reloj para el trabajo entero
+_ZONA_ESPERA_LISTA = 12         # lo que se espera al «list» de antes de empezar
+_ZONA_FORZADOS = DATA_DIR / "zona-forzados.json"
+_zona = {"estado": "quieto", "hechos": 0, "total": 0, "mensaje": "",
+         "t": 0, "hallados": None, "caja": None}
+_zona_lock = threading.Lock()
+
+
+def _zona_estado(**kw):
+    with _zona_lock:
+        _zona.update(kw)
+
+
+def _rcon_zona(cmd, espera):
+    """(ok, salida, ocupado). `ocupado` = está vivo, pero no contestó a tiempo.
+
+    La diferencia manda: sin conexión, el servidor está apagado y no hay nada que
+    hacer. Sin respuesta a tiempo, está trabajando — y la orden puede haberse
+    ejecutado igual, así que ni se puede dar por perdida ni por hecha.
+    """
+    p = read_properties()
+    try:
+        salida = Rcon("127.0.0.1", int(p.get("rcon.port", 25575)),
+                      p.get("rcon.password", ""), timeout=espera).command(cmd)
+        return True, salida, False
+    except TimeoutError:
+        return False, "no contestó en %d s" % espera, True
+    except Exception as e:
+        return False, (str(e) or type(e).__name__), False
+
+
+def _zona_apuntar(puestos):
+    """Deja escrito en disco qué tandas hemos forzado.
+
+    Es el papelito del que se tira cuando algo sale mal: el panel puede
+    reiniciarse, o morirse a media faena, y los chunks forzados seguirían ahí.
+    """
+    try:
+        if puestos:
+            _ZONA_FORZADOS.write_text(json.dumps([list(p) for p in puestos]))
+        elif _ZONA_FORZADOS.exists():
+            _ZONA_FORZADOS.unlink()
+    except OSError:
+        pass
+
+
+def _zona_quitar(lote, intentos=3):
+    """Quita una tanda del forceload, y no se fía a la primera."""
+    x0, z0, x1, z1 = lote
+    orden = "forceload remove %d %d %d %d" % (x0 * 16, z0 * 16, x1 * 16 + 15, z1 * 16 + 15)
+    for i in range(intentos):
+        ok, _salida, ocupado = _rcon_zona(orden, _ZONA_ESPERA_ORDEN)
+        if ok:
+            return True
+        if not ocupado:
+            return False              # no hay servidor; no lo va a haber en 3 s
+        time.sleep(3)
+    return False
+
+
+def _zona_sueltos():
+    """Quita lo que quedara forzado de un intento anterior. Devuelve cuántas."""
+    try:
+        pendientes = [tuple(p) for p in json.loads(_ZONA_FORZADOS.read_text())]
+    except Exception:
+        return 0
+    quedan = [lote for lote in pendientes if not _zona_quitar(lote, intentos=2)]
+    _zona_apuntar(quedan)
+    return len(pendientes) - len(quedan)
+
+
+def _zona_barrer_al_arrancar():
+    # Al arrancar el panel el juego puede no estar todavía en pie; se le da un
+    # rato. Si tampoco entonces, el papelito sigue ahí para el próximo intento.
+    time.sleep(30)
+    try:
+        n = _zona_sueltos()
+        if n:
+            audit("panel", "quité %d tanda(s) de chunks forzados que quedaron sueltas" % n)
+    except Exception:
+        pass
+
+
+if _ZONA_FORZADOS.exists():
+    threading.Thread(target=_zona_barrer_al_arrancar, daemon=True).start()
+
+
+def _chunks_hechos(cx0, cz0, cx1, cz1):
+    """Cuántos chunks del cuadro están YA escritos en disco.
+
+    Se mira la cabecera de cada fichero de región: los primeros 4 KB son 1024
+    huecos de 4 bytes, uno por chunk, y un hueco a cero quiere decir «ese chunk
+    todavía no existe». Son 4 KB por región, así que preguntarlo cada pocos
+    segundos no cuesta nada.
+
+    Esto es lo que convierte el botón en algo que se puede creer. La primera
+    versión echaba un `forceload`, dormía un rato fijo y daba por hecho que el
+    juego había terminado; si el servidor iba lento, quitaba la carga a medias y
+    el escaneo leía un trozo del mundo sin generar, sin que nadie se enterara.
+    Ahora no se supone nada: se cuenta.
+    """
+    rdir = region_dir("overworld")
+    hechos = 0
+    for rx in range(cx0 >> 5, (cx1 >> 5) + 1):
+        for rz in range(cz0 >> 5, (cz1 >> 5) + 1):
+            try:
+                with open(rdir / ("r.%d.%d.mca" % (rx, rz)), "rb") as fh:
+                    cab = fh.read(4096)
+            except OSError:
+                continue                       # aún no hay ni fichero: cero
+            if len(cab) < 4096:
+                continue
+            for cz in range(max(cz0, rz * 32), min(cz1, rz * 32 + 31) + 1):
+                fila = (cz & 31) * 32
+                for cx in range(max(cx0, rx * 32), min(cx1, rx * 32 + 31) + 1):
+                    i = (fila + (cx & 31)) * 4
+                    if cab[i] or cab[i + 1] or cab[i + 2] or cab[i + 3]:
+                        hechos += 1
+    return hechos
+
+
+def _zona_espera(lote, quiero, fin, avisa):
+    """Espera a que el lote esté generado Y guardado, mirándolo de verdad.
+
+    Devuelve (chunks_escritos, problema). `problema` solo se llena cuando algo
+    está roto de verdad: el disco sin sitio o el servidor caído. Que se acabe el
+    tiempo no es un problema, es un resultado más corto, y así se cuenta.
+
+    Se mira ANTES de tocar nada: en un trozo por donde ya pasó alguien están los
+    64 chunks escritos, y entonces esta tanda no cuesta ni un segundo ni un
+    guardado. Solo si faltan se llama a `save-all flush`, que es lo que baja a
+    disco lo que el juego tiene en memoria — sin él, la cabecera de la región no
+    se entera de nada.
+
+    Se sale por tres sitios: cuando están todos, cuando pasan tres rondas
+    seguidas sin un solo chunk nuevo (el servidor no va a hacer más), o cuando se
+    acaba el tiempo.
+    """
+    cx0, cz0, cx1, cz1 = lote
+    hechos = _chunks_hechos(cx0, cz0, cx1, cz1)
+    avisa(hechos)
+    if hechos >= quiero:
+        return hechos, None
+    quietas = 0
+    while True:
+        time.sleep(_ZONA_LATIDO)
+        ok, dice, ocupado = _rcon_zona("save-all flush", _ZONA_ESPERA_GUARDAR)
+        if not ok and not ocupado:
+            return hechos, "El servidor de Minecraft dejó de responder: " + dice[:90]
+        # «Unable to save the game (is there enough disk space?)». Sin mirarlo,
+        # un disco lleno se ve desde el panel como una búsqueda que no encuentra
+        # nada, que es la forma más cara de enterarse.
+        if ok and "Unable to save" in dice:
+            return hechos, dice.strip()
+        time.sleep(min(1.5, _ZONA_LATIDO / 4.0))    # que termine de escribir
+        antes, hechos = hechos, _chunks_hechos(cx0, cz0, cx1, cz1)
+        avisa(hechos)
+        if hechos >= quiero:
+            return hechos, None
+        quietas = quietas + 1 if hechos <= antes else 0
+        if quietas >= 3 or time.time() >= fin:
+            return hechos, None
+
+
+def _zona_trabajo(cx0, cz0, cx1, cz1, espera):
+    """Genera la zona por tandas y luego relee el mundo."""
+    lotes = []
+    for z in range(cz0, cz1 + 1, _ZONA_LOTE):
+        for x in range(cx0, cx1 + 1, _ZONA_LOTE):
+            lotes.append((x, z, min(x + _ZONA_LOTE - 1, cx1), min(z + _ZONA_LOTE - 1, cz1)))
+    total = (cx1 - cx0 + 1) * (cz1 - cz0 + 1)
+    _zona_estado(estado="generando", hechos=0, total=total, mensaje="", hallados=None)
+    _zona_sueltos()                 # lo que quedara de otra vez, fuera primero
+    fin = time.time() + _ZONA_TOPE
+    llevamos = 0
+    puestos = []
+    problema = None
+    try:
+        for lote in lotes:
+            x0, z0, x1, z1 = lote
+            manda = "%d %d %d %d" % (x0 * 16, z0 * 16, x1 * 16 + 15, z1 * 16 + 15)
+            # Apuntada ANTES de pedirla. Si la orden llega y la respuesta no, los
+            # chunks quedan forzados igual: apuntarla después es justo lo que
+            # dejaba al servidor cargando un trozo de mundo para siempre.
+            puestos.append(lote)
+            _zona_apuntar(puestos)
+            ok, salida, ocupado = _rcon_zona("forceload add " + manda, _ZONA_ESPERA_ORDEN)
+            if not ok and not ocupado:
+                # No hubo ni conexión: la orden no llegó a ejecutarse, así que
+                # esta tanda no está forzada y no se puede contar como pendiente.
+                # Solo se queda apuntado lo que PUDO llegar (una respuesta que no
+                # vuelve) o lo que se sabe que llegó.
+                puestos.remove(lote)
+                _zona_apuntar(puestos)
+                problema = "No pude hablar con el servidor de Minecraft: " + salida[:100]
+                break
+            # Lo que contesta el juego de verdad cuando no puede (comprobado en
+            # el jar de 26.2): «Too many chunks in the specified area (maximum
+            # 256, but specified N)» y «No chunks were marked for force loading».
+            if ok and ("Too many" in salida or "No chunks were marked" in salida
+                       or "Unknown or incomplete" in salida or "Incorrect argument" in salida):
+                puestos.remove(lote)        # el juego dice que no marcó nada
+                _zona_apuntar(puestos)
+                problema = salida[:160]
+                break
+            # Si no contestó a tiempo NO se corta el trabajo: la orden casi seguro
+            # llegó, y quien dice la verdad sobre lo que hay generado no es el
+            # mensaje del juego, es la cabecera de las regiones.
+            hecho, mal = _zona_espera(lote, (x1 - x0 + 1) * (z1 - z0 + 1),
+                                      min(fin, time.time() + espera),
+                                      lambda n: _zona_estado(hechos=llevamos + n))
+            # fuera la tanda en cuanto está: así el servidor nunca tiene más de
+            # 64 chunks forzados a la vez, que es lo que lo pone de rodillas
+            if _zona_quitar(lote):
+                puestos.remove(lote)
+                _zona_apuntar(puestos)
+            llevamos += hecho
+            _zona_estado(hechos=llevamos)
+            if mal:
+                problema = mal
+                break
+            if time.time() >= fin:
+                break                   # se acabó el reloj: lo hecho, hecho está
+    finally:
+        # quitar SOLO lo que pusimos: un `forceload remove all` se llevaría por
+        # delante los que el admin tuviera puestos a mano
+        for lote in list(puestos):
+            if _zona_quitar(lote):
+                puestos.remove(lote)
+        _zona_apuntar(puestos)
+    if puestos:
+        # Esto va delante de cualquier otra pega: es lo único que deja al
+        # servidor peor de como estaba, y lo único que pide una mano.
+        problema = (("Quedaron %d tanda(s) de chunks cargados a la fuerza que no pude quitar. "
+                     "Cuando el servidor responda, en la consola: /forceload remove all")
+                    % len(puestos)) + ((" (%s)" % problema) if problema else "")
+
+    # Aunque algo se torciera, lo que se generó es de verdad y merece leerse: se
+    # escanea igual y luego se cuenta lo que pasó.
+    _zona_estado(estado="leyendo", mensaje="")
+    guion = PANEL_DIR / "scripts" / "scan-structures.py"
+    try:
+        r = subprocess.run(["nice", "-n", "19", "python3", str(guion)],
+                           capture_output=True, text=True, timeout=3600)
+        if r.returncode != 0:
+            _zona_estado(estado="error",
+                         mensaje=problema or (r.stderr or r.stdout or "")[-200:])
+            return
+    except Exception as e:
+        _zona_estado(estado="error", mensaje=problema or str(e)[:200])
+        return
+
+    _gens["t"] = 0                      # que se relea spawners.json
+    caja = (cx0 * 16, cz0 * 16, cx1 * 16 + 15, cz1 * 16 + 15)
+    try:
+        hallados = len(_m2_generadores(*caja))
+    except Exception:
+        hallados = None
+    _zona_estado(estado="error" if problema else "listo", hallados=hallados,
+                 caja=list(caja), mensaje=problema[:200] if problema else "")
+
+
+@app.get("/api/mapa2/zona")
+def api_m2_zona_estado():
+    require("mapa_semilla")
+    with _zona_lock:
+        d = dict(_zona)
+    d["ok"] = True
+    d["max_chunks"] = _ZONA_MAX_CHUNKS
+    return jsonify(d)
+
+
+@app.post("/api/mapa2/zona")
+def api_m2_zona():
+    """Genera una zona con el servidor de verdad y relee lo que salió."""
+    u = require("mapa_semilla")
+    if u["role"] not in ("admin", "mod") or not _csrf_ok():
+        abort(403)
+    with _zona_lock:
+        if _zona["estado"] in ("generando", "leyendo") and time.time() - _zona["t"] < 3600:
+            return jsonify(error="Ya hay una búsqueda en marcha"), 409
+        _zona.update({"estado": "generando", "t": time.time(), "hechos": 0,
+                      "total": 0, "mensaje": "", "hallados": None})
+    b = request.get_json(silent=True) or {}
+    try:
+        x0, z0 = int(b["x0"]), int(b["z0"])
+        x1, z1 = int(b["x1"]), int(b["z1"])
+    except (KeyError, TypeError, ValueError):
+        _zona_estado(estado="quieto")
+        return jsonify(error="faltan las coordenadas"), 400
+    x0, x1 = min(x0, x1), max(x0, x1)
+    z0, z1 = min(z0, z1), max(z0, z1)
+    if max(abs(x0), abs(x1), abs(z0), abs(z1)) > 3_000_000:
+        _zona_estado(estado="quieto")
+        return jsonify(error="fuera del mundo"), 400
+    cx0, cz0, cx1, cz1 = x0 >> 4, z0 >> 4, x1 >> 4, z1 >> 4
+    # se recorta al centro: generar más de esto tarda demasiado y llena el disco
+    lado = int(_ZONA_MAX_CHUNKS ** 0.5)
+    if (cx1 - cx0 + 1) > lado:
+        medio = (cx0 + cx1) // 2
+        cx0, cx1 = medio - lado // 2, medio - lado // 2 + lado - 1
+    if (cz1 - cz0 + 1) > lado:
+        medio = (cz0 + cz1) // 2
+        cz0, cz1 = medio - lado // 2, medio - lado // 2 + lado - 1
+    # `espera` es el TOPE por tanda, no una siesta: cada tanda termina en cuanto
+    # sus 64 chunks están escritos, y esto es solo hasta cuándo se le aguanta a
+    # un servidor que no avanza. El trabajo entero tiene además su propio reloj
+    # (_ZONA_TOPE), para que dieciséis tandas atascadas no sumen una hora.
+    espera = max(30, min(600, float(b.get("espera", 120))))
+    # Doce segundos, no cuatro: si el servidor está con gente dentro puede tardar
+    # un poco en contestar y eso no es estar apagado. Y si de verdad no llega ni
+    # a eso, es que está ahogado, que tampoco es momento de pedirle 1024 chunks:
+    # decirlo con esas palabras evita mandar a Juan a encender algo que ya está
+    # encendido.
+    vivo, _dice, ocupado = _rcon_zona("list", _ZONA_ESPERA_LISTA)
+    if not vivo:
+        _zona_estado(estado="quieto")
+        return jsonify(error=(
+            "El servidor de Minecraft está tan ocupado que no contesta. Espera un momento "
+            "y vuelve a intentarlo" if ocupado else
+            "El servidor de Minecraft no responde: enciéndelo y vuelve a intentarlo")), 503
+    audit(u["name"], "genera la zona %d,%d a %d,%d para buscar generadores"
+          % (cx0 * 16, cz0 * 16, cx1 * 16, cz1 * 16))
+    threading.Thread(target=_zona_trabajo, args=(cx0, cz0, cx1, cz1, espera),
+                     daemon=True).start()
+    return jsonify(ok=True, chunks=(cx1 - cx0 + 1) * (cz1 - cz0 + 1),
+                   caja=[cx0 * 16, cz0 * 16, cx1 * 16 + 15, cz1 * 16 + 15])
+
+
+def _hay_icono(nombre):
+    return (PANEL_DIR / "static" / "markers" / (nombre + ".png")).exists()
+
+
+_m2_densas = {}                 # (semilla, celda_x, celda_z) → estructuras densas
+_M2_CELDA_DENSA = 2048          # celdas pequeñas: son miles por celda grande
+_M2_VENTANA_DENSA = 24576       # más allá de esto no se calculan, se avisa
+
+
+def _m2_estructuras_densas(x0, z0, x1, z1):
+    """Tesoros y minas: una tirada de dado en CADA chunk, no una rejilla.
+
+    Van por su cuenta y no dentro de `_m2_estructuras` a propósito. Un cuadro de
+    8192 bloques son 262 144 chunks; calcular eso en cada celda le costaría un
+    segundo largo a TODO el mundo, también a quien nunca encienda esas dos
+    capas. Aquí se calculan solo si alguien las pide, en celdas de 2048 y con
+    una ventana máxima: de lejos hay decenas de miles y no se pueden dibujar.
+    """
+    b, e = _m2_mods()
+    srv = _m2_srv()
+    semilla = srv.salud()["semilla"]
+    conjuntos = [c for c in e.conjuntos_de("overworld") if e.por_probabilidad(c)]
+    if not conjuntos:
+        return []
+    fuera = []
+    for cz in range(z0 // _M2_CELDA_DENSA, z1 // _M2_CELDA_DENSA + 1):
+        for cx in range(x0 // _M2_CELDA_DENSA, x1 // _M2_CELDA_DENSA + 1):
+            clave = (semilla, cx, cz)
+            with _m2_lock:
+                hecho = _m2_densas.get(clave)
+            if hecho is None:
+                hecho = e.confirmar(srv, semilla,
+                                    cx * _M2_CELDA_DENSA, cz * _M2_CELDA_DENSA,
+                                    (cx + 1) * _M2_CELDA_DENSA - 1,
+                                    (cz + 1) * _M2_CELDA_DENSA - 1,
+                                    conjuntos)
+                for s in hecho:
+                    s["k"] = e.tipo_de(s["tipo"])
+                with _m2_lock:
+                    if len(_m2_densas) > 600:
+                        _m2_densas.clear()
+                    _m2_densas[clave] = hecho
+            for s in hecho:
+                if x0 <= s["x"] <= x1 and z0 <= s["z"] <= z1 and s["k"]:
+                    fuera.append(s)
+    return fuera
+
+
+def punto_de_aparicion():
+    """Dónde aparece la gente al entrar, leído del mundo.
+
+    No se calcula: se lee, porque el mundo ya lo tiene decidido y escrito. En la
+    26.x se mudó de `Data.SpawnX/Y/Z` a `Data.spawn.pos`, así que se miran las
+    dos formas — el panel tiene que seguir funcionando con mundos viejos que se
+    suban desde la pestaña de Mundo.
+    """
+    import nbt as _nbt
+    for ruta in (MC_DIR / "world" / "level.dat",):
+        try:
+            _n, raiz, _g = _nbt.load(str(ruta))
+            d = _nbt.cget(raiz.v, "Data")
+            if d is None:
+                continue
+            sp = _nbt.cget(d.v, "spawn")
+            if sp is not None:
+                pos = _nbt.cget(sp.v, "pos")
+                if pos is not None and len(pos.v) >= 3:
+                    return [int(pos.v[0]), int(pos.v[1]), int(pos.v[2])]
+            xs = [_nbt.cget(d.v, k) for k in ("SpawnX", "SpawnY", "SpawnZ")]
+            if all(v is not None for v in xs):
+                return [int(v.v) for v in xs]
+        except Exception:
+            continue
+    return None
+
+
+@app.get("/api/mapa2/slime")
+def api_m2_slime():
+    """Qué chunks son de slime en un rectángulo. Un byte por chunk.
+
+    La cuenta la hace Minecraft con su propia función; aquí solo se reenvía.
+    """
+    require("mapa_semilla")
+
+    def num(k, d):
+        try:
+            return int(float(request.args.get(k, d)))
+        except (TypeError, ValueError):
+            return d
+
+    cx, cz = num("cx", 0), num("cz", 0)
+    n = max(1, min(512, num("n", 64)))
+    b, _ = _m2_mods()
+    try:
+        crudo = _m2_srv()._pedir("/slime?cx=%d&cz=%d&n=%d" % (cx, cz, n))
+    except Exception:
+        return jsonify(error="sin servicio"), 503
+    from flask import Response
+    r = Response(bytes(crudo), mimetype="application/octet-stream")
+    r.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return r
+
+
+def _m2_fortalezas(semilla):
+    """Dónde están las fortalezas del End. Se las preguntamos a Minecraft.
+
+    POR QUÉ ASÍ Y NO CALCULÁNDOLAS
+    Las fortalezas no van en rejilla como el resto: van en anillos concéntricos,
+    y para colocar cada una el juego busca en espiral un bioma que le valga,
+    gastando números al azar por el camino. Reimplementar eso a mano tiene mil
+    sitios donde equivocarse, y el fallo saldría como fortalezas en sitios
+    plausibles y falsos. Intenté usar la clase del propio Minecraft desde fuera y
+    no se deja: sus etiquetas de bioma no están enlazadas sin un servidor entero.
+
+    Pero el servidor SÍ lo sabe. `/locate structure minecraft:stronghold` da la
+    más cercana a un punto, y eso no genera nada: son cuentas que el servidor ya
+    tiene hechas. Preguntando desde una corona de puntos alrededor de cada
+    anillo salen todas.
+
+    Son 128 y no cambian nunca, así que esto se hace UNA vez por mundo y se
+    guarda. Si el servidor está apagado, se devuelve lo guardado (o nada) y el
+    mapa sigue funcionando sin esa capa.
+    """
+    fichero = DATA_DIR / ("fortalezas-%s.json" % semilla)
+    try:
+        guardado = json.loads(fichero.read_text())
+        if guardado.get("completo"):
+            return guardado["puntos"]
+    except Exception:
+        guardado = None
+
+    # No se mira si systemd dice que el servidor está vivo: se intenta y ya. El
+    # primer `locate` que falle corta la faena y deja lo que hubiera, que es
+    # exactamente lo mismo pero sin depender de que systemctl esté disponible.
+
+    import math
+    hallados = {}
+    # Los anillos: el primero a ~2000 bloques y cada uno ~3000 más lejos. Se
+    # pregunta desde una corona de puntos por anillo, con el doble de puntos que
+    # fortalezas espera haber, para que ninguna quede escondida detrás de otra.
+    coronas = [(2048, 8), (5120, 14), (8192, 24), (11264, 32),
+               (14336, 40), (17408, 48), (20480, 56), (23552, 52)]
+    for radio, cuantos in coronas:
+        for i in range(cuantos):
+            a = 2 * math.pi * i / cuantos
+            x, z = int(math.cos(a) * radio), int(math.sin(a) * radio)
+            ok, salida = rcon_try(
+                "execute positioned %d 100 %d run locate structure minecraft:stronghold" % (x, z))
+            if not ok:
+                # el servidor se cayó a media faena: se guarda lo que haya, sin
+                # marcarlo como completo, y se reintenta la próxima vez
+                break
+            m = re.search(r"is at \[(-?\d+), ~, (-?\d+)\]", salida or "")
+            if m:
+                hallados[(int(m.group(1)), int(m.group(2)))] = True
+        else:
+            continue
+        break
+
+    puntos = sorted([x + 8, z + 8] for x, z in hallados)
+    completo = len(puntos) >= 100          # las 128, menos las que caen encima
+    try:
+        fichero.write_text(json.dumps({"completo": completo, "puntos": puntos,
+                                       "cuando": time.strftime("%Y-%m-%d %H:%M")}))
+    except Exception:
+        pass
+    _syslog("[mapa2] fortalezas: %d encontradas%s"
+            % (len(puntos), "" if completo else " (incompleto, se reintentará)"))
+    return puntos
+
+
+@app.get("/api/mapa2/estado")
+def api_m2_estado():
+    """Todo lo que la pestaña necesita para dibujarse: colores, tipos, estado."""
+    require("mapa_semilla")
+    try:
+        b, e = _m2_mods()
+    except Exception as ex:
+        return jsonify(ok=False, motivo="no puedo cargar los guiones: %s" % ex), 200
+    srv = _m2_srv()
+    try:
+        salud = srv.salud()
+    except Exception:
+        return jsonify(ok=False, motivo="apagado",
+                       ayuda="El lector de biomas no está corriendo. Instálalo una vez con: "
+                             "sudo bash ~/panel/scripts/biomas-instalar.sh"), 200
+    cat = biomas_catalogo()
+
+    def nombres(bid):
+        corto = bid.split(":")[-1]
+        ent = cat.get(bid) or cat.get(corto) or {}
+        guapo = b.bonito(bid)
+        return ent.get("es") or guapo, ent.get("en") or corto.replace("_", " ").title()
+
+    leyenda = {}
+    for i, bid in srv.leyenda().items():
+        r, g, az = b.color(bid)
+        es, en = nombres(bid)
+        leyenda[i] = {"id": bid, "es": es, "en": en, "c": "#%02x%02x%02x" % (r, g, az)}
+    # Cada cuántos bloques va, como mucho, una de cada tipo. Sale de la propia
+    # rejilla con la que Minecraft las coloca, así que no hay que ajustarlo a
+    # mano nunca: es lo que le permite al mapa saber cuándo dibujar un tipo
+    # taparía el mapa entero de iconos.
+    paso = {}
+    for c, datos in e.CONJUNTOS.items():
+        for m in (datos[3] or [c]):
+            k = e.tipo_de(m)
+            if k:
+                paso[k] = min(paso.get(k, 1 << 30), datos[0] * 16)
+    paso["stronghold"] = 2000      # van en anillos, muy separadas
+    # Solo los tipos que PUEDEN salir aquí. Antes se mandaban los veinte y la
+    # rejilla enseñaba «Fortaleza del Nether · 0» y «Ciudad del End · 0» en un
+    # mapa del overworld: una casilla que nunca se va a encender solo estorba.
+    # También se caen las que no se calculan (fortalezas, minas, tesoros), que
+    # van por otra cuenta y saldrían siempre a cero.
+    posibles = set()
+    densas = set()
+    variantes = {}
+    for c in e.conjuntos_de("overworld"):
+        for m in (e.CONJUNTOS[c][3] or [c]):
+            k = e.tipo_de(m)
+            if k:
+                posibles.add(k)
+                if e.por_probabilidad(c):
+                    densas.add(k)
+                # Una aldea nevada y una del desierto son la misma CAPA pero no
+                # el mismo dibujo. Se ofrece el icono propio solo si el fichero
+                # existe; mientras no exista, el mapa usa el del tipo y nadie ve
+                # un hueco.
+                if m != k and _hay_icono(m):
+                    variantes[m] = {"icono": m, "es": e.nombre_variante(m),
+                                    "en": e.nombre_variante(m, True)}
+    # Los generadores no salen de la semilla: se leen del mundo explorado. Solo
+    # se ofrecen si hay icono y si el escaneo ya encontró alguno.
+    hay_gens = _hay_icono("spawner") and (DATA_DIR / "spawners.json").exists()
+    if hay_gens:
+        posibles.add("spawner")
+        for m in ("zombie", "skeleton", "spider", "cave_spider", "silverfish",
+                  "blaze", "magma_cube"):
+            v = "spawner_" + m
+            if _hay_icono(v):
+                variantes[v] = {"icono": v, "es": e.nombre_variante(v),
+                                "en": e.nombre_variante(v, True)}
+    # Las fortalezas no salen de la rejilla: se le preguntan al servidor y se
+    # guardan. Solo se ofrecen como capa si de verdad tenemos alguna.
+    fortalezas = []
+    try:
+        fortalezas = _m2_fortalezas(salud["semilla"])
+    except Exception:
+        pass
+    if fortalezas:
+        posibles.add("stronghold")
+    tipos = []
+    for k in sorted(e.TIPOS, key=lambda k: e.TIPOS[k][5]):
+        if k not in posibles:
+            continue
+        icono, es, en, _dist, oculto, orden = e.TIPOS[k]
+        tipos.append({"k": k, "icono": icono, "es": es, "en": en,
+                      "oculto": oculto, "paso": paso.get(k, 512),
+                      "densa": k in densas, "cerca": _M2_VENTANA_DENSA if k in densas else 0,
+                      "delMundo": k == "spawner"})
+    return jsonify(ok=True, semilla=str(salud["semilla"]), y=salud.get("y"),
+                   niveles=b.NIVELES, tam=b.TAM, leyenda=leyenda, tipos=tipos,
+                   aparicion=punto_de_aparicion(), version=mc_version(),
+                   dimension="Overworld", fortalezas=fortalezas, variantes=variantes)
+
+
+# signed=True o Flask no acepta coordenadas negativas y media mitad del
+# mundo daría 404 sin decir por qué.
+@app.get("/api/mapa2/azulejo/<int:bpp>/<int(signed=True):tx>/<int(signed=True):tz>.png")
+def api_m2_azulejo(bpp, tx, tz):
+    require("mapa_semilla")
+    b, _ = _m2_mods()
+    if bpp not in b.NIVELES or max(abs(tx), abs(tz)) > 4096:
+        abort(404)
+    if not _m2_turno.acquire(timeout=25):
+        return jsonify(error="ocupado"), 429
+    try:
+        crudo = b.azulejo(_m2_srv(), bpp, tx, tz)
+    except b.NoDisponible:
+        abort(503)
+    except Exception:
+        abort(500)
+    finally:
+        _m2_turno.release()
+    from flask import Response
+    r = Response(crudo, mimetype="image/png")
+    # La semilla no cambia y el generador tampoco, así que este dibujo vale para
+    # siempre. Que el navegador no lo vuelva a pedir nunca.
+    r.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return r
+
+
+@app.get("/api/mapa2/estructuras")
+def api_m2_estructuras():
+    require("mapa_semilla")
+
+    def num(k, por_defecto):
+        try:
+            return int(float(request.args.get(k, por_defecto)))
+        except (TypeError, ValueError):
+            return por_defecto
+
+    x0, z0 = num("x0", -2000), num("z0", -2000)
+    x1, z1 = num("x1", 2000), num("z1", 2000)
+    x0, x1 = min(x0, x1), max(x0, x1)
+    z0, z1 = min(z0, z1), max(z0, z1)
+    if max(abs(x0), abs(x1), abs(z0), abs(z1)) > 3_000_000:
+        return jsonify(error="fuera del mundo"), 400
+    # Un rectángulo enorme sería medio millón de iconos que el navegador no puede
+    # dibujar. Se corta aquí y la pestaña avisa de que hay que acercarse.
+    if (x1 - x0) > 200_000 or (z1 - z0) > 200_000:
+        return jsonify(ok=True, demasiado=True, estructuras=[])
+    try:
+        halladas = _m2_estructuras(x0, z0, x1, z1)
+    except Exception as ex:
+        return jsonify(ok=False, motivo=str(ex)[:200]), 200
+    # Tesoros y minas solo si alguien los pide y solo de cerca: hay uno cada
+    # cien chunks y de lejos son decenas de miles de puntos.
+    lejos_densas = False
+    if request.args.get("densas") in ("1", "true", "si"):
+        if (x1 - x0) > _M2_VENTANA_DENSA or (z1 - z0) > _M2_VENTANA_DENSA:
+            lejos_densas = True
+        else:
+            try:
+                halladas = halladas + _m2_estructuras_densas(x0, z0, x1, z1)
+            except Exception:
+                pass
+    # Los generadores salen del mundo explorado, no de la semilla, así que van
+    # aparte y solo si el icono existe (si no, la capa sería un cuadro vacío).
+    if request.args.get("gens") in ("1", "true", "si") and _hay_icono("spawner"):
+        try:
+            halladas = halladas + _m2_generadores(x0, z0, x1, z1)
+        except Exception:
+            pass
+    # El cuarto campo es la VARIANTE: village_snowy, spawner_zombie… El mapa la
+    # usa para dibujar el icono que toca; si no hay icono suyo, cae al del tipo.
+    return jsonify(ok=True, demasiado=False, lejos_densas=lejos_densas,
+                   estructuras=[[s["k"], s["x"], s["z"], s.get("tipo") or s["k"]]
+                                for s in halladas])
+
+
+@app.get("/api/mapa2/bioma")
+def api_m2_bioma():
+    """El bioma de un punto cualquiera, esté explorado o no."""
+    require("mapa_semilla")
+    try:
+        x = int(float(request.args.get("x", 0)))
+        z = int(float(request.args.get("z", 0)))
+    except (TypeError, ValueError):
+        return jsonify(error="coordenadas inválidas"), 400
+    b, _ = _m2_mods()
+    try:
+        d = _m2_srv().bioma(x, z)
+    except Exception:
+        return jsonify(ok=False), 200
+    cat = biomas_catalogo()
+    bid = d.get("bioma", "")
+    corto = bid.split(":")[-1]
+    ent = cat.get(bid) or cat.get(corto) or {}
+    return jsonify(ok=True, x=x, z=z, id=bid,
+                   es=ent.get("es") or b.bonito(bid),
+                   en=ent.get("en") or corto.replace("_", " ").title())
+
+
+@app.post("/api/mapa2/reiniciar")
+def api_m2_reiniciar():
+    u = _require_admin()
+    _m2_olvidar()
+    audit(u["name"], "reiniciar el lector de biomas")
+    return jsonify(ok=True, output="Reiniciando el lector de biomas — tarda ~1 minuto")
+
+
+
+def _bucle_precalentar():
+    """Deja dibujado de antemano el mapa visto de lejos.
+
+    Un azulejo tarda un par de segundos en calcularse la primera vez. Los
+    niveles alejados son pocos —340 azulejos cubren 131.000 bloques a la
+    redonda— y son justo los que se ven al abrir la pestaña. Haciéndolos de
+    madrugada, en segundo plano, abrir el mapa es instantáneo desde el primer
+    día en vez de un rato de cuadros grises.
+
+    Va despacio y de uno en uno a propósito: Minecraft manda en esta máquina.
+    """
+    time.sleep(600)                       # que el panel y el servidor arranquen
+    hechos = 0
+    while True:
+        try:
+            b, _ = _m2_mods()
+            srv = _m2_srv()
+            if srv.vivo():
+                for bpp in (512, 256, 128, 64):
+                    n = 65536 // (b.TAM * bpp)          # azulejos a cada lado
+                    for tz in range(-n, n):
+                        for tx in range(-n, n):
+                            destino = (b.carpeta_cache(b.nombre_mundo(srv), bpp)
+                                       / ("%d_%d.png" % (tx, tz)))
+                            if destino.is_file():
+                                continue
+                            with _m2_turno:
+                                b.azulejo(srv, bpp, tx, tz)
+                            hechos += 1
+                            time.sleep(1.0)             # sin prisa
+                if hechos:
+                    _syslog("[mapa2] precalentados %d azulejos" % hechos)
+                    hechos = 0
+        except Exception:
+            pass
+        time.sleep(6 * 3600)              # y de vez en cuando, por si cambió el mundo
+
+
 def _bucle_actualizar():
     """Mira si hay versión nueva, y si el mapa puede descongelarse ya.
 
@@ -3316,6 +4429,7 @@ def _bucle_actualizar():
 
 
 threading.Thread(target=_bucle_actualizar, daemon=True).start()
+threading.Thread(target=_bucle_precalentar, daemon=True).start()
 
 # ============================================================ feed del servidor
 #
