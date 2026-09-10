@@ -34,6 +34,27 @@ from PIL import Image
 SALIDA = 64
 
 
+def mascara_alfa(im):
+    """El fondo ya viene marcado: los píxeles transparentes.
+
+    Los generadores de imágenes de ahora devuelven PNG con transparencia, y
+    entonces adivinar el fondo por el blanco sobra — y encima estorba, porque un
+    icono con nieve o brillos blancos pegados al borde se comería medio dibujo.
+    Si la imagen trae alfa de verdad, esa ES la respuesta.
+    """
+    an, al = im.size
+    px = im.load()
+    fondo = bytearray(an * al)
+    hay = 0
+    for y in range(al):
+        fila = y * an
+        for x in range(an):
+            if px[x, y][3] < 128:
+                fondo[fila + x] = 1
+                hay += 1
+    return (fondo, hay)
+
+
 def mascara_fondo(im, umbral):
     """True donde hay fondo: blanco conectado con el borde."""
     an, al = im.size
@@ -154,8 +175,15 @@ def quitar_huecos(rej, minimo=6):
 
 
 def recortar(entrada, salida, umbral=24, huecos=False, forzar=None):
-    im = Image.open(entrada).convert("RGB")
-    fondo = mascara_fondo(im, umbral)
+    original = Image.open(entrada).convert("RGBA")
+    fondo, transparentes = mascara_alfa(original)
+    im = original.convert("RGB")
+    # Menos de un 2% transparente = la imagen no trae fondo recortado y hay que
+    # deducirlo por el blanco, como siempre.
+    if transparentes < original.size[0] * original.size[1] * 0.02:
+        fondo = mascara_fondo(im, umbral)
+    else:
+        print("  (fondo transparente: uso el alfa, no el blanco)")
     n = forzar or rejilla_nativa(im)
     rej = celdas(im, fondo, n)
     if huecos:

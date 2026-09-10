@@ -190,6 +190,36 @@ with sync_playwright() as pw:
         apagado = pag.evaluate("() => M2.verSlime")
         afirmar(apagado is False, "la casilla apaga los chunks de slime")
 
+    print("── la cabecera y la rejilla de capas ──")
+    cab = pag.evaluate("""() => ({
+      semilla: document.getElementById('m2-semilla').textContent,
+      version: document.getElementById('m2-version').textContent,
+      dim: document.getElementById('m2-dimension').textContent,
+      cols: getComputedStyle(document.getElementById('m2-capas')).gridTemplateColumns.split(' ').length,
+      etiquetas: document.querySelectorAll('.m2-cap .et').length
+    })""")
+    print("     ", cab)
+    afirmar(cab["semilla"].isdigit() and len(cab["semilla"]) > 10,
+            "la semilla se ve: %s" % cab["semilla"])
+    afirmar("Java" in cab["version"], "la versión se ve: %s" % cab["version"])
+    afirmar(cab["cols"] >= 2, "las capas van en rejilla (%d columnas)" % cab["cols"])
+    afirmar(cab["etiquetas"] >= 14, "cada capa lleva su nombre (%d)" % cab["etiquetas"])
+
+    pag.click("#m2-semilla-caja")
+    pag.wait_for_timeout(400)
+    afirmar("copiada" in pag.text_content("#m2-semilla-pista"),
+            "pulsar la semilla la copia")
+
+    print("── marcar y desmarcar todo ──")
+    pag.click("text=Desmarcar todo")
+    pag.wait_for_timeout(500)
+    n0 = pag.evaluate("() => (M2.enPantalla||[]).length")
+    afirmar(n0 == 0, "«desmarcar todo» deja el mapa sin iconos (%d)" % n0)
+    pag.click("text=Marcar todo")
+    pag.wait_for_timeout(700)
+    n1 = pag.evaluate("() => (M2.enPantalla||[]).length")
+    afirmar(n1 > 0, "«marcar todo» los devuelve (%d)" % n1)
+
     print("── que no se rompa nada ──")
     afirmar(not errores, "sin errores de JavaScript" + (" — %s" % errores[:3] if errores else ""))
 

@@ -329,16 +329,26 @@ def _altura_de(d):
     8 de cada 23 aldeas. Medido contra un servidor de verdad.
     """
     if d.get("project_start_to_heightmap"):
-        return Y_SUPERFICIE
+        return [Y_SUPERFICIE]
     h = d.get("start_height")
     if isinstance(h, dict):
         if "absolute" in h:
-            return int(h["absolute"])
+            return [int(h["absolute"])]
         lo = (h.get("min_inclusive") or {}).get("absolute")
         hi = (h.get("max_inclusive") or {}).get("absolute")
         if lo is not None and hi is not None:
-            return int((lo + hi) // 2)
-    return Y_SUPERFICIE
+            # `uniform` = el juego saca una altura AL AZAR de ese tramo y mira el
+            # bioma AHÍ. Las cámaras de desafío van entre -40 y -20, y en esos
+            # veinte bloques el bioma puede cambiar (a esa profundidad conviven
+            # cuevas y oscuridad profunda). Preguntando solo por el medio se
+            # escapaban 2 de cada 287; se pregunta por todo el tramo.
+            lo, hi = int(lo), int(hi)
+            paso = max(4, (hi - lo) // 4)
+            alturas = list(range(lo, hi + 1, paso))
+            if alturas[-1] != hi:
+                alturas.append(hi)
+            return alturas
+    return [Y_SUPERFICIE]
 
 
 # Los puntos donde se pregunta el bioma, respecto al CENTRO del chunk.
@@ -405,7 +415,10 @@ def leer_estructuras(jar):
                           for x in b if isinstance(x, str)}
             else:
                 biomas = set()
-            fuera[n.rsplit("/", 1)[-1][:-5]] = {"biomas": biomas, "y": _altura_de(d),
+            alturas = _altura_de(d)
+            fuera[n.rsplit("/", 1)[-1][:-5]] = {"biomas": biomas,
+                                                "y": alturas[len(alturas) // 2],
+                                                "alturas": alturas,
                                                 "puntos": _desplazamiento(d)}
         for dim in ("overworld", "nether", "end"):
             BIOMAS_DIMENSION[dim] = _resolver_etiqueta(z, dentro, "is_" + dim)
@@ -486,7 +499,8 @@ def confirmar(srv, semilla, x0, z0, x1, z1, conjuntos=None, progreso=None):
     # subterráneas en el suyo, y así son dos o tres viajes en vez de cien mil.
     def receta(m):
         i = ESTRUCTURAS.get(m) or {}
-        return (i.get("y", Y_SUPERFICIE), tuple(i.get("puntos") or PUNTOS_CENTRO))
+        return (tuple(i.get("alturas") or [i.get("y", Y_SUPERFICIE)]),
+                tuple(i.get("puntos") or PUNTOS_CENTRO))
 
     grupos = {}
     candidatas = {}
@@ -499,19 +513,21 @@ def confirmar(srv, semilla, x0, z0, x1, z1, conjuntos=None, progreso=None):
             for x, z in cs:
                 grupos.setdefault(r, []).append((x, z))
 
-    hechas, total = 0, sum(len(v) * len(r[1]) for r, v in grupos.items())
+    hechas = 0
+    total = sum(len(v) * len(r[0]) * len(r[1]) for r, v in grupos.items())
     biomas_de = {}                          # (receta, x, z) → conjunto de biomas
     for r, lista in grupos.items():
-        y, puntos = r
-        for dx, dz in puntos:
-            for i in range(0, len(lista), 2000):
-                trozo = lista[i:i + 2000]
-                nombres = srv.puntos([(x + dx, z + dz) for x, z in trozo], y=y)
-                for (x, z), b in zip(trozo, nombres):
-                    biomas_de.setdefault((r, x, z), set()).add(b)
-                hechas += len(trozo)
-                if progreso:
-                    progreso(hechas, total)
+        alturas, puntos = r
+        for y in alturas:
+            for dx, dz in puntos:
+                for i in range(0, len(lista), 2000):
+                    trozo = lista[i:i + 2000]
+                    nombres = srv.puntos([(x + dx, z + dz) for x, z in trozo], y=y)
+                    for (x, z), b in zip(trozo, nombres):
+                        biomas_de.setdefault((r, x, z), set()).add(b)
+                    hechas += len(trozo)
+                    if progreso:
+                        progreso(hechas, total)
 
     fuera = []
     for c in conjuntos:

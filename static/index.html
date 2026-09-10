@@ -479,12 +479,37 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
 .m2-donde b{color:var(--ink); font-weight:700}
 .m2-ir{width:150px; flex:0 0 auto}
-.m2-capas{display:flex; flex-wrap:wrap; gap:7px; margin:10px 2px 0}
-.m2-cap{display:inline-flex; align-items:center; gap:7px; padding:6px 11px 6px 8px; border-radius:5px;
-  font-size:.76rem; font-weight:700; cursor:pointer; user-select:none; border:0; color:var(--ink3);
-  background:var(--slotbg); transition:all .18s var(--spring);
+/* La cabecera, como la de Chunkbase: semilla, versión y dimensión a la vista.
+   La semilla es lo primero que quiere ver cualquiera que abra esto, y hasta
+   ahora había que ir a buscarla a la consola. */
+.m2-cabecera{display:flex; flex-wrap:wrap; gap:10px; margin:0 2px 12px}
+.m2-dato{flex:1 1 190px; min-width:0; background:var(--slotbg); border-radius:6px; padding:8px 12px;
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
-.m2-cap img{width:19px; height:19px; image-rendering:pixelated; opacity:.45; transition:opacity .18s}
+.m2-dato label{display:block; font-size:.66rem; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--ink3); opacity:.75; margin-bottom:3px}
+.m2-dato .v{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.92rem; color:var(--ink);
+  font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.m2-dato.pulsa{cursor:pointer; transition:background .18s}
+.m2-dato.pulsa:hover{background:rgba(111,212,78,.08)}
+.m2-dato .pista{font-size:.62rem; color:var(--ink3); opacity:.6}
+
+/* Las capas en rejilla con su nombre al lado, no en pastillas apretadas: con
+   veinte tipos, una fila que se dobla sola es imposible de recorrer con la
+   vista. En rejilla siempre están en el mismo sitio. */
+.m2-capas{display:grid; grid-template-columns:repeat(auto-fill, minmax(205px, 1fr));
+  gap:7px; margin:12px 2px 0}
+.m2-cap{display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:5px;
+  font-size:.76rem; font-weight:700; cursor:pointer; user-select:none; border:0; color:var(--ink3);
+  background:var(--slotbg); transition:all .18s var(--spring); text-align:left; width:100%;
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
+.m2-cap .et{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.m2-cap.on{box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06),
+  0 0 0 2px var(--slime) inset}
+.m2-marcar{display:flex; gap:14px; margin:10px 4px 0; font-size:.75rem}
+.m2-marcar button{background:none; border:0; color:var(--ink3); cursor:pointer; padding:2px 0;
+  font-size:.75rem; font-weight:700; text-decoration:underline; text-underline-offset:3px}
+.m2-marcar button:hover{color:var(--slime2)}
+.m2-cap img{width:20px; height:20px; flex:0 0 20px; image-rendering:pixelated; opacity:.4; transition:opacity .18s}
 .m2-cap.on{color:var(--ink)}
 .m2-cap.on img{opacity:1}
 .m2-cap .n{opacity:.5; font-weight:400}
@@ -1043,6 +1068,14 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
 
     <div class="card hidden" id="m2-caja" style="padding:10px">
+      <div class="m2-cabecera">
+        <div class="m2-dato pulsa" id="m2-semilla-caja" onclick="m2CopiarSemilla()" title="Pulsa para copiar">
+          <label>Semilla</label><div class="v" id="m2-semilla">—</div>
+          <div class="pista" id="m2-semilla-pista">pulsa para copiarla</div>
+        </div>
+        <div class="m2-dato"><label>Versión</label><div class="v" id="m2-version">—</div></div>
+        <div class="m2-dato"><label>Dimensión</label><div class="v" id="m2-dimension">Overworld</div></div>
+      </div>
       <div class="m2-top">
         <div class="m2-donde" id="m2-donde">Mueve el ratón por el mapa</div>
         <input class="m2-ir" id="m2-ir" placeholder="Ir a:  x z" inputmode="numeric"
@@ -1061,6 +1094,10 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
       </div>
 
       <div class="m2-capas" id="m2-capas"></div>
+      <div class="m2-marcar">
+        <button onclick="m2Todas(true)">Marcar todo</button>
+        <button onclick="m2Todas(false)">Desmarcar todo</button>
+      </div>
 
       <div class="note" style="margin:12px 4px 2px">
         Todo el mundo, no solo lo explorado: los biomas y las estructuras salen de la <b>semilla</b>, calculados
@@ -1644,9 +1681,9 @@ function esc(s){ const d=document.createElement('div'); d.textContent=s; return 
 function ago(ts){ const s=(Date.now()/1000-ts); if(s<120) return t('now');
   if(s<7200) return t('min_ago', Math.round(s/60)); if(s<172800) return t('h_ago', Math.round(s/3600));
   return t('d_ago', Math.round(s/86400)); }
-const MOD_DEFAULTS=['view_dashboard','view_players','whitelist','ban','kick','say','player_actions','memories','memories_upload','markers_add'];
-const PUB_DEFAULTS=['view_dashboard','view_players','memories','memories_upload','markers_add'];
-const VIEW_DEFAULTS=['view_dashboard','view_players','memories','markers_add'];
+const MOD_DEFAULTS=['view_dashboard','view_players','whitelist','ban','kick','say','player_actions','memories','memories_upload','markers_add','mapa_semilla'];
+const PUB_DEFAULTS=['view_dashboard','view_players','memories','memories_upload','markers_add','mapa_semilla'];
+const VIEW_DEFAULTS=['view_dashboard','view_players','memories','markers_add','mapa_semilla'];
 function hasPerm(p){
   if (!ME) return false;
   if (ME.role==='admin') return true;
@@ -3018,6 +3055,9 @@ async function m2Cargar(){
   }
   off.classList.add('hidden'); caja.classList.remove('hidden');
   M2.est = d; M2.listo = true;
+  $('m2-semilla').textContent = d.semilla || '—';
+  $('m2-version').textContent = d.version ? ('Java ' + d.version) : '—';
+  $('m2-dimension').textContent = d.dimension || 'Overworld';
   for (const k in d.leyenda){
     const b=d.leyenda[k], c=b.c;
     M2.porColor.set(parseInt(c.slice(1),16), b);
@@ -3039,6 +3079,46 @@ async function m2Cargar(){
     if (typeof g.apar==='boolean') M2.verAparicion = g.apar;
   }catch(_){}
   m2Capas(); m2Enganchar(); m2Medir(); m2Pinta(); m2PideEstructuras(); m2PideSlime();
+}
+
+/* La semilla, de un clic. Es el dato que la gente quiere copiar para pegarlo en
+   Chunkbase o en un mundo nuevo, y escribir veinte cifras a mano es pedir que se
+   equivoquen en una. */
+function m2CopiarSemilla(){
+  const s = (M2.est && M2.est.semilla) || '';
+  if (!s) return;
+  const pista = $('m2-semilla-pista');
+  const bien = ()=>{ pista.textContent = '✓ copiada'; setTimeout(()=>{
+    pista.textContent = 'pulsa para copiarla'; }, 1800); };
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(s).then(bien).catch(()=>m2CopiarAPelo(s, bien));
+  } else m2CopiarAPelo(s, bien);
+}
+function m2CopiarAPelo(s, bien){
+  // sin permiso de portapapeles (o sin https) queda el truco de siempre
+  try{
+    const a=document.createElement('textarea'); a.value=s;
+    a.style.position='fixed'; a.style.opacity='0';
+    document.body.appendChild(a); a.select(); document.execCommand('copy');
+    a.remove(); bien();
+  }catch(_){ $('m2-semilla-pista').textContent='cópiala a mano'; }
+}
+
+/* Marcar o desmarcar todas las capas de golpe. Al marcar todo se fuerzan
+   también las que el zoom esconde: si alguien pulsa «marcar todo», quiere
+   verlas, no que el mapa decida por él. */
+function m2Todas(encender){
+  if (!M2.est) return;
+  M2.apagados.clear(); M2.forzados.clear();
+  for (const t of M2.est.tipos){
+    if (encender) M2.forzados.add(t.k);
+    else M2.apagados.add(t.k);
+  }
+  M2.verSlime = encender && M2.esc >= M2_SLIME_DESDE;
+  M2.verAparicion = encender;
+  // Se vuelven a pedir por si la lista que hay en memoria es de otro sitio:
+  // «marcar todo» tiene que enseñar todo lo que hay AQUÍ, no lo que quedó.
+  m2Guardar(); m2Capas(); m2PideSlime(); m2PideEstructuras(); m2Iconos();
 }
 
 function m2Guardar(){
@@ -3273,7 +3353,8 @@ function m2Capas(){
     if (nota) b.title=nota;
     if (icono){ const im=document.createElement('img'); im.src=icono; im.alt='';
       im.onerror=()=>{ im.style.visibility='hidden'; }; b.appendChild(im); }
-    b.appendChild(document.createTextNode(etq));
+    const e=document.createElement('span'); e.className='et'; e.textContent=etq;
+    b.appendChild(e);
     return b;
   };
   if (M2.est.aparicion){
@@ -3291,7 +3372,6 @@ function m2Capas(){
   }
   for (const t of M2.est.tipos){
     const n=M2.cuenta[t.k]||0;
-    if (!n && M2.apagados.has(t.k)) continue;      // ni existe aquí ni la quiere ver
     const sale=m2SaleAhora(t);
     const lejos=!sale && !M2.apagados.has(t.k);    // apagado por el zoom, no por nadie
     const b=document.createElement('button');
@@ -3307,8 +3387,9 @@ function m2Capas(){
     const im=document.createElement('img'); im.src=MK_ICON(t.icono); im.alt='';
     im.onerror=()=>{ im.style.visibility='hidden'; };
     b.appendChild(im);
-    b.appendChild(document.createTextNode(t.es));
-    const c=document.createElement('span'); c.className='n'; c.textContent=' '+n;
+    const e=document.createElement('span'); e.className='et'; e.textContent=t.es;
+    b.appendChild(e);
+    const c=document.createElement('span'); c.className='n'; c.textContent=n;
     b.appendChild(c);
     w.appendChild(b);
   }

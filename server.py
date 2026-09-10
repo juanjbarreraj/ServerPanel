@@ -48,17 +48,16 @@ DEFAULT_PERMS["viewer"]["memories_upload"] = False
 DEFAULT_PERMS["mod"]["markers_add"] = True      # poner lugares en el mapa
 DEFAULT_PERMS["viewer"]["markers_add"] = True
 # El mapa del mundo entero enseña TODAS las estructuras, también las de sitios
-# donde nadie ha estado. Eso es una herramienta de admin, no una vista más:
-# dárselo a todos de entrada le destriparía la exploración a los demás sin que
-# nadie lo haya decidido. Arranca apagado y se enciende por persona en la
-# pestaña de Moderadores.
-DEFAULT_PERMS["mod"]["mapa_semilla"] = False
-DEFAULT_PERMS["viewer"]["mapa_semilla"] = False
+# donde nadie ha estado. Arrancó apagado por si acaso —destripa la exploración—
+# pero Juan decidió que lo vea todo el mundo, así que va encendido. Sigue siendo
+# un permiso: se puede quitar a alguien en concreto desde Moderadores.
+DEFAULT_PERMS["mod"]["mapa_semilla"] = True
+DEFAULT_PERMS["viewer"]["mapa_semilla"] = True
 # vista pública (entra con el PIN compartido): mirar, subir a memorias y
 # marcar lugares en el mapa — borrarlos sigue siendo de moderadores y admin
 DEFAULT_PERMS["public"] = {"view_dashboard": True, "view_players": True,
                            "memories": True, "memories_upload": True,
-                           "markers_add": True}
+                           "markers_add": True, "mapa_semilla": True}
 
 # ------------------------------------------------------------------ helpers
 def hash_pw(pw: str) -> str:
@@ -3489,14 +3488,28 @@ def api_m2_estado():
             k = e.tipo_de(m)
             if k:
                 paso[k] = min(paso.get(k, 1 << 30), datos[0] * 16)
+    # Solo los tipos que PUEDEN salir aquí. Antes se mandaban los veinte y la
+    # rejilla enseñaba «Fortaleza del Nether · 0» y «Ciudad del End · 0» en un
+    # mapa del overworld: una casilla que nunca se va a encender solo estorba.
+    # También se caen las que no se calculan (fortalezas, minas, tesoros), que
+    # van por otra cuenta y saldrían siempre a cero.
+    posibles = set()
+    for c in e.conjuntos_de("overworld"):
+        for m in (e.CONJUNTOS[c][3] or [c]):
+            k = e.tipo_de(m)
+            if k:
+                posibles.add(k)
     tipos = []
     for k in sorted(e.TIPOS, key=lambda k: e.TIPOS[k][5]):
+        if k not in posibles:
+            continue
         icono, es, en, _dist, oculto, orden = e.TIPOS[k]
         tipos.append({"k": k, "icono": icono, "es": es, "en": en,
                       "oculto": oculto, "paso": paso.get(k, 512)})
     return jsonify(ok=True, semilla=str(salud["semilla"]), y=salud.get("y"),
                    niveles=b.NIVELES, tam=b.TAM, leyenda=leyenda, tipos=tipos,
-                   aparicion=punto_de_aparicion())
+                   aparicion=punto_de_aparicion(), version=mc_version(),
+                   dimension="Overworld")
 
 
 # signed=True o Flask no acepta coordenadas negativas y media mitad del
