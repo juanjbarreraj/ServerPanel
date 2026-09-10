@@ -163,6 +163,41 @@ with sync_playwright() as pw:
         ok(bool(g), "llegan generadores")
         ok(all(s[3].startswith('spawner_') for s in g), "cada uno dice qué bicho es")
 
+
+    print("── la barra de arriba se va al bajar (solo en Explorar) ──")
+    pag.set_viewport_size({"width":1280,"height":700}); pag.wait_for_timeout(400)
+    arriba = pag.evaluate("""() => { window.scrollTo(0,0); return 1; }""")
+    pag.wait_for_timeout(700)
+    ok(not pag.evaluate("() => document.getElementById('topbar').classList.contains('fuera')"),
+       "arriba del todo la barra está")
+    pag.evaluate("() => window.scrollTo(0, 400)")
+    pag.wait_for_timeout(800)
+    ok(pag.evaluate("() => document.getElementById('topbar').classList.contains('fuera')"),
+       "al bajar se va")
+    fuera_pos = pag.evaluate("""() => { const r=document.getElementById('topbar').getBoundingClientRect();
+        return {abajo: Math.round(r.bottom), op: getComputedStyle(document.getElementById('topbar')).opacity}; }""")
+    ok(fuera_pos["abajo"] <= 2, "y de verdad sale de la pantalla (borde inferior %s)" % fuera_pos["abajo"])
+    # a media altura NO vuelve: solo arriba del todo
+    pag.evaluate("() => window.scrollTo(0, 180)")
+    pag.wait_for_timeout(700)
+    ok(pag.evaluate("() => document.getElementById('topbar').classList.contains('fuera')"),
+       "subiendo a medias sigue escondida")
+    pag.evaluate("() => window.scrollTo(0, 0)")
+    pag.wait_for_timeout(800)
+    ok(not pag.evaluate("() => document.getElementById('topbar').classList.contains('fuera')"),
+       "y vuelve al llegar arriba del todo")
+    ok(pag.evaluate("() => getComputedStyle(document.getElementById('topbar')).transitionProperty.includes('transform')"),
+       "la vuelta va con animación")
+    # en otra pestaña se comporta como siempre
+    pag.click("#tabbtn-players"); pag.wait_for_timeout(400)
+    pag.evaluate("() => window.scrollTo(0, 400)")
+    pag.wait_for_timeout(800)
+    ok(not pag.evaluate("() => document.getElementById('topbar').classList.contains('fuera')"),
+       "en otras pestañas NO se esconde")
+    pag.click("#tabbtn-mapa2"); pag.wait_for_timeout(600)
+    pag.evaluate("() => window.scrollTo(0, 0)")
+    pag.wait_for_timeout(500)
+
     print("── sin errores de JavaScript ──")
     ok(not err, "consola limpia: %r" % err[:3])
     nav.close()

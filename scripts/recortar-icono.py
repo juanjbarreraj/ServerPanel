@@ -24,6 +24,8 @@ Uso:
     python3 scripts/recortar-icono.py entrada.png=static/ui/s-mundo.png
     ... --umbral 8    si el DIBUJO es casi blanco y toca el borde (papel, nieve)
     ... --huecos      borra además las manchas de blanco encerrado grandes
+    ... --rejilla 14   fuerza la rejilla nativa (la de static/ui/ es 14x14)
+    ... --colores 10   reduce la paleta: static/ui/ va de 5 a 12 colores planos
 """
 import sys
 from collections import Counter, deque
@@ -53,6 +55,67 @@ def mascara_alfa(im):
                 fondo[fila + x] = 1
                 hay += 1
     return (fondo, hay)
+
+
+def mascara_tablero(im):
+    """El fondo es el DAMERO gris de «esto es transparente», pintado de verdad.
+
+    Muchos generadores devuelven el PNG con el damero horneado dentro: no hay
+    alfa y no es blanco liso, así que ni `mascara_alfa` ni la inundación por
+    blanco valen — la segunda deja el damero entero porque los cuadros grises
+    no son blancos.
+
+    El primer intento fue buscar los DOS colores exactos del damero en el
+    borde. No sirve: la imagen viene recomprimida y el borde tenía 483 colores
+    distintos, ninguno con más del 11%. Lo que sí aguanta la compresión es la
+    propiedad: el damero es **claro y neutro** (los tres canales casi iguales).
+    Con eso más la inundación desde el borde, un blanco o un gris que sea
+    DIBUJO se salva igual, porque está rodeado por el contorno oscuro.
+
+    Devuelve (mascara, cuantos) o None si el borde no parece un fondo así.
+    """
+    an, al = im.size
+    px = im.load()
+
+    def neutro(c):
+        return (max(c) - min(c)) <= 24        # gris de verdad, no un color
+
+    # El umbral de claridad NO puede ser fijo: el mismo damero llega a veces a
+    # 254 y a veces a 131, según cómo se haya recomprimido la imagen. Se aprende
+    # del propio borde: se miran sus grises y se toma el más oscuro con margen.
+    borde = []
+    for x in range(0, an, 5):
+        borde.append(px[x, 0][:3]); borde.append(px[x, al - 1][:3])
+    for y in range(0, al, 5):
+        borde.append(px[0, y][:3]); borde.append(px[an - 1, y][:3])
+    grises = sorted(sum(c) / 3 for c in borde if neutro(c))
+    if not borde or len(grises) / len(borde) < 0.55:
+        return None                            # el borde no es un fondo gris
+    suelo = max(100.0, grises[len(grises) // 20] - 12)
+
+    def es_fondo(c):
+        return neutro(c) and (sum(c) / 3) >= suelo
+
+    fondo = bytearray(an * al)
+    cola = deque()
+
+    def mirar(x, y):
+        if not fondo[y * an + x] and es_fondo(px[x, y][:3]):
+            fondo[y * an + x] = 1
+            cola.append((x, y))
+
+    for x in range(an):
+        mirar(x, 0); mirar(x, al - 1)
+    for y in range(al):
+        mirar(0, y); mirar(an - 1, y)
+    while cola:
+        x, y = cola.popleft()
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < an and 0 <= ny < al:
+                mirar(nx, ny)
+    hay = sum(fondo)
+    return (fondo, hay) if hay > an * al * 0.08 else None
 
 
 def mascara_fondo(im, umbral):
@@ -174,14 +237,22 @@ def quitar_huecos(rej, minimo=6):
     return rej
 
 
-def recortar(entrada, salida, umbral=24, huecos=False, forzar=None):
+def recortar(entrada, salida, umbral=24, huecos=False, forzar=None, colores=None):
     original = Image.open(entrada).convert("RGBA")
     fondo, transparentes = mascara_alfa(original)
     im = original.convert("RGB")
     # Menos de un 2% transparente = la imagen no trae fondo recortado y hay que
     # deducirlo por el blanco, como siempre.
     if transparentes < original.size[0] * original.size[1] * 0.02:
-        fondo = mascara_fondo(im, umbral)
+        # Antes de rendirse al blanco: ¿es el damero gris de «transparente»
+        # pintado dentro del PNG? Pasa con casi todo lo que sale de un banco de
+        # imágenes, y tratarlo como blanco se come el dibujo o no quita nada.
+        tablero = mascara_tablero(im)
+        if tablero:
+            fondo = tablero[0]
+            print("  (fondo de damero gris: lo quito por su patrón)")
+        else:
+            fondo = mascara_fondo(im, umbral)
     else:
         print("  (fondo transparente: uso el alfa, no el blanco)")
     n = forzar or rejilla_nativa(im)
@@ -198,6 +269,15 @@ def recortar(entrada, salida, umbral=24, huecos=False, forzar=None):
             if c is not None:
                 p[i, j] = (c[0], c[1], c[2], 255)
                 opacos += 1
+    # Los iconos de las pestañas son de 5 a 12 colores planos. Una imagen
+    # recomprimida trae decenas de tonos casi iguales que no se ven pero que
+    # rompen ese aire: reduciendo la paleta el icono entra en la familia.
+    if colores:
+        recorte = chico.convert("RGB").quantize(colors=colores, method=Image.MEDIANCUT)
+        recorte = recorte.convert("RGBA")
+        alfa = chico.getchannel("A")
+        recorte.putalpha(alfa)
+        chico = recorte
     grande = chico.resize((SALIDA, SALIDA), Image.NEAREST)
     Path(salida).parent.mkdir(parents=True, exist_ok=True)
     grande.save(salida)
@@ -209,7 +289,7 @@ def recortar(entrada, salida, umbral=24, huecos=False, forzar=None):
 
 
 def main():
-    pares, umbral, huecos, forzar = [], 24, False, None
+    pares, umbral, huecos, forzar, colores = [], 24, False, None, None
     args = sys.argv[1:]
     i = 0
     while i < len(args):
@@ -218,6 +298,8 @@ def main():
             umbral = int(args[i + 1]); i += 2
         elif a == "--rejilla":
             forzar = int(args[i + 1]); i += 2
+        elif a == "--colores":
+            colores = int(args[i + 1]); i += 2
         elif a == "--huecos":
             huecos = True; i += 1
         elif "=" in a:
@@ -228,7 +310,7 @@ def main():
         print(__doc__)
         return 2
     for entrada, salida in pares:
-        recortar(entrada, salida, umbral, huecos, forzar)
+        recortar(entrada, salida, umbral, huecos, forzar, colores)
     return 0
 
 

@@ -141,6 +141,12 @@ h1.brand{font-size:1rem; letter-spacing:.06em; margin-bottom:6px; line-height:1.
   transition:padding-top .25s ease}
 #topbar.compacto{padding-top:6px}
 
+/* En «Explorar» la barra no se encoge: se VA. La tira de capas empieza justo
+   debajo y con la barra encogida seguían pisándose, así que ahí se sube entera
+   al bajar y solo vuelve cuando se llega arriba del todo. */
+#topbar{transition:padding-top .25s ease, transform .28s ease, opacity .22s ease}
+#topbar.fuera{transform:translateY(-100%); opacity:0; pointer-events:none}
+
 /* Lo que se encoge. Todo con transición para que no dé un salto. */
 #topbar.compacto header.top{padding:6px 14px; margin-bottom:8px; gap:10px}
 #topbar.compacto header.top img.icon{width:34px; height:34px}
@@ -921,7 +927,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <div class="land-xp" id="land-xp"><i></i></div>
     <div id="land-pin">
       <div class="card pin-card">
-        <h3><img class="hico" src="/static/ui/s-candado.png?v=14" alt=""
+        <h3><img class="hico" src="/static/ui/s-candado.png?v=15" alt=""
           onerror="this.outerHTML='🔒 '"><span data-i18n="pin_title">PIN de acceso</span></h3>
         <input id="pin-in" maxlength="32" autocomplete="off" style="margin-top:14px"
                onkeydown="if(event.key==='Enter')sendPin()">
@@ -1047,7 +1053,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <div class="pv-right">
           <div class="grid tiles pv-tiles" id="pv-tiles"></div>
           <div class="card hidden" id="pv-admin" style="margin-bottom:14px">
-            <h3><img class="hico" src="/static/ui/s-posicion.png?v=14" alt="" onerror="this.outerHTML='📍 '">Posición y control</h3>
+            <h3><img class="hico" src="/static/ui/s-posicion.png?v=15" alt="" onerror="this.outerHTML='📍 '">Posición y control</h3>
             <div id="pv-pos" class="note" style="margin-top:0">…</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
               <button class="btn small" id="pv-tp" onclick="tpAbrir()">🧍 Teleport</button>
@@ -1073,7 +1079,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- MAPA -->
   <section id="tab-map" class="hidden">
     <div class="card hidden" id="mapa-congelado" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-reiniciar.png?v=14" alt="" onerror="this.outerHTML='⏸️ '">El mapa está en pausa</h3>
+      <h3><img class="hico" src="/static/ui/s-reiniciar.png?v=15" alt="" onerror="this.outerHTML='⏸️ '">El mapa está en pausa</h3>
       <div class="note" id="mapa-congelado-n" style="margin-top:0"></div>
       <button class="btn small warn hidden" id="mapa-congelado-b" onclick="verMapa()">Actualizar el mapa</button>
     </div>
@@ -1082,7 +1088,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
       <div class="note" style="margin:8px 4px 2px" data-i18n="map_note">El mundo real en 3D</div>
     </div>
     <div class="card hidden" id="map-mk" style="margin-top:14px">
-      <h3><img class="hico" src="/static/ui/s-posicion.png?v=14" alt="" onerror="this.outerHTML='📍 '">Lugares del server</h3>
+      <h3><img class="hico" src="/static/ui/s-posicion.png?v=15" alt="" onerror="this.outerHTML='📍 '">Lugares del server</h3>
       <div class="note" style="margin-top:0">Los marcadores aparecen sobre el mapa. Las coordenadas son las del juego (F3).</div>
       <div class="formrow" style="margin-top:10px; flex-wrap:wrap">
         <input id="mk-name" placeholder="Nombre (ej: Base de Jakobino)" style="min-width:200px">
@@ -1101,8 +1107,8 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
       <div class="pgrid" id="mk-list" style="margin-top:4px"></div>
       <div id="mk-scan-row" class="hidden">
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:14px">
-          <button class="btn small" onclick="mkMarcadores()"><img class="bico" src="/static/ui/s-posicion.png?v=14" alt="" onerror="this.outerHTML='📍 '">Actualizar los iconos</button>
-          <button class="btn small ghost" onclick="mkScan()"><img class="bico" src="/static/ui/mapa.png?v=14" alt="" onerror="this.outerHTML='🔎 '">Volver a dibujar el mapa entero</button>
+          <button class="btn small" onclick="mkMarcadores()"><img class="bico" src="/static/ui/s-posicion.png?v=15" alt="" onerror="this.outerHTML='📍 '">Actualizar los iconos</button>
+          <button class="btn small ghost" onclick="mkScan()"><img class="bico" src="/static/ui/mapa.png?v=15" alt="" onerror="this.outerHTML='🔎 '">Volver a dibujar el mapa entero</button>
         </div>
         <div class="note">Volver a dibujar repinta el terreno y tarda más de una hora; normalmente no hace falta, porque el mapa se actualiza solo cada noche.</div>
         <div class="note" id="mk-estado" style="margin-top:8px"></div>
@@ -1113,7 +1119,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- MAPA DEL MUNDO ENTERO — biomas y estructuras calculados de la semilla -->
   <section id="tab-mapa2" class="hidden">
     <div class="card hidden" id="m2-apagado" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/explorar.png?v=14" alt="" onerror="this.outerHTML='🧭 '">El explorador no está encendido</h3>
+      <h3><img class="hico" src="/static/ui/explorar.png?v=15" alt="" onerror="this.outerHTML='🧭 '">El explorador no está encendido</h3>
       <div class="note" id="m2-apagado-n" style="margin-top:0"></div>
     </div>
 
@@ -1234,7 +1240,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
     <div class="card">
       <h3>Plugins instalados</h3>
-      <div class="drop" id="drop"><img class="dico" src="/static/ui/s-tolva.png?v=14" alt=""
+      <div class="drop" id="drop"><img class="dico" src="/static/ui/s-tolva.png?v=15" alt=""
         onerror="this.outerHTML='⬆️ '">Arrastra un plugin .jar aquí, o haz clic para elegirlo</div>
       <input type="file" id="plug-file" accept=".jar" class="hidden">
       <div style="overflow-x:auto; margin-top:12px"><table id="plug-table">
@@ -1263,7 +1269,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <!-- MEMORIAS DEL SERVER -->
   <section id="tab-memories" class="hidden">
     <div class="card">
-      <h3><img class="hico" src="/static/ui/s-camara.png?v=14" alt=""
+      <h3><img class="hico" src="/static/ui/s-camara.png?v=15" alt=""
         onerror="this.outerHTML='🖼️ '"><span data-i18n="mem_title">Memorias del server</span></h3>
       <div class="memtabs" style="margin-top:12px">
         <button class="btn small" id="memtab-g" onclick="memMode('g')"><img class="bico"
@@ -1290,7 +1296,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   <section id="tab-sistema" class="hidden">
     <div class="grid two" style="margin-bottom:14px">
       <div class="card">
-        <h3><img class="hico" src="/static/ui/sistema.png?v=14" alt="" onerror="this.outerHTML='⚙️ '">Estado del sistema</h3>
+        <h3><img class="hico" src="/static/ui/sistema.png?v=15" alt="" onerror="this.outerHTML='⚙️ '">Estado del sistema</h3>
         <div class="kv" id="sys-kv">cargando…</div>
         <div class="formrow" style="margin-top:12px">
           <input id="sys-pin" placeholder="PIN público (4-32)" maxlength="32">
@@ -1299,12 +1305,12 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <div class="note">El PIN es la puerta de la vista pública. Cámbialo cuando quieras, las sesiones ya abiertas siguen vivas hasta 30 días.</div>
       </div>
       <div class="card">
-        <h3><img class="hico" src="/static/ui/s-candado.png?v=14" alt="" onerror="this.outerHTML='🔐 '">Verificación en dos pasos (tu cuenta)</h3>
+        <h3><img class="hico" src="/static/ui/s-candado.png?v=15" alt="" onerror="this.outerHTML='🔐 '">Verificación en dos pasos (tu cuenta)</h3>
         <div id="sys-2fa">cargando…</div>
       </div>
     </div>
     <div class="card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-mundo.png?v=14" alt="" onerror="this.outerHTML='🌎 '">Versión de Minecraft</h3>
+      <h3><img class="hico" src="/static/ui/s-mundo.png?v=15" alt="" onerror="this.outerHTML='🌎 '">Versión de Minecraft</h3>
       <div id="ver-kv">cargando…</div>
       <div class="actions" style="margin-top:12px">
         <button class="btn small hidden" id="ver-ahora" onclick="verAhora()">Actualizar ahora</button>
@@ -1319,20 +1325,20 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
 
     <div class="card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-reiniciar.png?v=14" alt="" onerror="this.outerHTML='🔄 '">Lo que se actualiza solo</h3>
+      <h3><img class="hico" src="/static/ui/s-reiniciar.png?v=15" alt="" onerror="this.outerHTML='🔄 '">Lo que se actualiza solo</h3>
       <div id="sys-auto" class="note">cargando…</div>
     </div>
     <div class="card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-herramientas.png?v=14" alt="" onerror="this.outerHTML='🧰 '">Operaciones</h3>
+      <h3><img class="hico" src="/static/ui/s-herramientas.png?v=15" alt="" onerror="this.outerHTML='🧰 '">Operaciones</h3>
       <div class="actions">
-        <button class="btn small" onclick="sysOp('regen_icons','¿Regenerar todos los íconos? (1-2 min)')"><img class="bico" src="/static/ui/s-paleta.png?v=14" alt="" onerror="this.outerHTML='🎨 '">Regenerar íconos</button>
-        <button class="btn small warn" onclick="sysOp('restart_panel','¿Reiniciar el panel? (~10 seg fuera)')"><img class="bico" src="/static/ui/s-reiniciar.png?v=14" alt="" onerror="this.outerHTML='♻️ '">Reiniciar panel</button>
-        <button class="btn small danger" onclick="sysPaper()"><img class="bico" src="/static/ui/s-paper.png?v=14" alt="" onerror="this.outerHTML='📄 '">Migrar a Paper</button>
-        <a class="btn small ghost" href="/api/system/backup_extras"><img class="bico" src="/static/ui/copias.png?v=14" alt="" onerror="this.outerHTML='💾 '">Respaldo (fotos+cuentas)</a>
+        <button class="btn small" onclick="sysOp('regen_icons','¿Regenerar todos los íconos? (1-2 min)')"><img class="bico" src="/static/ui/s-paleta.png?v=15" alt="" onerror="this.outerHTML='🎨 '">Regenerar íconos</button>
+        <button class="btn small warn" onclick="sysOp('restart_panel','¿Reiniciar el panel? (~10 seg fuera)')"><img class="bico" src="/static/ui/s-reiniciar.png?v=15" alt="" onerror="this.outerHTML='♻️ '">Reiniciar panel</button>
+        <button class="btn small danger" onclick="sysPaper()"><img class="bico" src="/static/ui/s-paper.png?v=15" alt="" onerror="this.outerHTML='📄 '">Migrar a Paper</button>
+        <a class="btn small ghost" href="/api/system/backup_extras"><img class="bico" src="/static/ui/copias.png?v=15" alt="" onerror="this.outerHTML='💾 '">Respaldo (fotos+cuentas)</a>
       </div>
       <div class="note">Las copias del MUNDO viven en la pestaña Copias, y lo del mapa (actualizar iconos o volver a dibujarlo) está abajo del todo en la pestaña Mapa. La migración a Paper deja el server ~3 min fuera y habilita plugins.</div>
     </div>
-    <div class="card"><h3><img class="hico" src="/static/ui/consola.png?v=14" alt="" onerror="this.outerHTML='📜 '">Registro del sistema</h3>
+    <div class="card"><h3><img class="hico" src="/static/ui/consola.png?v=15" alt="" onerror="this.outerHTML='📜 '">Registro del sistema</h3>
       <div class="console" style="height:220px; color:#c3c2b7" id="sys-log">…</div></div>
   </section>
 
@@ -1345,7 +1351,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
 
     <div class="card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-mundo.png?v=14" alt="" onerror="this.outerHTML='🌎 '">El mundo de ahora</h3>
+      <h3><img class="hico" src="/static/ui/s-mundo.png?v=15" alt="" onerror="this.outerHTML='🌎 '">El mundo de ahora</h3>
       <div id="mu-activo">cargando…</div>
       <div class="actions" style="margin-top:12px">
         <button class="btn small" id="mu-prep" onclick="muPreparar()">Descargar este mundo</button>
@@ -1358,14 +1364,14 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
 
     <div class="card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/copias.png?v=14" alt="" onerror="this.outerHTML='📦 '">Mundos guardados</h3>
+      <h3><img class="hico" src="/static/ui/copias.png?v=15" alt="" onerror="this.outerHTML='📦 '">Mundos guardados</h3>
       <div id="mu-lista">cargando…</div>
       <div class="note" id="mu-disco"></div>
     </div>
 
     <div class="card" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/s-tolva.png?v=14" alt="" onerror="this.outerHTML='⬆️ '">Subir un mundo</h3>
-      <div class="drop" id="mu-drop"><img class="dico" src="/static/ui/s-tolva.png?v=14" alt=""
+      <h3><img class="hico" src="/static/ui/s-tolva.png?v=15" alt="" onerror="this.outerHTML='⬆️ '">Subir un mundo</h3>
+      <div class="drop" id="mu-drop"><img class="dico" src="/static/ui/s-tolva.png?v=15" alt=""
         onerror="this.outerHTML='⬆️ '">Arrastra aquí el .zip o .tar.gz del mundo, o haz clic para elegirlo</div>
       <input type="file" id="mu-file" accept=".zip,.tar,.gz,.tgz" class="hidden">
       <div class="hidden" id="mu-subiendo">
@@ -1378,7 +1384,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
 
     <div class="card hidden" id="mu-traer" style="margin-bottom:14px">
-      <h3><img class="hico" src="/static/ui/jugadores.png?v=14" alt="" onerror="this.outerHTML='⚔️ '">Traer los jugadores de otro mundo</h3>
+      <h3><img class="hico" src="/static/ui/jugadores.png?v=15" alt="" onerror="this.outerHTML='⚔️ '">Traer los jugadores de otro mundo</h3>
       <div class="note" style="margin-top:0">Copia el historial de todos al mundo que está activo ahora.
         Sirve para estrenar mapa sin que nadie pierda lo suyo: el ranking del panel lee estos mismos
         ficheros, así que la tabla sigue donde estaba.</div>
@@ -1397,7 +1403,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     </div>
 
     <div class="card">
-      <h3><img class="hico" src="/static/ui/s-brote.png?v=14" alt="" onerror="this.outerHTML='🌱 '">Estrenar un mundo</h3>
+      <h3><img class="hico" src="/static/ui/s-brote.png?v=15" alt="" onerror="this.outerHTML='🌱 '">Estrenar un mundo</h3>
       <div class="formrow">
         <input id="mu-nn" style="flex:1; min-width:200px" placeholder="Nombre (ej: Temporada 2)" maxlength="48">
         <input id="mu-semilla" placeholder="Semilla (opcional)" maxlength="48" style="max-width:200px">
@@ -1412,7 +1418,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 <!-- qué hacer con el mundo recién subido -->
 <div class="modal-bg" id="mu-modal" onclick="if(event.target.id==='mu-modal')cerrar('mu-modal')">
   <div class="modal" style="max-width:560px" onclick="event.stopPropagation()">
-    <h3 style="margin-top:0"><img class="hico" src="/static/ui/s-mundo.png?v=14" alt="" onerror="this.outerHTML='🌎 '">Mundo subido</h3>
+    <h3 style="margin-top:0"><img class="hico" src="/static/ui/s-mundo.png?v=15" alt="" onerror="this.outerHTML='🌎 '">Mundo subido</h3>
     <div class="note" id="mu-m-info" style="margin-top:0"></div>
     <div class="err hidden" id="mu-m-aviso"></div>
     <div id="mu-m-ops" style="margin-top:14px">
@@ -1529,7 +1535,7 @@ let ME = null, BRAND = 'Serve Actual';
 let tickHist = [], memHist = [];
 let GEAR = null;   // current player card data
 const $ = id => document.getElementById(id);
-const ICONV = 14;   // sube este número cuando cambien los renders (revienta el caché)
+const ICONV = 15;   // sube este número cuando cambien los renders (revienta el caché)
 const ICON = id => `/icons/${id}.png?v=${ICONV}`;   // self-hosted, extracted from the official client
 
 /* ---------- i18n (todo lo público es bilingüe; la vista de mods queda en español) ---------- */
@@ -1842,6 +1848,17 @@ function buildTabs(){
     const b = document.getElementById('topbar');
     if (!b) return;
     const y = Math.max(0, window.scrollY), ahora = Date.now();
+    // En Explorar manda otra regla: la barra se va del todo al bajar y solo
+    // vuelve al llegar arriba. Encogerla no bastaba — la tira de capas está
+    // pegada debajo y las dos se pisaban igual.
+    if (TAB_ACTIVA === 'mapa2'){
+      b.classList.remove('compacto');
+      if (y <= 6) b.classList.remove('fuera');
+      else if (y > 40) b.classList.add('fuera');
+      ultimo = y;
+      return;
+    }
+    b.classList.remove('fuera');
     // Al encogerse la barra, la página entera se acorta y el navegador puede
     // mover el scroll por su cuenta. Sin esta pausa, ese movimiento se lee como
     // "el usuario ha subido" y la barra se pone a parpadear sola.
@@ -1861,7 +1878,13 @@ function buildTabs(){
   }, {passive:true});
 })();
 
+let TAB_ACTIVA = 'dash';      // la mira el vigilante del scroll de arriba
 function show(id){
+  TAB_ACTIVA = id;
+  // Al salir de Explorar la barra tiene que volver, esté donde esté el scroll:
+  // si no, se queda escondida en una pestaña que no la esconde nunca.
+  const tb = document.getElementById('topbar');
+  if (tb && id !== 'mapa2') tb.classList.remove('fuera');
   for (const [t] of TABS){
     const sec=$('tab-'+t), btn=$('tabbtn-'+t);
     if (sec) sec.classList.toggle('hidden', t!==id);

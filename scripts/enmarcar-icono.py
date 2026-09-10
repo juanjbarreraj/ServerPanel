@@ -119,6 +119,9 @@ def main():
     ap.add_argument("iconos", nargs="+", help="PNG(s) a enmarcar")
     ap.add_argument("-o", "--salida", help="dónde escribir (solo con un icono)")
     ap.add_argument("--ver", action="store_true", help="no escribe; solo dice quién tiene marco")
+    # Un dibujo cuyos bordes llegan al filo (los barrotes de un generador) se
+    # confunde con una placa. Con esto se enmarca igual.
+    ap.add_argument("--forzar", action="store_true", help="enmarcar aunque parezca que ya tiene marco")
     ap.add_argument("--hoja", help="guarda una tira comparativa aquí")
     args = ap.parse_args()
 
@@ -133,7 +136,7 @@ def main():
     hechos = []
     for r in args.iconos:
         r = Path(r)
-        if tiene_marco(r):
+        if tiene_marco(r) and not args.forzar:
             print("  %-24s ya tenía marco, no lo toco" % r.name)
             continue
         fuera, tam = enmarcar(r, base)
