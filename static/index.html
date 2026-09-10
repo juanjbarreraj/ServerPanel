@@ -540,6 +540,26 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .m2-cap.on{box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06),
   0 0 0 2px var(--slime) inset}
 .m2-cap .n{opacity:.5; font-weight:400}
+/* «Buscar generadores en esta zona». No es una capa más: es un trabajo que se
+   le encarga al servidor de Minecraft y que tarda, así que va con su cartel de
+   por qué, su barra de avance y su aviso de que mientras tanto el juego va más
+   lento. Un botón que para el mundo un par de minutos tiene que decirlo antes,
+   no después. */
+.m2-zona{display:none; flex-direction:column; gap:9px; margin:0 2px 12px; padding:10px 12px;
+  border-radius:6px; background:var(--slotbg);
+  box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
+.m2-zona.ver{display:flex}
+.m2-zona-t{display:flex; gap:10px; align-items:flex-start}
+.m2-zona-t img{width:30px; height:30px; flex:0 0 30px; image-rendering:pixelated; margin-top:1px}
+.m2-zona-t b{display:block; font-size:.78rem; color:var(--ink); margin-bottom:3px}
+.m2-zona-t span{display:block; font-size:.72rem; color:var(--ink3); line-height:1.55}
+.m2-zona-b{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+.m2-zona-p{font-size:.73rem; color:var(--ink3); flex:1 1 190px; min-width:0}
+.m2-zona-p.mal{color:#ff8b8b}
+.m2-zona-barra{flex:1 1 150px; min-width:110px; height:7px; border-radius:4px;
+  background:rgba(0,0,0,.45); overflow:hidden}
+.m2-zona-barra i{display:block; height:100%; width:0; background:var(--slime);
+  transition:width .5s linear}
 .m2-marcar{display:flex; gap:14px; margin:0 4px 12px; font-size:.75rem}
 .m2-marcar button{background:none; border:0; color:var(--ink3); cursor:pointer; padding:2px 0;
   font-size:.75rem; font-weight:700; text-decoration:underline; text-underline-offset:3px}
@@ -1141,6 +1161,25 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
       <div class="m2-marcar">
         <button onclick="m2Todas(true)">Marcar todo</button>
         <button onclick="m2Todas(false)">Desmarcar todo</button>
+      </div>
+
+      <!-- Los generadores no salen de la semilla, hay que generar el terreno.
+           Este botón se lo pide al servidor de verdad. Solo admin y moderador. -->
+      <div class="m2-zona" id="m2-zona">
+        <div class="m2-zona-t">
+          <img src="/static/markers/spawner.png" alt="" onerror="this.style.display='none'">
+          <div>
+            <b>Los generadores hay que buscarlos, no se calculan</b>
+            <span>Solo aparecen donde el mundo tenía una cueva, así que la semilla no basta. Este botón le pide al servidor que genere el cuadro marcado en el mapa y lo relee: tarda un par de minutos y el juego va más lento mientras tanto, pero lo que sale no es una predicción, es lo que hay.</span>
+          </div>
+        </div>
+        <div class="m2-zona-b">
+          <button class="btn small" id="m2-zona-btn" onclick="m2Zona()"
+                  onmouseenter="m2ZonaPrevia(true)" onmouseleave="m2ZonaPrevia(false)"
+                  onfocus="m2ZonaPrevia(true)" onblur="m2ZonaPrevia(false)">Buscar en esta zona</button>
+          <div class="m2-zona-barra hidden" id="m2-zona-barra"><i id="m2-zona-i"></i></div>
+          <span class="m2-zona-p" id="m2-zona-p"></span>
+        </div>
       </div>
 
       <div class="m2-top">
@@ -3069,6 +3108,7 @@ const M2 = {
   variantes:{},             // "village_snowy" → {icono, es, en}: dibujo propio
   modo:'tira',              // 'tira' (iconos) o 'lista' (icono + nombre)
   lejosDensas:false,        // tesoros y minas piden estar cerca
+  zonaCaja:null, zonaEstado:'quieto', zonaPrevia:null, zonaCojo:false,  // «buscar en esta zona»
   pintando:false, listo:false, aviso:'',
 };
 const M2_MAX_ICONOS = 3000;
@@ -3133,6 +3173,9 @@ async function m2Cargar(){
   }catch(_){}
   m2PideHechas();
   m2Capas(); m2Enganchar(); m2Medir(); m2Pinta(); m2PideEstructuras(); m2PideSlime();
+  // Por si hay una búsqueda de generadores en marcha, la haya pedido esta
+  // pestaña o cualquier otra: el trabajo es del servidor, no del navegador.
+  if (m2ZonaPuede()) m2ZonaVigila();
 }
 
 /* La semilla, de un clic. Es el dato que la gente quiere copiar para pegarlo en
@@ -3478,6 +3521,7 @@ function m2Iconos(){
       M2.enPantalla.push(['__aparicion', ap[0], ap[2], px, py]);
     }
   }
+  m2ZonaDibuja(g);
   m2Reglas(g);
   const falta = M2.recorte ? 'Acércate para ver las estructuras'
               : (M2.verSlime && M2.esc < M2_SLIME_DESDE) ? 'Acércate para ver los chunks de slime'
@@ -3597,6 +3641,7 @@ function m2Capas(){
     w.appendChild(b);
   }
   w.scrollLeft = izq;
+  m2ZonaVer();
 }
 
 /* Marcar o desmarcar todas las capas de golpe. Al marcar todo se fuerzan
@@ -3612,6 +3657,160 @@ function m2Todas(encender){
   M2.verSlime = !!encender;
   M2.verAparicion = encender;
   m2Guardar(); m2Capas(); m2PideSlime(); m2PideEstructuras(); m2Iconos();
+}
+
+/* ---------- «buscar generadores en esta zona» ----------
+   Un generador no se puede adivinar desde la semilla. El sorteo sí es
+   determinista, pero la sala solo se coloca si justo ahí había una cueva, y eso
+   depende del terreno ya excavado: sin simular las cuevas salen 531 puntos
+   falsos por cada dungeon de verdad, medido en 1024 chunks de esta misma
+   semilla. Chunkbase lo resuelve reimplementando el generador entero en
+   JavaScript, y por eso su propia página avisa de que sus dungeons pueden estar
+   mal o faltar: es una copia del generador, no el generador.
+
+   Aquí hay algo que Chunkbase no tiene: el Minecraft de verdad, encendido. Se le
+   pide que genere el cuadro, se guarda y se lee. No es una predicción, es el
+   mundo. El precio es que tarda y que mientras tanto el servidor va más lento,
+   así que esto no es una capa que se mueva contigo: es un botón que se pulsa. */
+const M2_ZONA_LADO = 32;              // 32x32 chunks = 512x512 bloques
+let m2ZonaTimer = null;
+
+function m2ZonaPuede(){ return !!(ME && (ME.role==='admin' || ME.role==='mod')); }
+
+/* El cuadro que se va a generar: lo que se ve, recortado por el centro a lo que
+   el servidor acepta de una tacada. Se calcula también aquí, además de en el
+   servidor, para poder DIBUJARLO antes de pulsar: nadie debería encargar dos
+   minutos de trabajo sin ver antes qué trozo toca. */
+function m2ZonaCaja(){
+  const alCentro=(a,b)=>{
+    if (b-a+1 <= M2_ZONA_LADO) return [a,b];
+    const i = Math.floor((a+b)/2) - (M2_ZONA_LADO>>1);
+    return [i, i+M2_ZONA_LADO-1];
+  };
+  const [cx0,cx1] = alCentro(Math.floor(m2dex(0)/16), Math.floor(m2dex(M2.w)/16));
+  const [cz0,cz1] = alCentro(Math.floor(m2dez(0)/16), Math.floor(m2dez(M2.h)/16));
+  return {x0:cx0*16, z0:cz0*16, x1:cx1*16+15, z1:cz1*16+15,
+          chunks:(cx1-cx0+1)*(cz1-cz0+1)};
+}
+
+/* El cartel solo sale si sirve de algo: sin permiso el botón daría 403, y con la
+   capa de generadores apagada el trabajo acabaría sin que se viera nada. */
+function m2ZonaVer(){
+  const z=$('m2-zona'); if (!z) return;
+  const hay = !!(M2.est && (M2.est.tipos||[]).some(t=>t.k==='spawner'));
+  z.classList.toggle('ver', hay && m2ZonaPuede() && !M2.apagados.has('spawner'));
+}
+
+function m2ZonaPrevia(si){
+  if (!m2ZonaPuede() || !M2.listo) return;
+  M2.zonaPrevia = si ? m2ZonaCaja() : null;
+  m2Iconos();
+}
+
+/* El cuadro, encima del mapa. Dibujarlo contesta sin palabras a «¿qué trozo ha
+   mirado?»: ese, el de la raya. Amarillo mientras trabaja, verde cuando acabó. */
+function m2ZonaDibuja(g){
+  const c = M2.zonaPrevia
+        || ((M2.zonaEstado && M2.zonaEstado!=='quieto') ? M2.zonaCaja : null);
+  if (!c) return;
+  const trabajando = M2.zonaEstado==='generando' || M2.zonaEstado==='leyendo';
+  const x=m2ax(c.x0), y=m2az(c.z0),
+        w=(c.x1-c.x0+1)*M2.esc, h=(c.z1-c.z0+1)*M2.esc;
+  g.save();
+  g.lineWidth = 2;
+  g.setLineDash(M2.zonaPrevia ? [4,4] : trabajando ? [9,6] : [6,4]);
+  g.strokeStyle = M2.zonaEstado==='error' ? '#ff8b8b'
+                : (trabajando || M2.zonaPrevia || M2.zonaCojo) ? '#ffd35c' : '#6fd44e';
+  g.strokeRect(x, y, w, h);
+  g.restore();
+}
+
+function m2ZonaDi(txt, mal){
+  const p=$('m2-zona-p'); if (!p) return;
+  p.textContent = txt || '';
+  p.classList.toggle('mal', !!mal);
+}
+
+async function m2Zona(){
+  if (!M2.listo) return;
+  const c = m2ZonaCaja(), b = $('m2-zona-btn');
+  b.disabled = true;
+  M2.zonaCaja = c; M2.zonaEstado = 'generando'; M2.zonaPrevia = null;
+  m2ZonaDi('encargándoselo al servidor…');
+  m2Iconos();
+  let d=null;
+  try{ d = await api('/api/mapa2/zona', {x0:c.x0, z0:c.z0, x1:c.x1, z1:c.z1}); }catch(_){}
+  if (!d || !d.ok){
+    b.disabled = false;
+    M2.zonaEstado = 'quieto';
+    m2ZonaDi((d && d.error) || 'No pude arrancar la búsqueda', true);
+    m2Iconos();
+    return;
+  }
+  if (Array.isArray(d.caja)) M2.zonaCaja = {x0:d.caja[0], z0:d.caja[1], x1:d.caja[2], z1:d.caja[3]};
+  // Encender la capa: si acaba y está apagada, el trabajo termina y no se ve
+  // nada, que es la peor forma de que algo parezca roto.
+  M2.apagados.delete('spawner'); M2.forzados.add('spawner');
+  m2Guardar(); m2Capas();
+  m2ZonaVigila();
+}
+
+/* Se pregunta cada pocos segundos y se para sola al terminar. El trabajo vive en
+   el servidor, no en esta pestaña: si alguien recarga o entra desde otro sitio,
+   al abrir el mapa se engancha al que ya hay en marcha. */
+function m2ZonaVigila(){
+  clearTimeout(m2ZonaTimer);
+  const mirar = async ()=>{
+    let d=null;
+    try{ d = await api('/api/mapa2/zona'); }catch(_){}
+    if (!d || !d.ok) return;
+    m2ZonaPinta(d);
+    if (d.estado==='generando' || d.estado==='leyendo')
+      m2ZonaTimer = setTimeout(mirar, 2500);
+  };
+  mirar();
+}
+
+function m2ZonaPinta(d){
+  const b=$('m2-zona-btn'), barra=$('m2-zona-barra'), i=$('m2-zona-i');
+  if (!b) return;
+  const trabajando = (d.estado==='generando' || d.estado==='leyendo');
+  // Un resultado de hace media hora no es noticia: se calla y se borra el cuadro
+  // en vez de saludar con el recuento de una búsqueda que ya nadie recuerda.
+  const viejo = !trabajando && d.t && (Date.now()/1000 - d.t > 900);
+  b.disabled = trabajando;
+  barra.classList.toggle('hidden', !trabajando);
+  if (Array.isArray(d.caja)) M2.zonaCaja = {x0:d.caja[0], z0:d.caja[1], x1:d.caja[2], z1:d.caja[3]};
+  M2.zonaEstado = viejo ? 'quieto' : d.estado;
+  M2.zonaCojo = false;
+
+  if (viejo || d.estado==='quieto'){
+    m2ZonaDi('');
+  } else if (d.estado==='generando'){
+    i.style.width = (d.total ? Math.round(d.hechos*100/d.total) : 0) + '%';
+    m2ZonaDi('generando el terreno, ' + (d.hechos||0) + ' de ' + (d.total||0) + ' chunks');
+  } else if (d.estado==='leyendo'){
+    i.style.width = '100%';
+    m2ZonaDi('leyendo lo que ha salido…');
+  } else if (d.estado==='error'){
+    m2ZonaDi(d.mensaje || 'algo ha fallado', true);
+  } else if (d.estado==='listo'){
+    const n = d.hallados;
+    // Si el servidor no llegó a generarlo todo hay que decirlo: un «listo, 3
+    // generadores» sobre medio cuadro es una respuesta falsa con buena cara.
+    const cojo = (d.total && d.hechos < d.total)
+      ? ', pero solo pude generar ' + d.hechos + ' de ' + d.total + ' chunks' : '';
+    M2.zonaCojo = !!cojo;
+    m2ZonaDi((n===0 ? 'listo, en este cuadro no hay ninguno'
+            : n===1 ? 'listo, 1 generador en este cuadro'
+            : n>1   ? ('listo, ' + n + ' generadores en este cuadro')
+            : 'listo') + cojo, !!cojo);
+    if (!m2ZonaPinta._ultima || m2ZonaPinta._ultima !== d.t){
+      m2ZonaPinta._ultima = d.t;      // refrescar una vez por búsqueda, no en cada vuelta
+      m2PideEstructuras();
+    }
+  }
+  m2Iconos();
 }
 
 /* ---------- moverse ---------- */

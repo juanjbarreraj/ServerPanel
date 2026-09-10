@@ -3610,6 +3610,234 @@ def _m2_generadores(x0, z0, x1, z1, dim="overworld"):
     return fuera
 
 
+# ══════════════════ «buscar generadores en esta zona»: que los genere el juego
+#
+# POR QUÉ ASÍ Y NO CALCULÁNDOLOS
+# Un dungeon no se puede predecir de la semilla sola: el sorteo sí es
+# determinista (está en el jar, `monster_room` tira 10 veces por chunk), pero la
+# habitación solo aparece si en ese punto hay una cueva, y eso depende del
+# terreno ya excavado. Sin simular las cuevas salen 531 puntos falsos por cada
+# dungeon de verdad — medido en 1024 chunks generados con esta misma semilla.
+#
+# Chunkbase lo resuelve reimplementando la generación de terreno en JavaScript y
+# corriéndola en el navegador de quien mira. Por eso su propia página avisa de
+# que sus dungeons «can be wrong or missing»: es una copia del generador, no el
+# generador.
+#
+# Aquí hay algo que Chunkbase no tiene: el Minecraft de verdad, corriendo. Se le
+# pide que genere la zona (`forceload`), se guarda, y se lee el mundo como
+# siempre. No es una predicción: es el mundo. Sale exacto, sin reimplementar
+# nada, y de paso queda pregenerado para quien vaya luego.
+#
+# El precio, y hay que decirlo en la interfaz: mientras genera, el servidor va
+# más lento, y el mundo ocupa más disco.
+_ZONA_LOTE = 16                 # chunks de lado por tanda: 256, el tope de /forceload
+_ZONA_MAX_CHUNKS = 1024         # 512x512 bloques: un par de minutos y ~50 MB
+_ZONA_LATIDO = 6                # cada cuánto se mira si el juego ya los escribió
+_zona = {"estado": "quieto", "hechos": 0, "total": 0, "mensaje": "",
+         "t": 0, "hallados": None, "caja": None}
+_zona_lock = threading.Lock()
+
+
+def _zona_estado(**kw):
+    with _zona_lock:
+        _zona.update(kw)
+
+
+def _chunks_hechos(cx0, cz0, cx1, cz1):
+    """Cuántos chunks del cuadro están YA escritos en disco.
+
+    Se mira la cabecera de cada fichero de región: los primeros 4 KB son 1024
+    huecos de 4 bytes, uno por chunk, y un hueco a cero quiere decir «ese chunk
+    todavía no existe». Son 4 KB por región, así que preguntarlo cada pocos
+    segundos no cuesta nada.
+
+    Esto es lo que convierte el botón en algo que se puede creer. La primera
+    versión echaba un `forceload`, dormía un rato fijo y daba por hecho que el
+    juego había terminado; si el servidor iba lento, quitaba la carga a medias y
+    el escaneo leía un trozo del mundo sin generar, sin que nadie se enterara.
+    Ahora no se supone nada: se cuenta.
+    """
+    rdir = region_dir("overworld")
+    hechos = 0
+    for rx in range(cx0 >> 5, (cx1 >> 5) + 1):
+        for rz in range(cz0 >> 5, (cz1 >> 5) + 1):
+            try:
+                with open(rdir / ("r.%d.%d.mca" % (rx, rz)), "rb") as fh:
+                    cab = fh.read(4096)
+            except OSError:
+                continue                       # aún no hay ni fichero: cero
+            if len(cab) < 4096:
+                continue
+            for cz in range(max(cz0, rz * 32), min(cz1, rz * 32 + 31) + 1):
+                fila = (cz & 31) * 32
+                for cx in range(max(cx0, rx * 32), min(cx1, rx * 32 + 31) + 1):
+                    i = (fila + (cx & 31)) * 4
+                    if cab[i] or cab[i + 1] or cab[i + 2] or cab[i + 3]:
+                        hechos += 1
+    return hechos
+
+
+def _zona_espera(lote, quiero, tope, avisa):
+    """Espera a que el lote esté generado Y guardado, mirándolo de verdad.
+
+    Devuelve (chunks_escritos, problema). `problema` solo se llena cuando el
+    juego dice en voz alta que no puede guardar; que se acabe el tiempo no es un
+    problema, es un resultado más corto, y así se cuenta.
+
+    `save-all flush` es lo que baja a disco lo que el juego ya tiene en memoria;
+    sin él la cabecera de la región no se entera. Se llama cada `_ZONA_LATIDO`
+    segundos y no más a menudo: guarda el mundo entero y no sale gratis.
+
+    Se sale por tres sitios: cuando están todos, cuando pasan tres rondas
+    seguidas sin un solo chunk nuevo (el servidor no va a hacer más), o cuando se
+    acaba el tiempo. Que un mundo ya explorado termine en la primera ronda es lo
+    normal y está bien: esos chunks ya existían.
+    """
+    cx0, cz0, cx1, cz1 = lote
+    fin = time.time() + tope
+    hechos = quietas = 0
+    while True:
+        time.sleep(_ZONA_LATIDO)
+        _ok, dice = rcon_try("save-all flush")
+        # «Unable to save the game (is there enough disk space?)». Sin mirarlo,
+        # un disco lleno se ve desde el panel como una búsqueda que no encuentra
+        # nada, que es la forma más cara de enterarse.
+        if "Unable to save" in dice:
+            return hechos, dice.strip()
+        time.sleep(min(1.5, _ZONA_LATIDO / 4.0))    # que termine de escribir
+        antes, hechos = hechos, _chunks_hechos(cx0, cz0, cx1, cz1)
+        avisa(hechos)
+        if hechos >= quiero:
+            return hechos, None
+        quietas = quietas + 1 if hechos <= antes else 0
+        if quietas >= 3 or time.time() >= fin:
+            return hechos, None
+
+
+def _zona_trabajo(cx0, cz0, cx1, cz1, espera):
+    """Genera la zona por tandas y luego relee el mundo."""
+    lotes = []
+    for z in range(cz0, cz1 + 1, _ZONA_LOTE):
+        for x in range(cx0, cx1 + 1, _ZONA_LOTE):
+            lotes.append((x, z, min(x + _ZONA_LOTE - 1, cx1), min(z + _ZONA_LOTE - 1, cz1)))
+    total = (cx1 - cx0 + 1) * (cz1 - cz0 + 1)
+    _zona_estado(estado="generando", hechos=0, total=total, mensaje="", hallados=None)
+    llevamos = 0
+    puestos = []
+    try:
+        for lote in lotes:
+            x0, z0, x1, z1 = lote
+            manda = "%d %d %d %d" % (x0 * 16, z0 * 16, x1 * 16 + 15, z1 * 16 + 15)
+            ok, salida = rcon_try("forceload add " + manda)
+            if not ok:
+                _zona_estado(estado="error",
+                             mensaje="No pude hablar con el servidor de Minecraft: " + salida[:120])
+                return
+            # Lo que contesta el juego de verdad cuando no puede (comprobado en
+            # el jar de 26.2): «Too many chunks in the specified area (maximum
+            # 256, but specified N)» y «No chunks were marked for force loading».
+            if ("Too many" in salida or "No chunks were marked" in salida
+                    or "Unknown or incomplete" in salida or "Incorrect argument" in salida):
+                _zona_estado(estado="error", mensaje=salida[:160])
+                return
+            puestos.append(lote)
+            hecho, problema = _zona_espera(lote, (x1 - x0 + 1) * (z1 - z0 + 1), espera,
+                                           lambda n: _zona_estado(hechos=llevamos + n))
+            if problema:
+                _zona_estado(estado="error", mensaje=problema[:160])
+                return
+            # fuera el lote en cuanto está: así el servidor nunca tiene más de
+            # 256 chunks forzados a la vez, que es lo que lo pone de rodillas
+            rcon_try("forceload remove " + manda)
+            puestos.remove(lote)
+            llevamos += hecho
+            _zona_estado(hechos=llevamos)
+    finally:
+        # quitar SOLO lo que pusimos: un `forceload remove all` se llevaría por
+        # delante los que el admin tuviera puestos a mano
+        for x0, z0, x1, z1 in puestos:
+            rcon_try("forceload remove %d %d %d %d"
+                     % (x0 * 16, z0 * 16, x1 * 16 + 15, z1 * 16 + 15))
+
+    _zona_estado(estado="leyendo", mensaje="")
+    guion = PANEL_DIR / "scripts" / "scan-structures.py"
+    try:
+        r = subprocess.run(["nice", "-n", "19", "python3", str(guion)],
+                           capture_output=True, text=True, timeout=3600)
+        if r.returncode != 0:
+            _zona_estado(estado="error", mensaje=(r.stderr or r.stdout or "")[-200:])
+            return
+    except Exception as e:
+        _zona_estado(estado="error", mensaje=str(e)[:200])
+        return
+
+    _gens["t"] = 0                      # que se relea spawners.json
+    caja = (cx0 * 16, cz0 * 16, cx1 * 16 + 15, cz1 * 16 + 15)
+    try:
+        hallados = len(_m2_generadores(*caja))
+    except Exception:
+        hallados = None
+    _zona_estado(estado="listo", hallados=hallados, caja=list(caja), mensaje="")
+
+
+@app.get("/api/mapa2/zona")
+def api_m2_zona_estado():
+    require("mapa_semilla")
+    with _zona_lock:
+        d = dict(_zona)
+    d["ok"] = True
+    d["max_chunks"] = _ZONA_MAX_CHUNKS
+    return jsonify(d)
+
+
+@app.post("/api/mapa2/zona")
+def api_m2_zona():
+    """Genera una zona con el servidor de verdad y relee lo que salió."""
+    u = require("mapa_semilla")
+    if u["role"] not in ("admin", "mod") or not _csrf_ok():
+        abort(403)
+    with _zona_lock:
+        if _zona["estado"] in ("generando", "leyendo") and time.time() - _zona["t"] < 3600:
+            return jsonify(error="Ya hay una búsqueda en marcha"), 409
+        _zona.update({"estado": "generando", "t": time.time(), "hechos": 0,
+                      "total": 0, "mensaje": "", "hallados": None})
+    b = request.get_json(silent=True) or {}
+    try:
+        x0, z0 = int(b["x0"]), int(b["z0"])
+        x1, z1 = int(b["x1"]), int(b["z1"])
+    except (KeyError, TypeError, ValueError):
+        _zona_estado(estado="quieto")
+        return jsonify(error="faltan las coordenadas"), 400
+    x0, x1 = min(x0, x1), max(x0, x1)
+    z0, z1 = min(z0, z1), max(z0, z1)
+    if max(abs(x0), abs(x1), abs(z0), abs(z1)) > 3_000_000:
+        _zona_estado(estado="quieto")
+        return jsonify(error="fuera del mundo"), 400
+    cx0, cz0, cx1, cz1 = x0 >> 4, z0 >> 4, x1 >> 4, z1 >> 4
+    # se recorta al centro: generar más de esto tarda demasiado y llena el disco
+    lado = int(_ZONA_MAX_CHUNKS ** 0.5)
+    if (cx1 - cx0 + 1) > lado:
+        medio = (cx0 + cx1) // 2
+        cx0, cx1 = medio - lado // 2, medio - lado // 2 + lado - 1
+    if (cz1 - cz0 + 1) > lado:
+        medio = (cz0 + cz1) // 2
+        cz0, cz1 = medio - lado // 2, medio - lado // 2 + lado - 1
+    # `espera` es el TOPE por tanda, no una siesta: cada tanda termina en cuanto
+    # los 256 chunks están escritos, y esto es solo hasta cuándo se le aguanta a
+    # un servidor que no avanza.
+    espera = max(30, min(600, float(b.get("espera", 180))))
+    if not rcon_try("list")[0]:
+        _zona_estado(estado="quieto")
+        return jsonify(error="El servidor de Minecraft no responde: enciéndelo y vuelve a intentarlo"), 503
+    audit(u["name"], "genera la zona %d,%d a %d,%d para buscar generadores"
+          % (cx0 * 16, cz0 * 16, cx1 * 16, cz1 * 16))
+    threading.Thread(target=_zona_trabajo, args=(cx0, cz0, cx1, cz1, espera),
+                     daemon=True).start()
+    return jsonify(ok=True, chunks=(cx1 - cx0 + 1) * (cz1 - cz0 + 1),
+                   caja=[cx0 * 16, cz0 * 16, cx1 * 16 + 15, cz1 * 16 + 15])
+
+
 def _hay_icono(nombre):
     return (PANEL_DIR / "static" / "markers" / (nombre + ".png")).exists()
 
