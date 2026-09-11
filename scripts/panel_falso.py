@@ -31,7 +31,6 @@ import base64
 import json
 import os
 import threading
-import time
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -102,25 +101,7 @@ class PanelFalso:
         self.estructuras = [["village", 300, 300, None], ["monument", -900, 700, None]]
         self.gens = []                 # los que salen solo si se piden con gens=1
         self.hechas = {}
-        self.trabajo = {"estado": "quieto", "hechos": 0, "total": 0, "mensaje": "",
-                        "t": 0, "hallados": None, "caja": None, "ok": True,
-                        "max_chunks": 1024}
-        self.guion = []                # [(segundos, parche)]: lo que irá pasando
-        self.pedidos = {"zona": [], "estructuras": [], "estado": []}
-
-    # ---------------------------------------------------------------- trabajo
-    def arranca(self, caja, total=1024):
-        self.trabajo.update({"estado": "generando", "hechos": 0, "total": total,
-                             "mensaje": "", "t": time.time(), "hallados": None,
-                             "caja": caja})
-
-    def _ahora_toca(self):
-        if self.trabajo["estado"] in ("generando", "leyendo"):
-            pasado = time.time() - self.trabajo["t"]
-            for cuando, parche in self.guion:
-                if pasado >= cuando:
-                    self.trabajo.update(parche)
-        return self.trabajo
+        self.pedidos = {"estructuras": [], "estado": []}
 
     # ---------------------------------------------------------------- rutas
     @staticmethod
@@ -152,8 +133,6 @@ class PanelFalso:
                                "lejos_densas": False})
         if p == "/api/mapa2/hechas":
             return self._json({"ok": True, "hechas": self.hechas})
-        if p == "/api/mapa2/zona":
-            return self._json(self._ahora_toca())
         return self._json({"ok": True})
 
     def enruta(self, ruta):
@@ -167,14 +146,6 @@ class PanelFalso:
         u = url[len(self.BASE):]
         if not u.startswith("/api/"):
             return ruta.continue_()
-        if u.split("?")[0] == "/api/mapa2/zona" and ruta.request.method == "POST":
-            cuerpo = json.loads(ruta.request.post_data or "{}")
-            self.pedidos["zona"].append(cuerpo)
-            if self.rol not in ("admin", "mod"):
-                return ruta.fulfill(status=403, body="{}", content_type="application/json")
-            caja = [cuerpo["x0"], cuerpo["z0"], cuerpo["x1"], cuerpo["z1"]]
-            self.arranca(caja)
-            return ruta.fulfill(**self._json({"ok": True, "chunks": 1024, "caja": caja}))
         return ruta.fulfill(**self._api(u))
 
     # ---------------------------------------------------------------- ayudas

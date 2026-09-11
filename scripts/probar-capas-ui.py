@@ -180,6 +180,40 @@ with sync_playwright() as pw:
     ok(pag.evaluate(CARTEL)["visible"], "el cartel también sale en la lista")
     ok(pag.evaluate(OPACIDAD, "m2cap-monument") > 0.95, "y el icono se enciende igual")
 
+    # ── el aviso de la capa de generadores ────────────────────────────────
+    # Es la única capa que no cubre el mundo entero: lee los generadores que ya
+    # existen en el terreno visitado. Sin decirlo, en medio mapa parece rota.
+    print("── el aviso de los generadores ──")
+    pf.al_mapa(pag)
+    encendida = pag.evaluate("() => !M2.apagados.has('spawner')")
+    if not encendida:
+        pag.click("#m2cap-spawner")
+        pag.wait_for_timeout(300)
+    ok(pag.locator("#m2-gens-nota").is_visible(),
+       "con la capa encendida, el aviso está a la vista")
+    txt = pag.inner_text("#m2-gens-nota")
+    for trozo in ("ya visitado", "no sale nada", "estimación", "una vez al día"):
+        ok(trozo in txt, "dice «%s»" % trozo)
+    foto(pag, "5-aviso")
+
+    pag.click("#m2cap-spawner")
+    pag.wait_for_timeout(300)
+    ok(not pag.locator("#m2-gens-nota").is_visible(), "apagada la capa, el aviso se va")
+    pag.click("#m2cap-spawner")
+    pag.wait_for_timeout(300)
+    ok(pag.locator("#m2-gens-nota").is_visible(), "y vuelve al encenderla")
+
+    # El aviso es para todos, no solo para quien manda: el botón de generar la
+    # zona era de admin, pero saber qué enseña la capa lo necesita cualquiera.
+    pf.rol = "viewer"
+    pf.al_mapa(pag)
+    ok(pag.locator("#m2-gens-nota").is_visible(), "y un observador también lo ve")
+    pf.rol = "admin"
+
+    ok(not pag.locator("#m2-zona").count(), "el botón de buscar en la zona ya no está")
+    ok(not pag.evaluate("() => typeof m2Zona"). startswith("function"),
+       "ni su código suelto por ahí")
+
     ok(not errores, "sin errores de JavaScript" + (": %s" % errores[:2] if errores else ""))
 
     # ── en el móvil, nada de esto ─────────────────────────────────────────

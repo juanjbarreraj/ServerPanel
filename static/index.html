@@ -10,7 +10,14 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
 <link rel="shortcut icon" href="/static/favicon.ico">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- La hoja de una fuente BLOQUEA el primer pintado: el navegador no dibuja nada
+     hasta tenerla, y si Google va lento se queda la pantalla en blanco por una
+     fuente decorativa. Con media="print" se descarga sin bloquear y se aplica en
+     cuanto llega; el `noscript` la deja como antes para quien no tenga JS. -->
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet"
+      media="print" onload="this.media='all'; this.onload=null">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet"></noscript>
 <style>
 :root{
   --bg0:#0a0d11; --bg1:#0e1319;
@@ -19,6 +26,14 @@
   --s1:#3987e5; --s2:#d95926;
   --good:#0ca30c; --warn:#fab219; --crit:#d03b3b;
   --spring:cubic-bezier(.34,1.56,.64,1);
+  /* Movimiento: cuatro variables y nada más, para que todo el panel se mueva
+     igual. La regla es que nada dure más de ~350 ms y nada se desplace más de
+     unos pocos píxeles: lo que se busca es que las cosas CONTESTEN, no que se
+     luzcan. Una animación que se nota es una animación que estorba. */
+  --t-rapido:.13s;                     /* responder al dedo: pulsar, marcar */
+  --t-medio:.22s;                      /* pasar por encima, encender, apagar */
+  --t-lento:.36s;                      /* entrar y salir trozos grandes */
+  --curva:cubic-bezier(.2,.7,.3,1);    /* frena rápido y no rebota */
   --bev-l:rgba(255,255,255,.15); --bev-d:rgba(0,0,0,.58);
   --gpanel-a:rgba(46,52,60,.50); --gpanel-b:rgba(24,28,34,.62);
   --slotbg:rgba(15,18,22,.55);
@@ -477,6 +492,7 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .m2-lienzo{position:relative; width:100%; height:calc(100vh - 330px); min-height:min(430px, 60vh);
   border-radius:8px; overflow:hidden; background:#04060a; touch-action:none; cursor:grab}
 .m2-lienzo.arrastrando{cursor:grabbing}
+.m2-lienzo.sobre-icono:not(.arrastrando){cursor:pointer}
 .m2-lienzo canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
 
 /* La cabecera, como la de Chunkbase: semilla, versión y dimensión a la vista.
@@ -556,26 +572,16 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .m2-cap.on{box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06),
   0 0 0 2px var(--slime) inset}
 .m2-cap .n{opacity:.5; font-weight:400}
-/* «Buscar generadores en esta zona». No es una capa más: es un trabajo que se
-   le encarga al servidor de Minecraft y que tarda, así que va con su cartel de
-   por qué, su barra de avance y su aviso de que mientras tanto el juego va más
-   lento. Un botón que para el mundo un par de minutos tiene que decirlo antes,
-   no después. */
-.m2-zona{display:none; flex-direction:column; gap:9px; margin:0 2px 12px; padding:10px 12px;
+/* El aviso de la capa de generadores. Va donde estaba el botón de buscar, y
+   sale solo cuando esa capa está encendida: es la única que no cubre el mundo
+   entero, y sin decirlo parece rota en medio mapa. */
+.m2-nota{display:none; gap:10px; align-items:flex-start; margin:0 2px 12px; padding:10px 12px;
   border-radius:6px; background:var(--slotbg);
   box-shadow:inset 2px 2px 0 rgba(0,0,0,.45), inset -2px -2px 0 rgba(255,255,255,.06)}
-.m2-zona.ver{display:flex}
-.m2-zona-t{display:flex; gap:10px; align-items:flex-start}
-.m2-zona-t img{width:30px; height:30px; flex:0 0 30px; image-rendering:pixelated; margin-top:1px}
-.m2-zona-t b{display:block; font-size:.78rem; color:var(--ink); margin-bottom:3px}
-.m2-zona-t span{display:block; font-size:.72rem; color:var(--ink3); line-height:1.55}
-.m2-zona-b{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
-.m2-zona-p{font-size:.73rem; color:var(--ink3); flex:1 1 190px; min-width:0}
-.m2-zona-p.mal{color:#ff8b8b}
-.m2-zona-barra{flex:1 1 150px; min-width:110px; height:7px; border-radius:4px;
-  background:rgba(0,0,0,.45); overflow:hidden}
-.m2-zona-barra i{display:block; height:100%; width:0; background:var(--slime);
-  transition:width .5s linear}
+.m2-nota.ver{display:flex}
+.m2-nota img{width:30px; height:30px; flex:0 0 30px; image-rendering:pixelated; margin-top:1px}
+.m2-nota b{display:block; font-size:.78rem; color:var(--ink); margin-bottom:3px}
+.m2-nota span{display:block; font-size:.72rem; color:var(--ink3); line-height:1.55}
 .m2-marcar{display:flex; gap:14px; margin:0 4px 12px; font-size:.75rem}
 .m2-marcar button{background:none; border:0; color:var(--ink3); cursor:pointer; padding:2px 0;
   font-size:.75rem; font-weight:700; text-decoration:underline; text-underline-offset:3px}
@@ -943,6 +949,75 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
   .tabslot{width:48px}
   .memgrid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}
 }
+
+/* ============ los detalles que contestan ============
+   Casi todo lo de aquí es de dos o tres píxeles y 200 milisegundos. Suelto no se
+   nota; junto es la diferencia entre una página y algo que responde. La regla
+   para añadir más: si al mirarlo piensas «qué bonita animación», sobra. */
+
+/* Las tarjetas de datos del inicio se levantan un pelo y su icono se despierta */
+.tile{transition:transform var(--t-medio) var(--curva),
+                box-shadow var(--t-medio) var(--curva)}
+.tile:hover{transform:translateY(-2px)}
+.tile .ti,.tile .ti-e{transition:transform var(--t-medio) var(--spring)}
+.tile:hover .ti,.tile:hover .ti-e{transform:scale(1.08) rotate(-3deg)}
+
+/* Los iconos de las cabeceras, cuando pasas por su tarjeta */
+.hico{transition:transform var(--t-medio) var(--spring)}
+.card:hover>h3>.hico{transform:scale(1.12) rotate(-4deg)}
+
+/* Acercar y alejar el mapa: antes el color cambiaba de golpe */
+.m2-zoom button{transition:background var(--t-medio) var(--curva),
+                           color var(--t-medio) var(--curva),
+                           transform var(--t-rapido) var(--curva)}
+.m2-zoom button:active{transform:scale(.92)}
+
+/* Las capas: además de encenderse, se hunden al pulsarlas */
+.m2-cap{transition:color var(--t-medio) var(--curva),
+                   box-shadow var(--t-medio) var(--curva),
+                   transform var(--t-rapido) var(--curva)}
+.m2-cap:active{transform:scale(.96)}
+.m2-modo{transition:color var(--t-medio) var(--curva),
+                    box-shadow var(--t-medio) var(--curva),
+                    transform var(--t-rapido) var(--curva)}
+.m2-modo:active{transform:scale(.94)}
+
+/* «Marcar todo» y «Desmarcar todo» eran texto muerto hasta que lo tocabas */
+.m2-marcar button{transition:color var(--t-medio) var(--curva),
+                             text-underline-offset var(--t-medio) var(--curva)}
+.m2-marcar button:hover{text-underline-offset:5px}
+
+/* Cualquier fila de tabla se ilumina al pasar: saber en qué renglón estás no
+   debería depender de que esa tabla en concreto se pueda pulsar */
+tbody tr{transition:background var(--t-medio) var(--curva)}
+tbody tr:hover td{background:rgba(255,255,255,.035)}
+tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
+
+/* Para quien va con el teclado: un aro que se ve, y solo con el teclado.
+   `:focus-visible` no salta al hacer clic con el ratón, así que no molesta. */
+:focus-visible{outline:2px solid var(--slime2); outline-offset:2px; border-radius:3px}
+.btn:focus-visible{outline-offset:3px}
+
+/* En el móvil, el recuadro azul que pinta el navegador al tocar sobra: ya hay
+   una respuesta propia para cada cosa que se puede tocar */
+button,a,.slot,.m2-cap,.tabslot{-webkit-tap-highlight-color:transparent}
+
+/* Que el texto seleccionado se vea con los colores de la casa */
+::selection{background:rgba(111,212,78,.32); color:var(--ink)}
+
+/* ============ quien no quiera movimiento, que no lo tenga ============
+   Esto no es un adorno de accesibilidad. Hay gente a la que el movimiento en
+   pantalla le da mareo de verdad, y el sistema operativo ya tiene una casilla
+   para decirlo. Va al final de la hoja y con !important porque tiene que ganar
+   a todo lo de arriba, incluido lo que se añada mañana. */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    animation-duration:.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;
+    scroll-behavior:auto !important;
+  }
+}
 </style>
 </head>
 <body>
@@ -957,8 +1032,13 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
     <button class="btn small ghost" onclick="showLogin()"><span data-i18n="mods">Moderadores</span></button>
   </div>
   <div class="land-inner">
+    <!-- `onerror` que cambia el src PUEDE VOLVER A FALLAR, y entonces se llama a
+         sí mismo: si el segundo dibujo tampoco está, el navegador se queda
+         pidiéndolo en bucle para siempre. Medido en el banco de pruebas: 273
+         peticiones al mismo PNG en dos segundos. Por eso el `onerror` se quita
+         a sí mismo antes de intentar el recambio. -->
     <img class="land-cube" id="land-cube" src="/icons/grass_block.png?v=9"
-         onerror="this.src='/static/ender_chest.png'">
+         onerror="this.onerror=null; this.src='/static/ender_chest.png'">
     <div class="land-title"><span id="land-txt"></span><span class="cursor" id="land-cur"></span></div>
     <div class="land-xp" id="land-xp"><i></i></div>
     <div id="land-pin">
@@ -1179,22 +1259,14 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
         <button onclick="m2Todas(false)">Desmarcar todo</button>
       </div>
 
-      <!-- Los generadores no salen de la semilla, hay que generar el terreno.
-           Este botón se lo pide al servidor de verdad. Solo admin y moderador. -->
-      <div class="m2-zona" id="m2-zona">
-        <div class="m2-zona-t">
-          <img src="/static/markers/spawner.png" alt="" onerror="this.style.display='none'">
-          <div>
-            <b>Los generadores hay que buscarlos, no se calculan</b>
-            <span>Solo aparecen donde el mundo tenía una cueva, así que la semilla no basta. Este botón le pide al servidor que genere el cuadro marcado en el mapa y lo relee: tarda unos minutos y el juego va más lento mientras tanto, pero lo que sale no es una predicción, es lo que hay.</span>
-          </div>
-        </div>
-        <div class="m2-zona-b">
-          <button class="btn small" id="m2-zona-btn" onclick="m2Zona()"
-                  onmouseenter="m2ZonaPrevia(true)" onmouseleave="m2ZonaPrevia(false)"
-                  onfocus="m2ZonaPrevia(true)" onblur="m2ZonaPrevia(false)">Buscar en esta zona</button>
-          <div class="m2-zona-barra hidden" id="m2-zona-barra"><i id="m2-zona-i"></i></div>
-          <span class="m2-zona-p" id="m2-zona-p"></span>
+      <!-- Los generadores no salen de la semilla: se leen del terreno que ya
+           existe. Esta capa cubre lo explorado, no el mundo entero, y quien la
+           enciende tiene que saberlo o creerá que está a medias. -->
+      <div class="m2-nota" id="m2-gens-nota">
+        <img src="/static/markers/spawner.png" alt="" onerror="this.style.display='none'">
+        <div>
+          <b>Los generadores solo salen del terreno ya visitado</b>
+          <span>Esta capa no adivina: lee los generadores que existen de verdad en el mundo, así que solo aparecen donde algún jugador ha estado y el terreno ya está generado. Donde nadie ha ido todavía no sale nada, y eso es a propósito: preferimos no enseñar nada a enseñar una estimación que luego no está donde dice. Si quieres saber los generadores de un sitio, ve hasta allí y espera a que el mapa se actualice, que es una vez al día.</span>
         </div>
       </div>
 
@@ -1855,6 +1927,7 @@ function enterApp(){
   if (ME.must_change){ showPw(); $('pw-err').textContent='Crea tu propia contraseña para continuar.'; }
   refreshStatus();
   if (!window._statT) window._statT=setInterval(refreshStatus, 10000);
+  relojes();
   show('dash');
 }
 
@@ -1952,11 +2025,11 @@ function show(id){
   if (id==='dash') hiMini();
   if (id==='mod'){ loadWhitelist(); loadJoinReq(); }
   if (id==='memories') memMode(MEM_MODE||'g');
-  if (id==='console'){ loadConsole(); if(!window._conT) window._conT=setInterval(()=>{ if(!$('tab-console').classList.contains('hidden')) loadConsole(); },4000); }
+  if (id==='console'){ loadConsole(); if(!window._conT) window._conT=setInterval(()=>{ if(!document.hidden && !$('tab-console').classList.contains('hidden')) loadConsole(); },4000); }
   if (id==='backups') loadBackups();
   if (id==='plugins') loadPlugins();
   if (id==='users'){ loadUsers(); loadAudit(); }
-  if (id==='sistema'){ loadSistema(); verCargar(); if(!window._sysT) window._sysT=setInterval(()=>{ if(!$('tab-sistema').classList.contains('hidden')) loadSistema(); },5000); }
+  if (id==='sistema'){ loadSistema(); verCargar(); if(!window._sysT) window._sysT=setInterval(()=>{ if(!document.hidden && !$('tab-sistema').classList.contains('hidden')) loadSistema(); },5000); }
   if (id==='mundo') muCargar();
   if (id==='mapa2') m2Cargar();
   window._curTab=id;
@@ -1968,7 +2041,35 @@ async function ensureUuids(){
   if (Object.keys(NAME2UUID).length) return;
   try{ const r=await api('/api/players'); r.players.forEach(p=>{ NAME2UUID[p.name]=p.uuid; }); }catch(_){}
 }
+/* ---------- los relojes se paran cuando nadie mira ----------
+   El panel le pregunta al servidor cada 4-10 segundos: el estado, la consola, la
+   pestaña Sistema. Eso está bien mientras alguien lo está mirando y está de más
+   en cuanto la pestaña del navegador se va al fondo — que en un móvil es la mitad
+   del día. Sigue gastando batería del teléfono y CPU del servidor, que son dos
+   núcleos compartidos con el juego.
+
+   Al volver no se espera al siguiente turno del reloj: se refresca en el acto,
+   porque lo primero que hace quien vuelve es mirar si el server sigue en pie. */
+let _relojesQuietos = false;
+function relojes(){
+  if (relojes._puesto) return;
+  relojes._puesto = true;
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.hidden){
+      _relojesQuietos = true;
+    } else if (_relojesQuietos){
+      _relojesQuietos = false;
+      if (ME) refreshStatus();
+      const t = window._curTab;
+      if (t==='console') loadConsole();
+      if (t==='sistema') loadSistema();
+      if (t==='dash') hiMini();
+    }
+  });
+}
+
 async function refreshStatus(){
+  if (document.hidden) return;            // nadie está mirando
   let s; try{ s=await api('/api/status'); }catch(e){ return; }
   const up = s.state==='active' && s.reachable;
   $('t-state').innerHTML = up ? '<span class="dot good"></span>'+t('st_on')
@@ -2544,7 +2645,7 @@ async function openPlayer(uuid, name, online){
 }
 function openEnder(){
   if (!GEAR) return;
-  $('ct-body').innerHTML = `<h3 style="margin-bottom:12px"><img src="/icons/ender_chest.png?v=9" onerror="this.src='/static/ender_chest.png'" style="width:22px;height:22px;image-rendering:auto;vertical-align:-5px"> Cofre de Ender, ${esc(GEAR.name)}</h3>
+  $('ct-body').innerHTML = `<h3 style="margin-bottom:12px"><img src="/icons/ender_chest.png?v=9" onerror="this.onerror=null; this.src='/static/ender_chest.png'" style="width:22px;height:22px;image-rendering:auto;vertical-align:-5px"> Cofre de Ender, ${esc(GEAR.name)}</h3>
     <div class="slotgrid" id="ct-grid"></div>
     <div class="mrow"><button class="btn ghost" onclick="$('ct-modal').classList.remove('open')">Cerrar</button></div>`;
   const arr=new Array(27).fill(null);
@@ -3124,7 +3225,7 @@ const M2 = {
   variantes:{},             // "village_snowy" → {icono, es, en}: dibujo propio
   modo:'tira',              // 'tira' (iconos) o 'lista' (icono + nombre)
   lejosDensas:false,        // tesoros y minas piden estar cerca
-  zonaCaja:null, zonaEstado:'quieto', zonaPrevia:null, zonaCojo:false,  // «buscar en esta zona»
+  encima:null, caja:null,     // qué icono tiene el ratón encima, y la caja del lienzo
   pintando:false, listo:false, aviso:'',
 };
 const M2_MAX_ICONOS = 3000;
@@ -3193,9 +3294,6 @@ async function m2Cargar(){
   }catch(_){}
   m2PideHechas();
   m2Capas(); m2Enganchar(); m2Medir(); m2Pinta(); m2PideEstructuras(); m2PideSlime();
-  // Por si hay una búsqueda de generadores en marcha, la haya pedido esta
-  // pestaña o cualquier otra: el trabajo es del servidor, no del navegador.
-  if (m2ZonaPuede()) m2ZonaVigila();
 }
 
 /* La semilla, de un clic. Es el dato que la gente quiere copiar para pegarlo en
@@ -3500,21 +3598,32 @@ function m2Iconos(){
     const px=m2ax(x), py=m2az(z);
     if (px<-t || py<-t || px>M2.w+t || py>M2.h+t) continue;
     if (++dibujados > M2_MAX_ICONOS) break;
-    const hecha = M2.hechas && M2.hechas[m2Clave(k,x,z)];
+    const clave = m2Clave(k,x,z);
+    const hecha = M2.hechas && M2.hechas[clave];
     const im=M2.iconos.get((sub && M2.variantes[sub]) ? sub : k);
+    // El de debajo del ratón, un 30% más grande y con una sombra por detrás. Es
+    // poco a propósito: lo justo para que el mapa conteste al pasar por encima
+    // sin que nada dé un salto.
+    const tocado = M2.encima === clave;
+    const lado = tocado ? t*1.3 : t;
     // Lo ya visitado se apaga a medias en vez de desaparecer: sigue estando
     // ahí, y quien quiera volver tiene que poder verlo.
-    if (hecha) g.globalAlpha = 0.38;
+    if (hecha) g.globalAlpha = tocado ? 0.7 : 0.38;
+    if (tocado){
+      g.save();
+      g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = 8; g.shadowOffsetY = 2;
+    }
     if (im && im.complete && im.naturalWidth){
-      g.drawImage(im, px-t/2, py-t/2, t, t);
+      g.drawImage(im, px-lado/2, py-lado/2, lado, lado);
     } else {                              // sin icono, un punto: nunca un hueco
-      g.beginPath(); g.arc(px,py,t/3,0,6.284);
+      g.beginPath(); g.arc(px,py,lado/3,0,6.284);
       g.fillStyle='#ffd35c'; g.fill();
       g.lineWidth=1.5; g.strokeStyle='rgba(0,0,0,.65)'; g.stroke();
     }
+    if (tocado) g.restore();
     g.globalAlpha = 1;
     if (hecha){
-      const r=Math.max(4, t*0.30), cx=px+t/2-r*0.5, cy=py-t/2+r*0.5;
+      const r=Math.max(4, lado*0.30), cx=px+lado/2-r*0.5, cy=py-lado/2+r*0.5;
       g.beginPath(); g.arc(cx,cy,r,0,6.284);
       g.fillStyle='#6fd44e'; g.fill();
       g.lineWidth=Math.max(1, r*0.28); g.strokeStyle='#0a0d11'; g.stroke();
@@ -3541,7 +3650,6 @@ function m2Iconos(){
       M2.enPantalla.push(['__aparicion', ap[0], ap[2], px, py]);
     }
   }
-  m2ZonaDibuja(g);
   m2Reglas(g);
   const falta = M2.recorte ? 'Acércate para ver las estructuras'
               : (M2.verSlime && M2.esc < M2_SLIME_DESDE) ? 'Acércate para ver los chunks de slime'
@@ -3588,6 +3696,26 @@ function m2Modo(){
   m2Capas();
 }
 
+/* Encender o apagar una capa NO reconstruye la tira. Antes sí: se borraban los
+   veinte botones y se creaban otros veinte, y eso pasa también cada vez que
+   llegan estructuras nuevas, o sea en cada arrastre del mapa. Medido: 0,95 ms
+   por vuelta, que es la operación más cara de toda la pestaña. Ahora solo se
+   reconstruye si cambia la FORMA de la tira (otro modo, otras capas); lo demás
+   es actualizar una clase y un número, que no cuesta nada. */
+function m2CapasAlDia(){
+  const w=$('m2-capas'); if (!w) return;
+  for (const t of M2.est.tipos){
+    const b=$('m2cap-'+t.k); if (!b) continue;
+    const n=M2.cuenta[t.k]||0;
+    b.classList.toggle('on', m2SaleAhora(t));
+    const c=b.querySelector('.n');
+    if (c && c.textContent !== String(n)) c.textContent = n;
+    if (b.dataset.pista !== n+' a la vista') b.dataset.pista = n+' a la vista';
+  }
+  const a=$('m2cap-aparicion'); if (a) a.classList.toggle('on', M2.verAparicion);
+  const sl=$('m2cap-slime'); if (sl) sl.classList.toggle('on', M2.verSlime);
+}
+
 function m2Capas(){
   const w=$('m2-capas'); if (!w || !M2.est) return;
   const modo = M2.modo==='lista' ? 'lista' : 'tira';
@@ -3599,6 +3727,8 @@ function m2Capas(){
     bm.title = modo==='lista' ? 'Volver a la tira de iconos'
                               : 'Ver los nombres de cada capa';
   }
+  const forma = modo + '|' + M2.est.tipos.map(t=>t.k).join(',');
+  if (w.dataset.forma === forma){ m2CapasAlDia(); m2NotaGens(); return; }
   const izq = w.scrollLeft;            // no perder el sitio al repintar la tira
   w.innerHTML='';
   const chip=(id, activo, etq, icono, cuenta)=>{
@@ -3664,8 +3794,9 @@ function m2Capas(){
     };
     w.appendChild(b);
   }
+  w.dataset.forma = forma;
   w.scrollLeft = izq;
-  m2ZonaVer();
+  m2NotaGens();
 }
 
 /* Marcar o desmarcar todas las capas de golpe. Al marcar todo se fuerzan
@@ -3683,170 +3814,22 @@ function m2Todas(encender){
   m2Guardar(); m2Capas(); m2PideSlime(); m2PideEstructuras(); m2Iconos();
 }
 
-/* ---------- «buscar generadores en esta zona» ----------
-   Un generador no se puede adivinar desde la semilla. El sorteo sí es
-   determinista, pero la sala solo se coloca si justo ahí había una cueva, y eso
-   depende del terreno ya excavado: sin simular las cuevas salen 531 puntos
-   falsos por cada dungeon de verdad, medido en 1024 chunks de esta misma
-   semilla. Chunkbase lo resuelve reimplementando el generador entero en
-   JavaScript, y por eso su propia página avisa de que sus dungeons pueden estar
-   mal o faltar: es una copia del generador, no el generador.
+/* ---------- el aviso de la capa de generadores ----------
+   Un generador no se puede adivinar desde la semilla: la sala solo se coloca si
+   justo ahí había una cueva, y eso depende del terreno ya excavado. Lo que sí se
+   puede es LEER los que ya existen, que es lo que hace el escaneo de cada noche.
+   Por eso esta capa se comporta distinto a todas las demás: no cubre el mundo
+   entero, cubre lo que la gente ha pisado. Eso hay que decirlo donde se ve, o
+   parece que la capa está rota en medio mapa.
 
-   Aquí hay algo que Chunkbase no tiene: el Minecraft de verdad, encendido. Se le
-   pide que genere el cuadro, se guarda y se lee. No es una predicción, es el
-   mundo. El precio es que tarda y que mientras tanto el servidor va más lento,
-   así que esto no es una capa que se mueva contigo: es un botón que se pulsa. */
-const M2_ZONA_LADO = 32;              // 32x32 chunks = 512x512 bloques
-let m2ZonaTimer = null;
-
-function m2ZonaPuede(){ return !!(ME && (ME.role==='admin' || ME.role==='mod')); }
-
-/* El cuadro que se va a generar: lo que se ve, recortado por el centro a lo que
-   el servidor acepta de una tacada. Se calcula también aquí, además de en el
-   servidor, para poder DIBUJARLO antes de pulsar: nadie debería encargar dos
-   minutos de trabajo sin ver antes qué trozo toca. */
-function m2ZonaCaja(){
-  const alCentro=(a,b)=>{
-    if (b-a+1 <= M2_ZONA_LADO) return [a,b];
-    const i = Math.floor((a+b)/2) - (M2_ZONA_LADO>>1);
-    return [i, i+M2_ZONA_LADO-1];
-  };
-  const [cx0,cx1] = alCentro(Math.floor(m2dex(0)/16), Math.floor(m2dex(M2.w)/16));
-  const [cz0,cz1] = alCentro(Math.floor(m2dez(0)/16), Math.floor(m2dez(M2.h)/16));
-  return {x0:cx0*16, z0:cz0*16, x1:cx1*16+15, z1:cz1*16+15,
-          chunks:(cx1-cx0+1)*(cz1-cz0+1)};
-}
-
-/* El cartel solo sale si sirve de algo: sin permiso el botón daría 403, y con la
-   capa de generadores apagada el trabajo acabaría sin que se viera nada. */
-function m2ZonaVer(){
-  const z=$('m2-zona'); if (!z) return;
+   Aquí hubo un botón para generar la zona a la fuerza y mirarla. Salía exacto,
+   pero le costaba al servidor unos minutos de ir lento por cada cuadro de
+   512x512, y se quitó a propósito. Si alguna vez se echa de menos, está en el
+   historial de git y en el documento del proyecto. */
+function m2NotaGens(){
+  const n=$('m2-gens-nota'); if (!n) return;
   const hay = !!(M2.est && (M2.est.tipos||[]).some(t=>t.k==='spawner'));
-  z.classList.toggle('ver', hay && m2ZonaPuede() && !M2.apagados.has('spawner'));
-}
-
-function m2ZonaPrevia(si){
-  if (!m2ZonaPuede() || !M2.listo) return;
-  M2.zonaPrevia = si ? m2ZonaCaja() : null;
-  m2Iconos();
-}
-
-/* El cuadro, encima del mapa. Dibujarlo contesta sin palabras a «¿qué trozo ha
-   mirado?»: ese, el de la raya. Amarillo mientras trabaja, verde cuando acabó. */
-function m2ZonaDibuja(g){
-  const c = M2.zonaPrevia
-        || ((M2.zonaEstado && M2.zonaEstado!=='quieto') ? M2.zonaCaja : null);
-  if (!c) return;
-  const trabajando = M2.zonaEstado==='generando' || M2.zonaEstado==='leyendo';
-  const x=m2ax(c.x0), y=m2az(c.z0),
-        w=(c.x1-c.x0+1)*M2.esc, h=(c.z1-c.z0+1)*M2.esc;
-  g.save();
-  g.lineWidth = 2;
-  g.setLineDash(M2.zonaPrevia ? [4,4] : trabajando ? [9,6] : [6,4]);
-  g.strokeStyle = M2.zonaEstado==='error' ? '#ff8b8b'
-                : (trabajando || M2.zonaPrevia || M2.zonaCojo) ? '#ffd35c' : '#6fd44e';
-  g.strokeRect(x, y, w, h);
-  g.restore();
-}
-
-function m2ZonaDi(txt, mal){
-  const p=$('m2-zona-p'); if (!p) return;
-  p.textContent = txt || '';
-  p.classList.toggle('mal', !!mal);
-}
-
-async function m2Zona(){
-  if (!M2.listo) return;
-  const c = m2ZonaCaja(), b = $('m2-zona-btn');
-  b.disabled = true;
-  M2.zonaCaja = c; M2.zonaEstado = 'generando'; M2.zonaPrevia = null;
-  m2ZonaDi('encargándoselo al servidor…');
-  m2Iconos();
-  let d=null;
-  try{ d = await api('/api/mapa2/zona', {x0:c.x0, z0:c.z0, x1:c.x1, z1:c.z1}); }catch(_){}
-  if (!d || !d.ok){
-    b.disabled = false;
-    M2.zonaEstado = 'quieto';
-    m2ZonaDi((d && d.error) || 'No pude arrancar la búsqueda', true);
-    m2Iconos();
-    return;
-  }
-  if (Array.isArray(d.caja)) M2.zonaCaja = {x0:d.caja[0], z0:d.caja[1], x1:d.caja[2], z1:d.caja[3]};
-  // Encender la capa: si acaba y está apagada, el trabajo termina y no se ve
-  // nada, que es la peor forma de que algo parezca roto.
-  M2.apagados.delete('spawner'); M2.forzados.add('spawner');
-  m2Guardar(); m2Capas();
-  m2ZonaVigila();
-}
-
-/* Se pregunta cada pocos segundos y se para sola al terminar. El trabajo vive en
-   el servidor, no en esta pestaña: si alguien recarga o entra desde otro sitio,
-   al abrir el mapa se engancha al que ya hay en marcha. */
-function m2ZonaVigila(){
-  clearTimeout(m2ZonaTimer);
-  const mirar = async ()=>{
-    let d=null;
-    try{ d = await api('/api/mapa2/zona'); }catch(_){}
-    if (!d || !d.ok) return;
-    m2ZonaPinta(d);
-    if (d.estado==='generando' || d.estado==='leyendo')
-      m2ZonaTimer = setTimeout(mirar, 2500);
-  };
-  mirar();
-}
-
-/* Volver a pedir las estructuras UNA vez por búsqueda, no en cada vuelta del
-   reloj: la respuesta de «listo» se repite mientras la pestaña siga abierta. */
-function m2ZonaRefresca(d){
-  if (m2ZonaRefresca._ultima === d.t) return;
-  m2ZonaRefresca._ultima = d.t;
-  m2PideEstructuras();
-}
-
-function m2ZonaPinta(d){
-  const b=$('m2-zona-btn'), barra=$('m2-zona-barra'), i=$('m2-zona-i');
-  if (!b) return;
-  const trabajando = (d.estado==='generando' || d.estado==='leyendo');
-  // Un resultado de hace media hora no es noticia: se calla y se borra el cuadro
-  // en vez de saludar con el recuento de una búsqueda que ya nadie recuerda.
-  const viejo = !trabajando && d.t && (Date.now()/1000 - d.t > 900);
-  b.disabled = trabajando;
-  barra.classList.toggle('hidden', !trabajando);
-  if (Array.isArray(d.caja)) M2.zonaCaja = {x0:d.caja[0], z0:d.caja[1], x1:d.caja[2], z1:d.caja[3]};
-  M2.zonaEstado = viejo ? 'quieto' : d.estado;
-  M2.zonaCojo = false;
-
-  if (viejo || d.estado==='quieto'){
-    m2ZonaDi('');
-  } else if (d.estado==='generando'){
-    i.style.width = (d.total ? Math.round(d.hechos*100/d.total) : 0) + '%';
-    m2ZonaDi('generando el terreno, ' + (d.hechos||0) + ' de ' + (d.total||0) + ' chunks');
-  } else if (d.estado==='leyendo'){
-    i.style.width = '100%';
-    m2ZonaDi('leyendo lo que ha salido…');
-  } else if (d.estado==='error'){
-    // Aunque algo se torciera, lo que se generó antes del tropiezo es de verdad
-    // y ya está escaneado: se dice, y se pintan. Un error no tiene por qué
-    // significar que no haya salido nada.
-    const tambien = (typeof d.hallados === 'number' && d.hallados > 0)
-      ? '. Aun así encontré ' + d.hallados + (d.hallados===1 ? ' generador' : ' generadores')
-      : '';
-    m2ZonaDi((d.mensaje || 'algo ha fallado') + tambien, true);
-    m2ZonaRefresca(d);
-  } else if (d.estado==='listo'){
-    const n = d.hallados;
-    // Si el servidor no llegó a generarlo todo hay que decirlo: un «listo, 3
-    // generadores» sobre medio cuadro es una respuesta falsa con buena cara.
-    const cojo = (d.total && d.hechos < d.total)
-      ? ', pero solo pude generar ' + d.hechos + ' de ' + d.total + ' chunks' : '';
-    M2.zonaCojo = !!cojo;
-    m2ZonaDi((n===0 ? 'listo, en este cuadro no hay ninguno'
-            : n===1 ? 'listo, 1 generador en este cuadro'
-            : n>1   ? ('listo, ' + n + ' generadores en este cuadro')
-            : 'listo') + cojo, !!cojo);
-    m2ZonaRefresca(d);
-  }
-  m2Iconos();
+  n.classList.toggle('ver', hay && !M2.apagados.has('spawner'));
 }
 
 /* ---------- moverse ---------- */
@@ -3892,9 +3875,34 @@ function m2Enganchar(){
     $('m2-globo').classList.add('hidden');
   });
 
+  // La caja del lienzo NO cambia entre movimientos del ratón, y pedirla obliga al
+  // navegador a recalcular la maquetación: se guarda y se tira cuando de verdad
+  // puede haber cambiado. Y mirar dónde está el ratón se hace UNA VEZ POR
+  // FOTOGRAMA, no una por evento: un ratón moderno manda cientos por segundo y
+  // la pantalla solo se dibuja sesenta veces.
+  let quieto=null, pendiente=0;
+  const rect = ()=> M2.caja || (M2.caja = caja.getBoundingClientRect());
+  addEventListener('scroll', ()=>{ M2.caja=null; }, {passive:true});
+  addEventListener('resize', ()=>{ M2.caja=null; });
+
+  // Sacar el ratón del mapa NO manda un `pointermove`, así que sin esto el
+  // último icono se quedaba crecido para siempre, como un mapa congelado en el
+  // instante en que te fuiste. Lo encontró la prueba, no el ojo.
+  caja.addEventListener('pointerleave', ()=>{
+    if (M2.encima){ M2.encima=null; caja.classList.remove('sobre-icono'); m2Iconos(); }
+  });
+
   caja.addEventListener('pointermove', ev=>{
-    const r=caja.getBoundingClientRect();
-    if (!arrastrando){ m2Mirar(ev.clientX-r.left, ev.clientY-r.top); return; }
+    if (!arrastrando){
+      quieto = ev;
+      if (!pendiente) pendiente = requestAnimationFrame(()=>{
+        pendiente = 0;
+        const r = rect();
+        m2Mirar(quieto.clientX-r.left, quieto.clientY-r.top);
+      });
+      return;
+    }
+    const r=rect();
     const p=punteros.get(ev.pointerId); if (!p) return;
     const dx=ev.clientX-p.x, dy=ev.clientY-p.y;
     p.x=ev.clientX; p.y=ev.clientY;
@@ -3917,7 +3925,8 @@ function m2Enganchar(){
       arrastrando=false; caja.classList.remove('arrastrando');
       m2Guardar(); m2PideEstructuras(); m2PideSlime();
       if (movido < 5){
-        const r=caja.getBoundingClientRect();
+        const r=caja.getBoundingClientRect();   // aquí sí: puede haber scrolleado
+        M2.caja = r;
         m2Clic(ev.clientX-r.left, ev.clientY-r.top);
       }
     }
@@ -3965,8 +3974,30 @@ function m2Mirar(px,py){
     clearTimeout(m2TimerBioma);
     m2TimerBioma = setTimeout(()=>m2PreguntaBioma(x, z), 160);
   }
-  $('m2-donde').innerHTML = `<b>X ${x}</b> &nbsp; <b>Z ${z}</b>`
+  // Escribir en el DOM invalida el estilo de ese trozo de página aunque el texto
+  // sea idéntico. Moviendo el ratón despacio, la mitad de las veces lo es.
+  const linea = `<b>X ${x}</b> &nbsp; <b>Z ${z}</b>`
     + (nombre ? ' &nbsp;·&nbsp; '+esc(nombre) : '');
+  const donde = $('m2-donde');
+  if (donde._ult !== linea){ donde._ult = linea; donde.innerHTML = linea; }
+  m2Encima(px, py);
+}
+
+/* ---------- el icono que tienes debajo del ratón ----------
+   Un mapa lleno de cuadraditos no dice cuáles se pueden tocar. El de debajo del
+   cursor crece un poco y el puntero se convierte en mano: dos señales pequeñas
+   que convierten «un dibujo» en «algo que responde». Se repinta solo cuando
+   CAMBIA cuál es, no en cada movimiento. */
+function m2Encima(px, py){
+  let nuevo = null;
+  for (const [k,x,z,ix,iy,sub] of (M2.enPantalla||[])){
+    if (Math.abs(ix-px)<13 && Math.abs(iy-py)<13){ nuevo = m2Clave(k,x,z); break; }
+  }
+  if (nuevo === M2.encima) return;
+  M2.encima = nuevo;
+  const caja=$('m2-lienzo');
+  if (caja) caja.classList.toggle('sobre-icono', !!nuevo);
+  m2Iconos();
 }
 
 async function m2PreguntaBioma(x, z){
@@ -4291,8 +4322,8 @@ function renderMemGrid(grid, base, upLabel){
   MEMS.forEach((m,i)=>{
     const f=document.createElement('div'); f.className='frame'; f.onclick=()=>memOpen(i, base);
     const thumbUrl = base + (base.includes('/p/') ? 'thumbs/' : 'thumbs/') + encodeURIComponent(m.thumb);
-    f.innerHTML=`<div class="photo"><img loading="lazy" src="${thumbUrl}"
-        onerror="this.src='${base}${encodeURIComponent(m.file)}'"></div>
+    f.innerHTML=`<div class="photo"><img loading="lazy" decoding="async" src="${thumbUrl}"
+        onerror="this.onerror=null; this.src='${base}${encodeURIComponent(m.file)}'"></div>
       <div class="cap">${esc(m.title)}<span class="by">${t('mem_by')} ${esc(m.uploader)} · ${memDate(m.ts)}</span></div>`;
     grid.appendChild(f);
   });
@@ -4989,11 +5020,18 @@ async function mkScan(){
 const LOGO_MAIN='/static/favicon-192.png';
 const LOGO_VARIANTS=['green','cyan','gold','red','blue','stone'].map(c=>`/static/logo-c-${c}.png`);
 (function(){
-  LOGO_VARIANTS.forEach(u=>{ const i=new Image(); i.src=u; });   // precarga sin parpadeo
-  let t=null, i=0;
+  // Los seis logos de colores son un guiño: cambian mientras pasas el ratón por
+  // encima. Se precargaban AL ABRIR EL PANEL — 270 KB que casi nadie llega a
+  // ver, delante de todo lo que sí hace falta. Ahora se traen la primera vez que
+  // alguien se acerca al logo; el resto de la sesión ya están en la caché.
+  let t=null, i=0, traidos=false;
+  const traer=()=>{ if (traidos) return; traidos=true;
+    LOGO_VARIANTS.forEach(u=>{ const im=new Image(); im.src=u; }); };
   const wire=()=>{
     const el=$('hdr-logo'); if(!el) return;
+    el.addEventListener('pointerenter', traer, {once:true});
     el.addEventListener('mouseenter',()=>{ if(t) return;
+      traer();
       el.src=LOGO_VARIANTS[i++%LOGO_VARIANTS.length];
       t=setInterval(()=>{ el.src=LOGO_VARIANTS[i++%LOGO_VARIANTS.length]; },380); });
     el.addEventListener('mouseleave',()=>{ clearInterval(t); t=null; el.src=LOGO_MAIN; });
