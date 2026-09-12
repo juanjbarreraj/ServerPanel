@@ -1499,8 +1499,14 @@ button,a,.slot,.m2-cap,.tabslot{-webkit-tap-highlight-color:transparent}
     <div class="card" style="margin-bottom:14px">
       <h3><img class="hico" src="/static/ui/s-tolva.png?v=15" alt="" onerror="this.outerHTML='⬆️ '">Subir un mundo</h3>
       <div class="drop" id="mu-drop"><img class="dico" src="/static/ui/s-tolva.png?v=15" alt=""
-        onerror="this.outerHTML='⬆️ '">Arrastra aquí el .zip o .tar.gz del mundo, o haz clic para elegirlo</div>
-      <input type="file" id="mu-file" accept=".zip,.tar,.gz,.tgz" class="hidden">
+        onerror="this.outerHTML='⬆️ '">Arrastra aquí el mundo comprimido (.zip o .tar.gz), o haz clic para elegirlo</div>
+      <!-- SIN `accept`, y a propósito. El diálogo de macOS apaga el botón «Abrir»
+           para todo lo que no case con esa lista, y bastaba que el archivo se
+           llamara de otra forma para que no hubiera manera de subir un mundo, sin
+           un solo mensaje que dijera por qué. Lo que vale o no vale se decide
+           mirando los primeros bytes del archivo (ver muSubir), que es lo mismo
+           que hace el servidor y no depende de cómo se llame. -->
+      <input type="file" id="mu-file" class="hidden">
       <div class="hidden" id="mu-subiendo">
         <div class="barra"><i id="mu-pc"></i></div>
         <div class="note" id="mu-pct" style="margin-top:6px">0 %</div>
@@ -3060,9 +3066,36 @@ function muWire(){
    servidor o del navegador a mitad de camino y no hay forma de saber por dónde
    iba. A cachos hay barra de progreso, y si el servidor responde que va por
    otro sitio (409) se sigue desde ahí en vez de empezar de cero. */
+/* Qué es este archivo DE VERDAD, mirando sus primeros bytes.
+
+   El nombre no sirve para esto: un mundo comprimido puede llamarse `mundo.zip`,
+   `world.tar.gz`, `copia.tgz` o `backup` a secas, y el servidor lo abre igual
+   porque él tampoco mira el nombre (`zipfile.is_zipfile` y `tarfile.open` miran
+   dentro). Filtrar por el nombre solo servía para rechazar mundos buenos. */
+async function muQueEs(f){
+  let b;
+  try{ b = new Uint8Array(await f.slice(0, 264).arrayBuffer()); }
+  catch(_){ return null; }               // una carpeta, o algo que no se deja leer
+  const en = (p, d=0) => p.every((v,i) => b[d+i] === v);
+  if (en([0x50,0x4B,0x03,0x04]) || en([0x50,0x4B,0x05,0x06])) return 'zip';
+  if (en([0x1F,0x8B])) return 'tar.gz';
+  if (en([0x42,0x5A,0x68])) return 'tar.bz2';
+  if (en([0xFD,0x37,0x7A,0x58,0x5A,0x00])) return 'tar.xz';
+  // el tar pelado no tiene firma al principio: la lleva en el byte 257
+  if (b.length > 262 && en([0x75,0x73,0x74,0x61,0x72], 257)) return 'tar';
+  return null;
+}
+
 async function muSubir(f){
-  if (!/\.(zip|tar|gz|tgz)$/i.test(f.name)){ toast('Tiene que ser un .zip o un .tar.gz'); return; }
-  const nombre = f.name.replace(/\.(tar\.gz|zip|tar|gz|tgz)$/i, '').slice(0, 48);
+  const tipo = await muQueEs(f);
+  if (!tipo){
+    // Un mundo de Minecraft ES una carpeta, así que es lo primero que la gente
+    // intenta soltar aquí. Decirlo, en vez de un «no vale» a secas.
+    toast(!f.size ? 'Eso parece una carpeta. Comprime el mundo en un .zip y sube el .zip'
+                  : 'No reconozco ese archivo: tiene que ser un .zip o un .tar.gz del mundo');
+    return;
+  }
+  const nombre = f.name.replace(/\.(tar\.gz|tar\.bz2|tar\.xz|zip|tar|gz|tgz|bz2|xz)$/i, '').slice(0, 48);
   // si ya hay algo en marcha, mejor decirlo AHORA que después de subir un giga
   try{
     const y = await api('/api/mundos');
@@ -3076,7 +3109,7 @@ async function muSubir(f){
   caja.classList.remove('hidden'); barra.style.width = '0%'; pct.textContent = '0 %';
   $('mu-drop').style.pointerEvents = 'none';
 
-  let off = 0, fallos = 0;
+  let off = 0, fallos = 0, quietos = 0;
   while (off < f.size){
     const fd = new FormData();
     fd.append('id', id); fd.append('offset', String(off));
@@ -3090,6 +3123,13 @@ async function muSubir(f){
     fallos = 0;
     if (r.error === 'desincronizado'){ off = r.esperado; continue; }
     if (!r.ok){ toast(r.error || 'Falló la subida'); break; }
+    // El servidor dice por dónde va. Si dijera lo mismo dos veces seguidas, la
+    // subida no avanzaría y este bucle reenviaría el mismo trozo para siempre,
+    // calladito, mientras la barra se queda en el mismo sitio. Salió en una
+    // prueba, no en el server, pero de aquí no se sale sin avanzar.
+    if (r.recibido <= off){
+      if (++quietos >= 3){ toast('La subida no avanza, vuelve a intentarlo'); break; }
+    } else quietos = 0;
     off = r.recibido;
     const p = Math.round(off * 100 / f.size);
     barra.style.width = p + '%';

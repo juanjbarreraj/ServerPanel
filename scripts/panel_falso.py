@@ -30,6 +30,7 @@ Uso:
 import base64
 import json
 import os
+import re
 import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -102,6 +103,11 @@ class PanelFalso:
         self.gens = []                 # los que salen solo si se piden con gens=1
         self.hechas = {}
         self.pedidos = {"estructuras": [], "estado": []}
+        # subida de mundos: se apunta lo que llega para poder comprobarlo
+        self.subidas = {}              # id → bytes recibidos
+        self.mundo_info = {"ok": True, "legible": True, "version": "26.2",
+                           "version_servidor": "26.2", "bytes": 0,
+                           "mas_nueva": False, "activo_nombre": "mundo de ahora"}
 
     # ---------------------------------------------------------------- rutas
     @staticmethod
@@ -133,6 +139,9 @@ class PanelFalso:
                                "lejos_densas": False})
         if p == "/api/mapa2/hechas":
             return self._json({"ok": True, "hechas": self.hechas})
+        if p == "/api/mundos":
+            return self._json({"ok": True, "mundos": [], "activo": "world",
+                               "trabajo": {"estado": "quieto"}, "papelera": []})
         return self._json({"ok": True})
 
     def enruta(self, ruta):
@@ -146,7 +155,41 @@ class PanelFalso:
         u = url[len(self.BASE):]
         if not u.startswith("/api/"):
             return ruta.continue_()
+        p = u.split("?")[0]
+        if p == "/api/mundos/trozo" and ruta.request.method == "POST":
+            # Hay que contar los bytes EXACTOS, no aproximarlos. El navegador
+            # sigue subiendo hasta que el servidor le dice que ya tiene el
+            # archivo entero; si aquí se cuenta de menos, la subida no termina
+            # nunca. (Así se descubrió que el panel tampoco se protegía de eso.)
+            crudo = ruta.request.post_data_buffer or b""
+            campos = self._formulario(crudo, ruta.request.headers.get("content-type", ""))
+            ident = (campos.get("id") or b"?").decode("utf-8", "replace")
+            self.subidas[ident] = self.subidas.get(ident, 0) + len(campos.get("trozo") or b"")
+            return ruta.fulfill(**self._json({"ok": True, "recibido": self.subidas[ident]}))
+        if p == "/api/mundos/inspeccionar" and ruta.request.method == "POST":
+            cuerpo = json.loads(ruta.request.post_data or "{}")
+            info = dict(self.mundo_info)
+            info["bytes"] = self.subidas.get(cuerpo.get("id"), 0)
+            return ruta.fulfill(**self._json(info))
         return ruta.fulfill(**self._api(u))
+
+    @staticmethod
+    def _formulario(crudo, tipo):
+        """{nombre: bytes} de un multipart/form-data, sin librerías."""
+        m = re.search(r'boundary=(?:"([^"]+)"|([^;]+))', tipo or "")
+        if not m or not crudo:
+            return {}
+        sep = b"--" + (m.group(1) or m.group(2)).strip().encode()
+        fuera = {}
+        for parte in crudo.split(sep):
+            i = parte.find(b"\r\n\r\n")
+            if i < 0:
+                continue
+            cab = parte[:i].decode("utf-8", "replace")
+            n = re.search(r'name="([^"]*)"', cab)
+            if n:
+                fuera[n.group(1)] = parte[i + 4:].rstrip(b"\r\n")
+        return fuera
 
     # ---------------------------------------------------------------- ayudas
     def al_mapa(self, pag):
