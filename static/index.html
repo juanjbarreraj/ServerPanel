@@ -582,6 +582,10 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .m2-nota img{width:30px; height:30px; flex:0 0 30px; image-rendering:pixelated; margin-top:1px}
 .m2-nota b{display:block; font-size:.78rem; color:var(--ink); margin-bottom:3px}
 .m2-nota span{display:block; font-size:.72rem; color:var(--ink3); line-height:1.55}
+.m2-zona-barra{flex:1 1 150px; min-width:110px; height:7px; border-radius:4px;
+  background:rgba(0,0,0,.45); overflow:hidden}
+.m2-zona-barra i{display:block; height:100%; width:0; background:var(--slime);
+  transition:width var(--t-lento) linear}
 .m2-marcar{display:flex; gap:14px; margin:0 4px 12px; font-size:.75rem}
 .m2-marcar button{background:none; border:0; color:var(--ink3); cursor:pointer; padding:2px 0;
   font-size:.75rem; font-weight:700; text-decoration:underline; text-underline-offset:3px}
@@ -1221,10 +1225,22 @@ button,a,.slot,.m2-cap,.tabslot{-webkit-tap-highlight-color:transparent}
         <button class="btn small" onclick="mkAdd()">Añadir</button>
       </div>
       <div class="pgrid" id="mk-list" style="margin-top:4px"></div>
+      <!-- Cómo va el repintado. Solo sale cuando hay algo que contar: ni un
+           hueco vacío el 99% del tiempo. -->
+      <div class="m2-nota" id="rp-caja">
+        <img src="/static/ui/mapa.png?v=15" alt="" onerror="this.style.display='none'">
+        <div style="flex:1; min-width:0">
+          <b id="rp-titulo">Repintando el mapa desde cero</b>
+          <div class="m2-zona-barra" id="rp-barra" style="margin:7px 0 5px"><i id="rp-pc"></i></div>
+          <span id="rp-texto"></span>
+        </div>
+        <button class="btn small ghost hidden" id="rp-cancel" onclick="rpCancelar()">Cancelar</button>
+      </div>
       <div id="mk-scan-row" class="hidden">
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:14px">
           <button class="btn small" onclick="mkMarcadores()"><img class="bico" src="/static/ui/s-posicion.png?v=15" alt="" onerror="this.outerHTML='📍 '">Actualizar los iconos</button>
           <button class="btn small ghost" onclick="mkScan()"><img class="bico" src="/static/ui/mapa.png?v=15" alt="" onerror="this.outerHTML='🔎 '">Volver a dibujar el mapa entero</button>
+          <button class="btn small warn" id="rp-btn" onclick="rpAbrir()"><img class="bico" src="/static/ui/s-tolva.png?v=15" alt="" onerror="this.outerHTML='🧹 '">Repintar desde cero</button>
         </div>
         <div class="note">Volver a dibujar repinta el terreno y tarda más de una hora; normalmente no hace falta, porque el mapa se actualiza solo cada noche.</div>
         <div class="note" id="mk-estado" style="margin-top:8px"></div>
@@ -2035,7 +2051,7 @@ function show(id){
   if (id==='backups') loadBackups();
   if (id==='plugins') loadPlugins();
   if (id==='users'){ loadUsers(); loadAudit(); }
-  if (id==='sistema'){ loadSistema(); verCargar(); if(!window._sysT) window._sysT=setInterval(()=>{ if(!document.hidden && !$('tab-sistema').classList.contains('hidden')) loadSistema(); },5000); }
+  if (id==='sistema'){ loadSistema(); verCargar(); rpMirar(); if(!window._sysT) window._sysT=setInterval(()=>{ if(!document.hidden && !$('tab-sistema').classList.contains('hidden')) loadSistema(); },5000); }
   if (id==='mundo') muCargar();
   if (id==='mapa2') m2Cargar();
   window._curTab=id;
@@ -5050,6 +5066,76 @@ async function mkEstadoIconos(){
   if (!cabeza){ mkEstado(''); return; }
   mkEstado(cabeza+'<div style="margin-top:6px; opacity:.8">'+filas+'</div>');
 }
+/* ---------- repintar el mapa 3D desde cero ----------
+   El único botón del panel que BORRA algo grande antes de trabajar, así que es
+   el único que pregunta dos veces y explica lo que cuesta antes de empezar: el
+   mapa se queda vacío mientras se rehace, y son horas. El resto de botones del
+   mapa no borran nada y por eso no preguntan. */
+function rpAbrir(){
+  const texto =
+    'Repintar el mapa 3D desde cero\n\n' +
+    'Borra todos los azulejos dibujados y los vuelve a dibujar leyendo el mundo de hoy. ' +
+    'Es lo que hay que hacer cuando el mapa ya no se corresponde con el mundo, por ejemplo ' +
+    'después de recortar chunks.\n\n' +
+    'Lo que cuesta:\n' +
+    '· Tarda horas.\n' +
+    '· El mapa se verá VACÍO mientras tanto, para todos.\n' +
+    '· Quien esté jugando lo notará más lento.\n\n' +
+    'Aceptar = hacerlo AHORA MISMO.\n' +
+    'Cancelar = elegir hacerlo esta madrugada, con el servidor vacío.';
+  if (confirm(texto)) return rpLanzar('ahora');
+  if (confirm('¿Lo dejo programado para esta madrugada?\n\n' +
+              'Se hará con el render de las 4 de la mañana, cuando no hay nadie jugando.'))
+    return rpLanzar('madrugada');
+}
+
+async function rpLanzar(cuando){
+  const r = await api('/api/system/repintar', {cuando}).catch(()=>null);
+  toast((r && r.output) || 'No se pudo arrancar');
+  rpMirar();
+}
+
+async function rpCancelar(){
+  const r = await api('/api/system/repintar', {cuando:'cancelar'}).catch(()=>null);
+  toast((r && r.output) || 'No se pudo cancelar');
+  rpMirar();
+}
+
+/* Se pregunta cada pocos segundos mientras hay algo en marcha, y se calla
+   cuando no. El trabajo vive en el servidor: recargar la página o entrar desde
+   otro sitio se engancha a lo que ya hay. */
+let RP_T = null;
+async function rpMirar(){
+  clearTimeout(RP_T);
+  const caja = $('rp-caja'); if (!caja) return;
+  const r = await api('/api/system/repintar').catch(()=>null);
+  if (!r || !r.ok){ caja.classList.remove('ver'); return; }
+
+  const bt = $('rp-btn');
+  if (bt) bt.disabled = !!r.corriendo;
+  $('rp-cancel').classList.toggle('hidden', !(r.pendiente && !r.corriendo));
+  $('rp-barra').classList.toggle('hidden', !r.corriendo);
+
+  if (r.corriendo){
+    $('rp-titulo').textContent = 'Trabajando en el mapa 3D';
+    const pc = (typeof r.pct === 'number') ? r.pct : null;
+    $('rp-pc').style.width = (pc === null ? 3 : pc) + '%';
+    $('rp-texto').textContent =
+      (pc === null ? 'preparando…' : pc.toFixed(1) + ' %')
+      + (r.eta ? ' · quedan ' + r.eta : '')
+      + (r.minutos ? ' · lleva ' + r.minutos + ' min' : '');
+    caja.classList.add('ver');
+    RP_T = setTimeout(rpMirar, 5000);
+  } else if (r.pendiente){
+    $('rp-titulo').textContent = 'Repintado programado';
+    $('rp-texto').textContent = 'El mapa se borrará y se dibujará de nuevo esta madrugada, '
+      + 'con el render de las 4. Mientras tanto no cambia nada.';
+    caja.classList.add('ver');
+  } else {
+    caja.classList.remove('ver');
+  }
+}
+
 async function mkScan(){
   if(!confirm('Vuelve a dibujar el mapa entero. Tarda más de una hora (con prioridad baja, sin molestar al server).\n\nSi solo faltan los ICONOS de las estructuras, usa el otro botón: tarda segundos.\n\n¿Seguir igualmente?')) return;
   const r=await api('/api/system/scan_map',{}).catch(()=>null);

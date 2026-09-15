@@ -2832,6 +2832,108 @@ def api_system_map_markers():
                    if ok else _mapa_ocupado_texto())
 
 
+# ══════════════════ repintar el mapa 3D desde cero
+#
+# POR QUÉ HACE FALTA UN BOTÓN APARTE
+# BlueMap solo redibuja los chunks MODIFICADOS desde el último render. Un chunk
+# borrado —al recortar el mundo con MCA Selector, por ejemplo— no está
+# modificado: no está. Nada dispara el redibujado de esa zona, así que el mapa se
+# queda enseñando un terreno que ya no existe, y no hay forma de arreglarlo desde
+# el CLI: no existe `--purge` (comprobado contra el jar; las opciones son
+# -a -b -c -e -f -g -h -l -m --markers -n -r -s -u -v).
+#
+# Lo único que limpia de verdad es borrar los azulejos y volver a dibujarlos. Eso
+# tarda horas y deja el mapa vacío mientras tanto, así que no puede ser un efecto
+# secundario de ningún otro botón: se pide a propósito, sabiendo lo que cuesta.
+_REPINTAR_NOTA = Path.home() / "bluemap" / ".repintar-pendiente"
+_RE_PORCIENTO = re.compile(r":\s*([0-9]+(?:\.[0-9]+)?)\s*%")
+
+
+def _render_progreso():
+    """Por dónde va el render, sacado del registro de BlueMap.
+
+    BlueMap escribe una línea por tanda con el formato «descripción: N.NNN%» y,
+    si lo sabe, « (ETA: ...)» detrás. El formato sale del propio jar, no de la
+    documentación: es una concatenación `\1: \1%\1` en BlueMapCLI.
+    """
+    log = Path.home() / "bluemap" / "render.log"
+    try:
+        with open(log, "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - 16384))
+            cola = fh.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None, ""
+    for linea in reversed(cola):
+        m = _RE_PORCIENTO.search(linea)
+        if m:
+            try:
+                pct = max(0.0, min(100.0, float(m.group(1))))
+            except ValueError:
+                continue
+            eta = ""
+            e = re.search(r"ETA:\s*([^)]+)\)", linea)
+            if e:
+                eta = e.group(1).strip()
+            return pct, eta
+        if "borrando los azulejos" in linea:
+            return 0.0, ""
+    return None, ""
+
+
+@app.get("/api/system/repintar")
+def api_system_repintar_estado():
+    u = require()
+    if u["role"] not in ("admin", "mod"):
+        abort(403)
+    corriendo = "mapa" in _sys_busy
+    pct, eta = _render_progreso() if corriendo else (None, "")
+    desde = _sys_busy.get("mapa")
+    return jsonify(ok=True, corriendo=corriendo,
+                   pendiente=_REPINTAR_NOTA.exists(),
+                   pct=pct, eta=eta,
+                   minutos=int((time.time() - desde) / 60) if desde else 0)
+
+
+@app.post("/api/system/repintar")
+def api_system_repintar():
+    """Borra los azulejos del mapa 3D y los vuelve a dibujar. Ahora o de noche."""
+    u = _require_admin()
+    cuando = (request.get_json(silent=True) or {}).get("cuando", "")
+    if cuando == "cancelar":
+        _REPINTAR_NOTA.unlink(missing_ok=True)
+        audit(u["name"], "cancela el repintado del mapa")
+        return jsonify(ok=True, output="Repintado cancelado")
+
+    if cuando == "madrugada":
+        # Una nota que recoge el render de las 09:00 UTC. Se deja aquí y no en
+        # un cron nuevo para no tener dos relojes que puedan solaparse.
+        try:
+            _REPINTAR_NOTA.parent.mkdir(parents=True, exist_ok=True)
+            _REPINTAR_NOTA.write_text(json.dumps(
+                {"quien": u["name"], "t": int(time.time())}))
+        except OSError as e:
+            return jsonify(ok=False, output="No pude dejar la nota: %s" % e), 500
+        audit(u["name"], "programa el repintado del mapa para la madrugada")
+        return jsonify(ok=True, output="Hecho: el mapa se repinta esta madrugada, "
+                                       "con el servidor vacío")
+
+    if cuando != "ahora":
+        return jsonify(ok=False, output="No sé cuándo quieres hacerlo"), 400
+
+    script = PANEL_DIR / "scripts/render-mapa.sh"
+    if not script.exists():
+        return jsonify(ok=False, output="Falta scripts/render-mapa.sh en el server"), 400
+    # comparte el trabajo «mapa» con el render normal y con los iconos: los tres
+    # tocan los mismos ficheros de BlueMap y no pueden solaparse
+    ok = _sys_run_bg("mapa", ["bash", str(script), "--desde-cero"], timeout=12 * 3600)
+    if ok:
+        _REPINTAR_NOTA.unlink(missing_ok=True)   # ya no hace falta la nota
+    audit(u["name"], "repinta el mapa 3D desde cero")
+    return jsonify(ok=ok, output="Repintando el mapa desde cero. El mapa se verá "
+                                 "vacío hasta que acabe." if ok else _mapa_ocupado_texto())
+
+
 def _mapa_ocupado_texto():
     """Por qué no arrancó, con el desde-cuándo.
 
@@ -3425,23 +3527,57 @@ _M2_CELDA = 8192                # se calcula por trozos y se guarda lo calculado
 
 
 def _m2_mods():
-    """Carga scripts/biomas.py y scripts/estructuras.py una sola vez."""
-    if _M2["mods"] is None:
-        import sys as _sys
-        ruta = str(PANEL_DIR / "scripts")
-        if ruta not in _sys.path:
-            _sys.path.insert(0, ruta)
-        import biomas as _b, estructuras as _e
-        _e.cargar(str(_mc_jar() or ""))
-        _e.cargar_estructuras(str(_mc_jar() or ""))
+    """Carga biomas.py y estructuras.py, y las RECARGA si el jar cambió debajo.
+
+    El panel se guarda en memoria las tablas de estructuras que lee del jar de
+    Minecraft. Cuando Minecraft se actualiza solo —el panel lo mira cada 6 h y lo
+    hace sin que nadie toque nada— esas tablas siguen siendo las de la versión de
+    antes, y la pestaña Explorar contestaría con ellas hasta que alguien
+    reiniciara el panel a mano. Un paso manual escondido dentro de algo que se
+    vende como automático es la peor clase de paso manual: nadie sabe que existe
+    hasta que los datos ya llevan semanas mal.
+
+    Comprobarlo cuesta un `stat`, así que se comprueba siempre.
+    """
+    jar = _mc_jar()
+    try:
+        sello = (str(jar), int(jar.stat().st_mtime), jar.stat().st_size) if jar else None
+    except OSError:
+        sello = None
+    with _m2_lock:
+        if _M2["mods"] is not None and _M2.get("jar") == sello:
+            return _M2["mods"]
+    import sys as _sys
+    ruta = str(PANEL_DIR / "scripts")
+    if ruta not in _sys.path:
+        _sys.path.insert(0, ruta)
+    import biomas as _b, estructuras as _e
+    _e.cargar(str(jar or ""))
+    _e.cargar_estructuras(str(jar or ""))
+    with _m2_lock:
+        if _M2.get("jar") not in (None, sello):
+            # cambió de versión: lo calculado con las tablas viejas ya no vale
+            _m2_est.clear()
         _M2["mods"] = (_b, _e)
         _M2["srv"] = _b.Servicio(BIOMAS_URL)
+        _M2["jar"] = sello
     return _M2["mods"]
 
 
 def _mc_jar():
-    for p in sorted((MC_DIR / "versions").glob("*/server-*.jar"), reverse=True):
-        return p
+    """El jar de Minecraft que hay puesto ahora, el MÁS NUEVO por fecha.
+
+    Por fecha y no por nombre: ordenando texto, «26.2» va detrás de «26.10» y el
+    panel se quedaría leyendo las tablas de una versión vieja el día que los
+    números pasen de nueve. Es el mismo tropiezo que ya se arregló en
+    `version_instalada()` de actualizar.py; aquí seguía sin arreglar.
+    """
+    jars = list((MC_DIR / "versions").glob("*/server-*.jar"))
+    if jars:
+        try:
+            return max(jars, key=lambda p: p.stat().st_mtime)
+        except OSError:
+            return jars[0]
     p = MC_DIR / "server.jar"
     return p if p.exists() else None
 
@@ -3457,6 +3593,7 @@ def _m2_olvidar():
         _m2_est.clear()
         _M2["mods"] = None
         _M2["srv"] = None
+        _M2["jar"] = None
     try:
         (DATA_DIR / "semilla.txt").unlink()
     except OSError:

@@ -19,6 +19,8 @@
 #                                            340 regiones, ignorando la caché)
 #        bash ~/panel/scripts/render-mapa.sh --completo           (rehace TODO,
 #                                            mapa y estructuras: horas)
+#        bash ~/panel/scripts/render-mapa.sh --desde-cero         (BORRA los
+#                                            azulejos y los dibuja de nuevo)
 #
 #  `--con-estructuras` se sigue aceptando pero ya no hace nada: ahora se escanea
 #  siempre. El botón de Sistema lo manda y no pasa nada.
@@ -70,7 +72,50 @@ decir() {
 }
 
 ARRANQUE=$(date +%s)
-decir "───────── inicio ($*) ─────────"
+
+# ---- ¿toca repintar desde cero? ---------------------------------------------
+# Dos formas de pedirlo: con el argumento, o dejando esta nota para que lo haga
+# el render de la madrugada. La nota se borra ANTES de empezar: si el render se
+# cae a mitad, el de la noche siguiente no vuelve a borrar el mapa entero por su
+# cuenta. Quien quiera repetirlo, que lo pida otra vez.
+PENDIENTE="$BM/.repintar-pendiente"
+DESDE_CERO=""
+case " $* " in *" --desde-cero "*) DESDE_CERO="1" ;; esac
+if [ -z "$DESDE_CERO" ] && [ -f "$PENDIENTE" ]; then
+  DESDE_CERO="1"
+  rm -f "$PENDIENTE"
+  echo "[$(date '+%F %T')] había una petición de repintado desde cero; la atiendo" >> "$LOG"
+fi
+
+decir "───────── inicio ($*${DESDE_CERO:+ desde-cero}) ─────────"
+
+# ---- 0) borrar los azulejos de antes ----------------------------------------
+# Esto es lo único que limpia de verdad un mapa que ya no se corresponde con el
+# mundo — por ejemplo después de recortar chunks con MCA Selector. BlueMap solo
+# redibuja los chunks MODIFICADOS, y un chunk borrado no está modificado: no
+# está. Sin borrar los azulejos, el mapa se queda enseñando un terreno que ya no
+# existe, y no hay ninguna opción del CLI que lo arregle (lo comprobé: no existe
+# `--purge`, las opciones son -a -b -c -e -f -g -h -l -m --markers -n -r -s -u -v).
+if [ -n "$DESDE_CERO" ]; then
+  # dónde deja BlueMap los mapas lo manda config/storages/file.conf
+  RAIZ_MAPAS=$(sed -n 's/^[[:space:]]*root[[:space:]]*[:=][[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' \
+               "$BM/config/storages/file.conf" 2>/dev/null | head -1)
+  [ -z "$RAIZ_MAPAS" ] && RAIZ_MAPAS="web/maps"
+  case "$RAIZ_MAPAS" in /*) MAPAS="$RAIZ_MAPAS" ;; *) MAPAS="$BM/$RAIZ_MAPAS" ;; esac
+  # Cinturón y tirantes antes de un rm -rf: que la ruta acabe en /maps y que
+  # exista. Un fallo aquí se lleva por delante algo que no es el mapa.
+  case "$MAPAS" in
+    */maps)
+      if [ -d "$MAPAS" ]; then
+        decir "borrando los azulejos de $MAPAS (el mapa se verá vacío hasta que acabe)…"
+        rm -rf "${MAPAS:?}/"*
+        decir "azulejos borrados"
+      else
+        decir "⚠ no encuentro la carpeta de mapas ($MAPAS); dibujo sin borrar"
+      fi ;;
+    *) decir "⚠ la carpeta de mapas no parece la buena ($MAPAS); NO borro nada" ;;
+  esac
+fi
 
 # ---- 1) estructuras: AHORA TODAS LAS NOCHES ----------------------------------
 # Antes esto solo corría una vez por semana porque releer las ~340 regiones era
@@ -99,6 +144,10 @@ fi
 # ---- 2) el render ------------------------------------------------------------
 ARGS="-r"
 case " $* " in *" --completo "*) ARGS="-r -f"; decir "RENDER COMPLETO pedido: esto tarda horas" ;; esac
+# Con los azulejos borrados no hace falta `-f` (no hay nada que saltarse), pero
+# se pone igual: si el borrado no llegó a hacerse, `-r` a secas dejaría el mapa
+# viejo intacto y el repintado no habría servido de nada.
+[ -n "$DESDE_CERO" ] && { ARGS="-r -f"; decir "REPINTADO DESDE CERO: esto tarda horas"; }
 
 decir "renderizando ($ARGS)…"
 nice -n 19 ionice -c3 java -Xmx1536M -jar bluemap-cli.jar $ARGS >> "$LOG" 2>&1
