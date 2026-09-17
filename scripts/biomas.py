@@ -30,6 +30,7 @@ volver atrás reencuentra el mapa ya hecho en vez de rehacerlo.
 import io
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -203,12 +204,18 @@ class NoDisponible(RuntimeError):
 
 
 class Servicio:
+    # Cada cuánto se vuelve a preguntar quién hay al otro lado. Es una petición
+    # diminuta contra 127.0.0.1, así que el plazo puede ser corto sin que se note.
+    PLAZO_SALUD = 15
+
     def __init__(self, url=SERVICIO, espera=60):
         self.url = url.rstrip("/")
         self.espera = espera
         self._leyenda = None
         self._paleta = None
         self._salud = None
+        self._salud_t = 0.0
+        self._huella = None
 
     def _pedir(self, ruta, espera=None):
         try:
@@ -218,8 +225,42 @@ class Servicio:
             raise NoDisponible("no responde el servicio de biomas: %s" % e)
 
     def salud(self):
-        if self._salud is None:
-            self._salud = json.loads(self._pedir("/salud", espera=5))
+        """Quién hay al otro lado AHORA, no quién había al arrancar el panel.
+
+        Esto se preguntaba una sola vez y se guardaba para toda la vida del
+        proceso. Parecía inofensivo —la semilla no cambia— pero de aquí sale la
+        HUELLA, que es el nombre de la carpeta donde viven los azulejos.
+
+        El servicio se reinicia solo: cuando Minecraft cambia de versión, cuando
+        se cambia de mundo, cuando alguien pulsa el botón del panel. Si se
+        reinicia con otra huella y el panel sigue con la de antes, escribe los
+        azulejos nuevos en la carpeta vieja — y ahí conviven los de dos épocas,
+        unos con el bioma nuevo y otros sin él. El mapa sale a parches, y al
+        cambiar de zoom cambias de carpeta y te toca otra mezcla distinta. Así
+        se perdió el Bosque Moteado de la 26.3 durante un día entero.
+        """
+        ahora = time.monotonic()
+        if self._salud is not None and ahora - self._salud_t < self.PLAZO_SALUD:
+            return self._salud
+        try:
+            s = json.loads(self._pedir("/salud", espera=5))
+        except NoDisponible:
+            if self._salud is None:
+                raise
+            # Un parpadeo no tiene por qué tirar el mapa: se sigue con lo que
+            # había y se reintenta en un par de segundos, no dentro de un plazo
+            # entero.
+            self._salud_t = ahora - self.PLAZO_SALUD + 2
+            return self._salud
+        if self._huella is not None and s.get("huella") != self._huella:
+            # Cambió el generador, así que lo que teníamos guardado describe
+            # otro. La leyenda es índice→bioma: si el número de biomas cambia,
+            # los índices se corren y la paleta pintaría el mapa ENTERO con los
+            # colores movidos, sin fallar ni una sola vez.
+            self._leyenda = None
+            self._paleta = None
+        self._huella = s.get("huella")
+        self._salud, self._salud_t = s, ahora
         return self._salud
 
     def vivo(self):
@@ -229,7 +270,11 @@ class Servicio:
             return False
 
     def leyenda(self):
-        """{numero: 'minecraft:plains'} — fija, se pide una vez."""
+        """{numero: 'minecraft:plains'}.
+
+        Se pide una vez y se guarda, pero `salud()` la tira si la huella cambia:
+        mientras el generador sea el mismo, los índices también lo son.
+        """
         if self._leyenda is None:
             cruda = json.loads(self._pedir("/leyenda", espera=10))
             self._leyenda = {int(k): v for k, v in cruda.items()}
