@@ -116,6 +116,7 @@ class PanelFalso:
         self.actualizados = 0          # cuántas veces se pulsó el botón
         # Biomas que el servicio conoce y la paleta del panel no sabe pintar.
         self.estado.setdefault("sin_color", [])
+        self.estado.setdefault("huella", "abc12345")
 
     # ---------------------------------------------------------------- rutas
     @staticmethod

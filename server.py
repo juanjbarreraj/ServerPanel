@@ -4180,7 +4180,11 @@ def api_m2_estado():
                    niveles=b.NIVELES, tam=b.TAM, leyenda=leyenda, tipos=tipos,
                    aparicion=punto_de_aparicion(), version=mc_version(),
                    dimension="Overworld", fortalezas=fortalezas, variantes=variantes,
-                   desfase=_m2_desfase(), sin_color=sin_color)
+                   desfase=_m2_desfase(), sin_color=sin_color,
+                   # La huella va al navegador para que la meta en la URL de
+                   # cada azulejo. Es lo que hace que la caché del navegador
+                   # caduque sola cuando cambia el generador.
+                   huella=salud.get("huella"))
 
 
 @app.get("/api/mapa2/version")
@@ -4289,9 +4293,37 @@ def api_m2_azulejo(bpp, tx, tz):
         _m2_turno.release()
     from flask import Response
     r = Response(crudo, mimetype="image/png")
-    # La semilla no cambia y el generador tampoco, así que este dibujo vale para
-    # siempre. Que el navegador no lo vuelva a pedir nunca.
-    r.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    # ── OJO CON ESTA CABECERA ────────────────────────────────────────────────
+    #
+    # Aquí ponía, sin más:
+    #
+    #     r.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    #     # La semilla no cambia y el generador tampoco, así que este dibujo
+    #     # vale para siempre. Que el navegador no lo vuelva a pedir nunca.
+    #
+    # La semilla no cambia. **El generador sí.** Y `immutable` no es un consejo:
+    # le dice al navegador que no revalide ese fichero NUNCA, ni siquiera con
+    # una recarga dura. Cuando la 26.3 trajo un bioma nuevo, el servidor llevaba
+    # horas sirviendo los azulejos buenos y el navegador seguía enseñando los de
+    # antes, clavados para un año. El nombre del bioma —que va por otra petición—
+    # sí salía bien: lo identificaba y no lo pintaba.
+    #
+    # Ahora la URL lleva la huella del generador (`?g=`), igual que ya la lleva
+    # el nombre de la carpeta en disco. Con eso `immutable` pasa a ser CIERTO:
+    # esa URL exacta sí describe un dibujo que no va a cambiar jamás. Y si el
+    # generador cambia, cambia la URL, y el navegador no tiene nada guardado que
+    # servir en su lugar.
+    #
+    # Si la huella no viene o no es la de ahora, no se marca nada como eterno:
+    # más vale pedirlo otra vez que dejar clavado un dibujo equivocado.
+    try:
+        actual = _m2_srv().salud().get("huella")
+    except Exception:
+        actual = None
+    if actual and request.args.get("g") == actual:
+        r.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    else:
+        r.headers["Cache-Control"] = "no-store"
     return r
 
 

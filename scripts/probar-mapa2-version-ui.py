@@ -118,20 +118,23 @@ def main():
         ok("Recompilando" in texto(pag) or "Actualizando" in texto(pag),
            "y el aviso pasa a contar que está trabajando")
 
-        # el panel de mentira termina la faena, como haría el de verdad
+        # El panel de mentira termina la faena, como haría el de verdad: el
+        # generador es otro, así que la huella cambia.
         pf.desfase = dict(AL_DIA)
+        pf.estado["huella"] = "99887766"
+        azulejos.clear()
         pag.wait_for_timeout(5200)                 # el reloj pregunta cada 4 s
         ok(not visible(pag), "cuando termina, el aviso se retira solo")
-        ok(pag.evaluate("() => M2.sello > 0"),
-           "y se pone el rompe-cachés, o el navegador serviría los colores viejos")
-        # La caché en memoria se vacía y el mapa se vuelve a pintar en el acto,
-        # así que NO queda vacía: lo que importa es que lo que se pidió después
-        # lleve el sello. Comprobar `size === 0` sería comprobar el instante
-        # equivocado, y pasaría solo si el repintado estuviera roto.
-        despues = [u for u in azulejos if "?v=" in u]
-        ok(despues, "y los azulejos que se piden después lo llevan (%d de %d)"
-           % (len(despues), len(azulejos)))
-        ok(pag.evaluate("() => [...M2.azulejos.keys()].length >= 0"), "el mapa se repinta solo")
+        ok(pag.evaluate("() => M2.huella") == "99887766",
+           "el mapa recoge la huella NUEVA (%s)" % pag.evaluate("() => M2.huella"))
+        # Lo que de verdad importa: que lo pedido DESPUÉS lleve la huella nueva.
+        # Si siguiera pidiendo la URL de antes, el navegador la tiene marcada
+        # como inmutable y serviría los colores viejos durante un año.
+        nuevos = [u for u in azulejos if "g=99887766" in u]
+        ok(nuevos, "y los azulejos se vuelven a pedir con ella (%d de %d)"
+           % (len(nuevos), len(azulejos)))
+        ok(not [u for u in azulejos if "g=abc12345" in u],
+           "ninguno se queda pidiendo la huella vieja")
         nav.close(); pf.para()
 
         # ── 4 · sin permisos ────────────────────────────────────────────────
@@ -154,6 +157,27 @@ def main():
         ok("compilador" in texto(pag), "y se advierte antes de pulsar, no después")
         ok(pag.locator("#m2-version-btn").count() == 1,
            "el botón sigue ahí: puede que el JDK se instalara y esto no lo sepa")
+        nav.close(); pf.para()
+
+        # ── 5b · la huella en la URL de los azulejos ────────────────────────
+        # El servidor los marca `immutable`: el navegador no los revalida nunca,
+        # ni con recarga dura. Eso solo vale si la URL cambia cuando cambia el
+        # generador. Sin esto, un bioma nuevo tarda un año en verse.
+        titulo("5b · la huella viaja en cada azulejo")
+        pf = PanelFalso()
+        pf.estado["huella"] = "deadbeef"
+        pedidos = []
+        nav, pag = abre(pw, pf, errores)
+        pag.on("request", lambda r: pedidos.append(r.url)
+               if "/api/mapa2/azulejo" in r.url else None)
+        pag.evaluate("() => { M2.azulejos.clear(); m2Dibuja(); }")
+        pag.wait_for_timeout(1200)
+        ok(pedidos, "se piden azulejos (%d)" % len(pedidos))
+        con = [u for u in pedidos if "g=deadbeef" in u]
+        ok(len(con) == len(pedidos),
+           "y TODOS llevan la huella del generador (%d de %d)" % (len(con), len(pedidos)))
+        ok(pag.evaluate("() => M2.huella") == "deadbeef",
+           "el mapa se queda con la huella que le dio el servidor")
         nav.close(); pf.para()
 
         # ── 6 · un bioma que la paleta no conoce ────────────────────────────

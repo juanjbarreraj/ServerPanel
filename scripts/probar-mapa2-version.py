@@ -266,6 +266,45 @@ def main():
     while "mapa2" in srv._sys_busy and time.time() - t0 < 60:
         time.sleep(0.3)
     srv._hay_javac = real_javac
+
+    # ── 8 · la cabecera de caché del azulejo ─────────────────────────────────
+    titulo("8 · cuánto puede durar un azulejo en el navegador")
+    # `immutable` no es un consejo: le dice al navegador que NO revalide ese
+    # fichero nunca, ni con una recarga dura. Eso es verdad para el dibujo de un
+    # generador concreto y mentira para «el azulejo 3,-2» a secas. Con la URL de
+    # siempre, un bioma nuevo tarda un AÑO en verse: el servidor sirve lo bueno
+    # y el navegador enseña lo de antes. Pasó de verdad con la 26.3, y costó dos
+    # días y cuatro diagnósticos equivocados dar con esta línea.
+    class _SrvFalso:
+        def salud(self):
+            return {"semilla": 1, "y": 64, "huella": "abc123"}
+
+    class _BioFalso:
+        NIVELES = [4, 8, 16]
+        NoDisponible = RuntimeError
+
+        @staticmethod
+        def azulejo(*a, **k):
+            return b"un png de mentira"
+
+    srv._m2_srv = lambda: _SrvFalso()
+    srv._m2_mods = lambda: (_BioFalso, None)
+
+    r = admin.get("/api/mapa2/azulejo/16/3/-2.png?g=abc123")
+    cc = r.headers.get("Cache-Control", "")
+    ok(r.status_code == 200, "el azulejo se sirve (%d)" % r.status_code)
+    ok("immutable" in cc and "max-age=31536000" in cc,
+       "con la huella de ahora se puede guardar para siempre: %r" % cc)
+
+    r = admin.get("/api/mapa2/azulejo/16/3/-2.png?g=huella-vieja")
+    ok(r.headers.get("Cache-Control") == "no-store",
+       "con una huella que ya no es, NO se marca eterno: %r"
+       % r.headers.get("Cache-Control"))
+
+    r = admin.get("/api/mapa2/azulejo/16/3/-2.png")
+    ok(r.headers.get("Cache-Control") == "no-store",
+       "y sin huella tampoco: %r" % r.headers.get("Cache-Control"))
+
     shutil.rmtree(base, ignore_errors=True)
 
 

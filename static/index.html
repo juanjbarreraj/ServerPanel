@@ -3302,7 +3302,7 @@ const M2 = {
   cx:0, cz:0,               // qué punto del mundo está en el centro
   esc:1/8,                  // píxeles de pantalla por bloque
   azulejos:new Map(),       // "bpp/tx/tz" → Image | 'cargando' | {falla:t}
-  sello:0,                  // rompe-cachés, solo tras poner el mapa al día
+  huella:'',                // la del generador; va en la URL de cada azulejo
   desfase:null,             // {jar, biomas_jar, al_dia, javac, …} de /api/mapa2/version
   vistoV:0,                 // cuándo se miró el desfase por última vez
   pidiendo:0,
@@ -3359,6 +3359,7 @@ async function m2Cargar(){
   }
   off.classList.add('hidden'); caja.classList.remove('hidden');
   M2.est = d; M2.listo = true;
+  M2.huella = d.huella || '';
   M2.vistoV = Date.now();
   m2NotaVersion(d.desfase);
   m2NotaColores();
@@ -3512,11 +3513,19 @@ function m2PideAzulejo(bpp,tx,tz){
   const im=new Image();
   im.onload =()=>{ M2.pidiendo--; M2.azulejos.set(k,im); m2Pinta(); };
   im.onerror=()=>{ M2.pidiendo--; M2.azulejos.set(k,{falla:Date.now()}); m2Pinta(); };
-  // El sello solo se pone cuando el mapa se acaba de poner al día. La URL de un
-  // azulejo es la misma antes y después de recompilar —mismo nivel, mismas
-  // coordenadas—, así que sin él el navegador enseñaría los píxeles viejos de su
-  // propia caché y parecería que el botón no ha hecho nada.
-  im.src=`/api/mapa2/azulejo/${bpp}/${tx}/${tz}.png` + (M2.sello ? '?v='+M2.sello : '');
+  // La huella del generador VA EN LA URL, a propósito.
+  //
+  // El servidor marca estos PNG como `immutable`, que le dice al navegador que
+  // no los revalide nunca —ni con una recarga dura—. Eso es cierto para un
+  // dibujo concreto de un generador concreto, y mentira para «el azulejo 3,-2»
+  // a secas: cuando Minecraft cambió de versión y apareció un bioma nuevo, el
+  // servidor servía los azulejos buenos y el navegador seguía enseñando los de
+  // antes, clavados para un año.
+  //
+  // Con la huella dentro, cambiar de generador cambia la URL, y una URL nueva
+  // no tiene nada guardado que servir. Es la misma idea que ya usaba la caché
+  // del disco, que lleva la huella en el nombre de la carpeta.
+  im.src=`/api/mapa2/azulejo/${bpp}/${tx}/${tz}.png?g=${encodeURIComponent(M2.huella)}`;
 }
 
 /* La memoria no es infinita: al pasear mucho se acumulan miles de azulejos. */
@@ -4030,11 +4039,14 @@ function m2MirarVersion(){
     if ((v && !v.trabajando) || ++vueltas > 150){
       clearInterval(M2_RELOJ_V); M2_RELOJ_V=null;
       if (v && v.al_dia){
-        // Los azulejos de ahora son de la versión vieja, en memoria y en la
-        // caché del navegador: fuera los dos, o no se ve el cambio.
-        M2.sello = Date.now();
-        M2.azulejos.clear();
-        m2Pinta();
+        // El generador es otro, así que la huella también: se vuelve a pedir y
+        // con ella cambian todas las URL de los azulejos. Los de memoria fuera
+        // también, que si no se siguen viendo los de antes hasta salir y entrar.
+        api('/api/mapa2/estado').then(e => {
+          if (e && e.huella) M2.huella = e.huella;
+          M2.azulejos.clear();
+          m2Pinta();
+        }).catch(()=>{});
         toast('Mapa al día con ' + (v.jar || 'la versión de ahora'));
       } else if (v && v.al_dia === false){
         toast(v.javac ? 'No se pudo actualizar. Mira el registro en Sistema.'
