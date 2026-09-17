@@ -47,16 +47,34 @@ if [ ! -f "$CLASES/califree/Biomas.class" ] || [ "$(cat "$SELLO" 2>/dev/null)" !
   # /usr/lib/jvm por texto, «openjdk-21» queda el último y se elegiría el 21 —
   # que no sabe ni abrir un jar de Java 25 y fallaría con un error críptico
   # sobre versiones de fichero de clase.
+  # BIOMAS_JAVAC fija el compilador a mano. Sirve en una máquina con varios JDK
+  # donde el más nuevo no es el bueno y, de paso, permite probar el camino de
+  # «aquí no hay compilador» sin desinstalar nada.
   JAVAC=""; MEJOR=0
-  for c in $(command -v javac 2>/dev/null) /usr/lib/jvm/*/bin/javac /opt/*/bin/javac; do
-    [ -x "$c" ] || continue
-    v=$("$c" -version 2>&1 | grep -v '^Picked up' | grep -oE '[0-9]+' | head -1)
-    [ -z "$v" ] && continue
-    if [ "$v" -gt "$MEJOR" ]; then MEJOR=$v; JAVAC=$c; fi
-  done
+  if [ -n "${BIOMAS_JAVAC:-}" ]; then
+    [ -x "${BIOMAS_JAVAC}" ] && JAVAC="${BIOMAS_JAVAC}"
+  else
+    for c in $(command -v javac 2>/dev/null) /usr/lib/jvm/*/bin/javac /opt/*/bin/javac; do
+      [ -x "$c" ] || continue
+      v=$("$c" -version 2>&1 | grep -v '^Picked up' | grep -oE '[0-9]+' | head -1)
+      [ -z "$v" ] && continue
+      if [ "$v" -gt "$MEJOR" ]; then MEJOR=$v; JAVAC=$c; fi
+    done
+  fi
+  ANTES="$(cat "$SELLO" 2>/dev/null || true)"
   if [ -z "$JAVAC" ]; then
-    if [ -f "$CLASES/califree/Biomas.class" ]; then
-      decir "no hay compilador; sigo con lo compilado de antes (puede no valer para $JAR)"
+    # Seguir con las clases de antes SOLO si el jar es el mismo que la última
+    # vez —o sea, lo que cambió fue el fuente—. Si cambió el jar, esas clases
+    # son de otra versión de Minecraft, y arrancar con ellas no da un error
+    # claro: da un NoSuchMethodError quince segundos más tarde, en bucle, con
+    # el panel enseñando «apagado» y ni una pista de por qué. Pasó con la 26.3.
+    if [ -f "$CLASES/califree/Biomas.class" ] && [ "${ANTES%% | *}" = "${FIRMA%% | *}" ]; then
+      decir "no hay compilador, pero el jar no ha cambiado; sigo con lo compilado de antes"
+    elif [ -f "$CLASES/califree/Biomas.class" ]; then
+      decir "no hay compilador de Java y lo compilado es de OTRA versión de Minecraft."
+      decir "No arranco: correría con las clases equivocadas y fallaría en bucle."
+      decir "instálalo una vez con:  sudo bash ~/panel/scripts/biomas-instalar.sh"
+      exit 1
     else
       decir "no hay compilador de Java y no hay nada compilado."
       decir "instálalo con:  sudo bash ~/panel/scripts/biomas-instalar.sh"
@@ -67,15 +85,25 @@ if [ ! -f "$CLASES/califree/Biomas.class" ] || [ "$(cat "$SELLO" 2>/dev/null)" !
   else
     decir "compilando contra $(basename "$JAR")…"
     mkdir -p "$CLASES"
-    if "$JAVAC" -nowarn -cp "$CP" -d "$CLASES" "$PANEL/scripts/Biomas.java" 2>&1 | sed 's/^/[biomas] /' >&2; then
-      : # javac escribe los errores por la salida de error, el código va abajo
-    fi
-    if [ -f "$CLASES/califree/Biomas.class" ]; then
+    # Fuera las clases de la versión anterior ANTES de compilar. Con ellas ahí,
+    # cualquier comprobación por existencia da por buena una compilación que
+    # falló — que es justo lo que hacía este script hasta la 26.3.
+    rm -rf "$CLASES/califree"
+    "$JAVAC" -nowarn -cp "$CP" -d "$CLASES" "$PANEL/scripts/Biomas.java" 2>&1 |
+        sed 's/^/[biomas] /' >&2
+    # PIPESTATUS[0] y no $?: el $? de una tubería es el del ÚLTIMO mandato, o
+    # sea el del `sed`, que sale 0 siempre. Mirar eso era como no mirar nada.
+    COMPILO=${PIPESTATUS[0]}
+    if [ "$COMPILO" = "0" ] && [ -f "$CLASES/califree/Biomas.class" ]; then
       echo "$FIRMA" > "$SELLO"
       decir "compilado"
     else
-      decir "no compiló contra $(basename "$JAR")."
-      decir "Esto pasa si Minecraft cambió el nombre de algún método en la versión nueva."
+      # El sello se borra: si se quedara puesto diría que las clases son de este
+      # jar, y el panel daría el mapa por al día mientras el servicio se muere.
+      rm -f "$SELLO"
+      decir "no compiló contra $(basename "$JAR") (javac salió con $COMPILO)."
+      decir "Esto pasa cuando Minecraft cambia el nombre de algún método en la"
+      decir "versión nueva. Los errores de arriba dicen exactamente cuál."
       exit 1
     fi
   fi

@@ -72,7 +72,12 @@ echo "  librerías: $(find "$MC/libraries" -name '*.jar' 2>/dev/null | wc -l)"
 echo
 echo "── 3 · compilar ─────────────────────────────────────────────"
 mkdir -p "$SALIDA"
-if "$JAVAC" -nowarn -cp "$CP" -d "$SALIDA" "$PANEL/scripts/Biomas.java" 2>&1 | sed 's/^/  /'; then
+# El `if` de una tubería mira el código del ÚLTIMO mandato —aquí el `sed`, que
+# sale 0 siempre—, así que preguntaba y no preguntaba nada. Es el mismo despiste
+# que en biomas-servicio.sh dejó arrancar el servicio con las clases de otra
+# versión de Minecraft: allí costó cien reinicios en bucle averiguarlo.
+"$JAVAC" -nowarn -cp "$CP" -d "$SALIDA" "$PANEL/scripts/Biomas.java" 2>&1 | sed 's/^/  /'
+if [ "${PIPESTATUS[0]}" = "0" ]; then
   echo "  ✔ compilado en $SALIDA"
 else
   echo

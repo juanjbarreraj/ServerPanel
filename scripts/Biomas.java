@@ -43,6 +43,8 @@ import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.WorldgenRandom;
+import net.minecraft.world.level.levelgen.densityfunction.SamplerContext;
+import net.minecraft.world.level.levelgen.synth.NormalNoise;
 
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -94,17 +96,32 @@ public class Biomas {
 
         // Aquí entra la semilla: RandomState es lo que la convierte en los
         // ruidos concretos de este mundo.
-        this.estado = RandomState.create(
-                registros, NoiseGeneratorSettings.OVERWORLD, semilla);
-        this.muestreador = estado.sampler();
+        //
+        // La 26.3 le dio la vuelta a esta parte: `create` ya no acepta el
+        // proveedor de registros y la CLAVE del ajuste, sino el registro de
+        // ruidos, la semilla y el ajuste EN SÍ. Es un cambio que compila o no
+        // compila, así que no hay riesgo de que pase desapercibido — al revés
+        // de lo que pasó con el sello del compilador.
+        Holder<NoiseGeneratorSettings> ajustes = registros
+                .lookupOrThrow(Registries.NOISE_SETTINGS)
+                .getOrThrow(NoiseGeneratorSettings.OVERWORLD);
+        HolderGetter<NormalNoise> ruidos = registros.lookupOrThrow(Registries.NOISE);
+        this.estado = RandomState.create(ruidos, semilla, ajustes.value());
+
+        // Y el muestreador de clima ya no se saca con `sampler()`: hay que
+        // pedírselo con un contexto. Se usa EMPTY_UNCACHED a propósito. La
+        // caché de SamplerContext está pensada para rellenar el volumen de un
+        // chunk entero de arriba abajo; aquí se salta de un punto suelto a otro
+        // a kilómetros de distancia y no acertaría nunca. Además guarda estado
+        // mutable dentro, y en este servicio cada hilo trae su propio generador
+        // justo para no compartir cosas así.
+        this.muestreador = estado.createClimateSampler(SamplerContext.EMPTY_UNCACHED);
 
         // El mismo generador de terreno que usa el juego. Hace falta porque las
         // estructuras de superficie NO se comprueban a una altura fija: el
         // juego las sube hasta el suelo y mira el bioma AHÍ. Y el bioma de un
         // sitio cambia con la altura.
-        this.terreno = new NoiseBasedChunkGenerator(
-                this.fuente, registros.lookupOrThrow(Registries.NOISE_SETTINGS)
-                                      .getOrThrow(NoiseGeneratorSettings.OVERWORLD));
+        this.terreno = new NoiseBasedChunkGenerator(this.fuente, ajustes);
     }
 
     /** ¿Es un chunk de slimes?
@@ -145,7 +162,12 @@ public class Biomas {
         // getNoiseBiome trabaja en CUARTOS de bloque: el mundo guarda un bioma
         // por celda de 4x4x4. Pasarle coordenadas de bloque sin dividir daría un
         // mapa cuatro veces más grande — se vería plausible y estaría mal.
-        Holder<?> h = fuente.getNoiseBiome(x >> 2, y >> 2, z >> 2, muestreador);
+        //
+        // En la 26.3 esto se partió en dos pasos: el muestreador convierte el
+        // punto en un TargetPoint —las seis magnitudes del clima de ese sitio—
+        // y la fuente decide qué bioma le toca a ese clima.
+        Climate.TargetPoint clima = muestreador.sample(x >> 2, y >> 2, z >> 2);
+        Holder<?> h = fuente.getNoiseBiome(clima);
         return h.getRegisteredName();
     }
 
@@ -308,7 +330,8 @@ public class Biomas {
         Bootstrap.bootStrap();
         long tBoot = System.currentTimeMillis() - t0;
         t0 = System.currentTimeMillis();
-        HolderLookup.Provider registros = VanillaRegistries.createLookup();
+        // 26.3: `createLookup()` pasó a llamarse `createWorldLookup()`.
+        HolderLookup.Provider registros = VanillaRegistries.createWorldLookup();
         numerarBiomas(registros);
         Equipo equipo = new Equipo(registros, semilla, hilos);
         long tGen = System.currentTimeMillis() - t0;
