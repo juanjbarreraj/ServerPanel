@@ -310,17 +310,23 @@ def mc_version() -> str:
         return _ver_cache["val"]
     v = None
     try:
-        jars = sorted(MC_DIR.glob("versions/*/server-*.jar")) or \
-               sorted(MC_DIR.glob("paper-*.jar"))
+        # Por FECHA, no por nombre. Ordenando texto, «26.2» va detrás de
+        # «26.10» y el panel enseñaría la versión vieja el día que los números
+        # pasen de nueve — el mismo tropiezo de `_mc_jar()` y de
+        # `version_instalada()` en actualizar.py, que aquí seguía sin arreglar.
+        jars = list(MC_DIR.glob("versions/*/server-*.jar")) or \
+               list(MC_DIR.glob("paper-*.jar"))
+        jars.sort(key=lambda p: p.stat().st_mtime)
         for j in reversed(jars):
             m = re.search(r"(?:server-|paper-)([\d.]+[\w.-]*?)(?:-\d+)?\.jar$", j.name)
             if m:
                 v = m.group(1).rstrip("-")
                 break
         if not v:
-            # respaldo: el nombre de la carpeta de versión
-            dirs = sorted(p.name for p in (MC_DIR / "versions").glob("*") if p.is_dir())
-            v = dirs[-1] if dirs else None
+            # respaldo: la carpeta de versión tocada más recientemente
+            dirs = [p for p in (MC_DIR / "versions").glob("*") if p.is_dir()]
+            dirs.sort(key=lambda p: p.stat().st_mtime)
+            v = dirs[-1].name if dirs else None
     except Exception:
         v = None
     _ver_cache.update(t=time.time(), val=v or "?")
@@ -2643,20 +2649,18 @@ def _syslog(line):
     with open(SYS_LOG, "a") as f:
         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {line}\n")
 
-def _sys_run_bg(job, cmd, timeout=1800):
-    # OJO con el timeout: subprocess.run MATA el proceso al agotarse. Con los 30
-    # minutos de siempre, el botón del mapa arrancaba un render que tarda 57-98
-    # min y se lo cargaba a media faena, dejando además el java suelto (solo se
-    # mata al hijo directo, que es el bash). Por eso los trabajos del mapa piden
-    # su propio plazo.
+def _sys_bg_fn(job, fn, timeout=1800):
+    """Lanza `fn()` en segundo plano bajo la marca de trabajo `job`.
+
+    Es la mitad de abajo de `_sys_run_bg`: el candado, la marca y la red de
+    seguridad del `finally`. Se separó para poder lanzar también trabajos que no
+    son «correr una orden» —poner el mapa Explorar al día, por ejemplo, que es
+    reiniciar un servicio y luego esperar a que conteste—, sin duplicar la parte
+    delicada ni tocar la que ya lleva meses funcionando.
+    """
     def worker():
-        _syslog(f"[{job}] iniciando: {' '.join(cmd)}")
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-            out = (r.stdout or "") + (r.stderr or "")
-            for ln in out.splitlines()[-40:]:
-                _syslog(f"[{job}] {ln}")
-            _syslog(f"[{job}] terminó con código {r.returncode}")
+            fn()
         except Exception as e:
             _syslog(f"[{job}] ERROR: {e}")
         finally:
@@ -2676,6 +2680,26 @@ def _sys_run_bg(job, cmd, timeout=1800):
             _sys_busy.pop(job, None)
         raise
     return True
+
+
+def _sys_run_bg(job, cmd, timeout=1800):
+    # OJO con el timeout: subprocess.run MATA el proceso al agotarse. Con los 30
+    # minutos de siempre, el botón del mapa arrancaba un render que tarda 57-98
+    # min y se lo cargaba a media faena, dejando además el java suelto (solo se
+    # mata al hijo directo, que es el bash). Por eso los trabajos del mapa piden
+    # su propio plazo.
+    def corre():
+        _syslog(f"[{job}] iniciando: {' '.join(cmd)}")
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            out = (r.stdout or "") + (r.stderr or "")
+            for ln in out.splitlines()[-40:]:
+                _syslog(f"[{job}] {ln}")
+            _syslog(f"[{job}] terminó con código {r.returncode}")
+        except Exception as e:
+            _syslog(f"[{job}] ERROR: {e}")
+    return _sys_bg_fn(job, corre, timeout)
+
 
 def _require_admin():
     u = require()
@@ -2763,6 +2787,31 @@ def _automatismos():
     except Exception:
         cop = 0
     añadir("copias", "Copia de seguridad del mundo", cop, 8 * 86400)
+
+    # El mapa Explorar no se mide por «cuándo corrió la última vez» sino por
+    # «¿contra qué versión está compilado?». Va aquí igual porque el que abre
+    # esta tarjeta busca exactamente esto: qué de lo que se cuida solo ha dejado
+    # de cuidarse. Sin esta línea, quedarse con los biomas de la versión de
+    # antes no se ve desde ningún sitio del panel.
+    try:
+        d = _m2_desfase()
+    except Exception:
+        d = None
+    if d and (d.get("al_dia") is not None or d.get("trabajando")):
+        falta_javac = "" if d.get("javac") else \
+            " · falta el compilador de Java en la máquina: instálalo una vez con " \
+            "sudo bash ~/panel/scripts/biomas-instalar.sh"
+        salidas.append({
+            "id": "mapa2", "nombre": "Mapa Explorar (biomas leídos del jar)",
+            "ultimo": 0, "edad": None, "margen": 0,
+            "ok": d.get("al_dia") is not False,
+            "pausa": bool(d.get("trabajando")),
+            "estado": ("actualizando…" if d.get("trabajando")
+                       else ("al día con %s" % (d.get("jar") or "la versión de ahora")
+                             if d.get("al_dia") else "versión antigua")),
+            "nota": "" if (d.get("al_dia") or d.get("trabajando"))
+                    else (d.get("motivo", "") + falta_javac),
+        })
     return salidas
 
 @app.post("/api/system/set_pin")
@@ -3582,6 +3631,107 @@ def _mc_jar():
     return p if p.exists() else None
 
 
+# ─────────────────────────── ¿está Explorar al día con la versión de ahora?
+#
+# La pestaña Explorar se apoya en dos cosas que pueden quedarse viejas por
+# separado cuando Minecraft se actualiza solo:
+#
+#   · las TABLAS DE ESTRUCTURAS, que lee el propio panel del jar. Se recargan
+#     solas (ver `_m2_mods`), así que de estas ya no hay que preocuparse.
+#   · el LECTOR DE BIOMAS, un proceso Java aparte COMPILADO contra el jar. Se
+#     recompila él solo al reiniciarse... salvo si en la máquina no hay
+#     compilador: entonces `biomas-servicio.sh` sigue con las clases de antes,
+#     lo dice en su registro y en ningún otro sitio, y el mapa enseña los
+#     biomas de la versión anterior sin fallar, sin avisar y sin notarse.
+#
+# Esto es ese otro sitio. Es exactamente el mismo fallo que ya cazamos con las
+# tablas —un paso manual escondido dentro de algo que se vende como
+# automático—, y la lección de aquella vez fue que no basta con arreglarlo:
+# hay que hacer que se vea cuando vuelva a pasar.
+_BIOMAS_CLASES = PANEL_DIR / "java-clases"
+
+
+def _biomas_compilado_de():
+    """La huella que dejó el lector de biomas la última vez que compiló.
+
+    La escribe `biomas-servicio.sh` con el formato
+    «<ruta del jar> <mtime> <tamaño> | <mtime de Biomas.java>». Se devuelve
+    partida, no cruda, porque lo único que la interfaz necesita enseñar es de
+    qué jar se trata.
+    """
+    try:
+        crudo = (_BIOMAS_CLASES / ".compilado-de").read_text().strip()
+    except OSError:
+        return None
+    if not crudo:
+        return None
+    ruta = crudo.split(" ")[0]
+    return {"crudo": crudo, "ruta": ruta, "jar": Path(ruta).name}
+
+
+def _hay_javac():
+    """¿Puede la máquina recompilar el lector de biomas sin que nadie entre?
+
+    Se busca donde busca `biomas-servicio.sh`: en el PATH y en los sitios donde
+    Ubuntu deja los JDK, porque es habitual tener el `java` enlazado y el
+    `javac` no.
+    """
+    try:
+        import shutil as _sh
+        if _sh.which("javac"):
+            return True
+    except Exception:
+        pass
+    for raiz in ("/usr/lib/jvm", "/opt"):
+        try:
+            if any(Path(raiz).glob("*/bin/javac")):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def _m2_desfase():
+    """Qué versión enseña el mapa Explorar y cuál hay puesta de verdad.
+
+    `al_dia` es a tres valores a propósito: True al día, False viejo, y None
+    «no lo sé» —no hay huella todavía, o no se puede leer el jar—. Dar por
+    viejo lo que no se sabe llenaría el panel de avisos falsos el primer día, y
+    un aviso que sale cuando no toca deja de leerse a la tercera vez.
+    """
+    jar = _mc_jar()
+    sello = _biomas_compilado_de()
+    d = {"jar": jar.name if jar else None, "version": mc_version(),
+         "biomas_jar": sello["jar"] if sello else None,
+         "javac": _hay_javac(), "al_dia": None, "motivo": "",
+         "trabajando": "mapa2" in _sys_busy}
+    if not jar:
+        d["motivo"] = "no encuentro el jar de Minecraft"
+        return d
+    if not sello:
+        d["motivo"] = "el lector de biomas todavía no ha compilado nada"
+        return d
+    try:
+        st = jar.stat()
+        fuente = PANEL_DIR / "scripts" / "Biomas.java"
+        mio = "%s %d %d | %s" % (jar, int(st.st_mtime), st.st_size,
+                                 int(fuente.stat().st_mtime) if fuente.exists() else "")
+    except OSError:
+        d["motivo"] = "no puedo leer el jar"
+        return d
+    d["al_dia"] = (sello["crudo"] == mio)
+    if not d["al_dia"]:
+        # Comparar la huella entera coge también el caso de tocar Biomas.java.
+        # Para CONTARLO, lo que importa es si cambió el jar: decirle a alguien
+        # «los biomas son de otra versión» cuando lo que cambió es el código
+        # fuente sería mentira.
+        otro_jar = sello["jar"] != jar.name
+        d["motivo"] = ("los biomas están calculados con %s y ahora hay %s"
+                       % (sello["jar"], jar.name)) if otro_jar else \
+                      "el lector de biomas se compiló con una versión anterior del código"
+    return d
+
+
 def _m2_srv():
     _m2_mods()
     return _M2["srv"]
@@ -4023,7 +4173,94 @@ def api_m2_estado():
     return jsonify(ok=True, semilla=str(salud["semilla"]), y=salud.get("y"),
                    niveles=b.NIVELES, tam=b.TAM, leyenda=leyenda, tipos=tipos,
                    aparicion=punto_de_aparicion(), version=mc_version(),
-                   dimension="Overworld", fortalezas=fortalezas, variantes=variantes)
+                   dimension="Overworld", fortalezas=fortalezas, variantes=variantes,
+                   desfase=_m2_desfase())
+
+
+@app.get("/api/mapa2/version")
+def api_m2_version():
+    """Solo el desfase de versión, para el aviso y para seguir el botón.
+
+    Aparte de `/api/mapa2/estado` porque aquello monta la leyenda entera y los
+    tipos, y esto hay que poder preguntarlo cada pocos segundos mientras el
+    lector de biomas se recompila.
+    """
+    require("mapa_semilla")
+    return jsonify(**_m2_desfase())
+
+
+def _m2_poner_al_dia():
+    """Reinicia el lector de biomas y espera a que vuelva a contestar.
+
+    El reinicio es lo que dispara la recompilación contra el jar de ahora: la
+    lógica de «¿ha cambiado el jar? pues compilo» vive en `biomas-servicio.sh`
+    y no se duplica aquí. Lo que sí se hace es ESPERAR: `systemctl restart` de
+    un servicio simple vuelve en cuanto lanza el proceso, mucho antes de que
+    javac haya terminado, así que sin la espera el panel diría «hecho» con el
+    lector todavía a medio compilar.
+    """
+    _syslog("[mapa2] poniendo al día el mapa Explorar…")
+    with _m2_lock:                       # que las tablas se relean del jar nuevo
+        _m2_est.clear()
+        _M2["mods"] = None
+        _M2["srv"] = None
+        _M2["jar"] = None
+    try:
+        r = subprocess.run(["sudo", "-n", "systemctl", "restart", "biomas"],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            _syslog("[mapa2] no pude reiniciar el lector de biomas: %s"
+                    % ((r.stderr or r.stdout or "").strip()[:200] or "código %d" % r.returncode))
+            return
+    except Exception as e:
+        _syslog("[mapa2] no pude reiniciar el lector de biomas: %s" % e)
+        return
+    limite = time.time() + 420           # compilar contra el jar tarda lo suyo
+    vivo = False
+    while time.time() < limite:
+        time.sleep(3)
+        try:
+            _m2_srv().salud()
+            vivo = True
+            break
+        except Exception:
+            pass
+    d = _m2_desfase()
+    if vivo and d.get("al_dia"):
+        _syslog("[mapa2] al día: los biomas ya son de %s" % (d.get("jar") or "la versión de ahora"))
+    elif vivo and d.get("al_dia") is False and not d.get("javac"):
+        _syslog("[mapa2] el lector arrancó pero NO recompiló: no hay compilador de Java "
+                "en la máquina. Instálalo una vez con: sudo bash ~/panel/scripts/biomas-instalar.sh")
+    elif vivo:
+        _syslog("[mapa2] el lector arrancó pero sigue sin cuadrar con el jar (%s). "
+                "Mira `journalctl -u biomas -n 40`." % (d.get("motivo") or "sin motivo"))
+    else:
+        _syslog("[mapa2] el lector de biomas no volvió a contestar. "
+                "Mira `journalctl -u biomas -n 40`.")
+
+
+@app.post("/api/mapa2/actualizar")
+def api_m2_actualizar():
+    """Pone el mapa Explorar al día con la versión de Minecraft que hay puesta.
+
+    Existe para no tener que abrir una terminal. Es lo único que hacía falta a
+    mano en todo el camino «Minecraft se actualiza solo», y un paso manual
+    escondido dentro de algo automático no se descubre hasta que los datos
+    llevan semanas mal.
+    """
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    d = _m2_desfase()
+    if not _sys_bg_fn("mapa2", _m2_poner_al_dia, timeout=600):
+        return jsonify(ok=False, output="Ya se está actualizando")
+    audit(u["name"], "actualizar el mapa Explorar a la versión de ahora")
+    aviso = "" if d.get("javac") else \
+        " Ojo: no veo compilador de Java en la máquina, así que puede que no consiga " \
+        "recompilar. Si no cambia nada, instálalo con: sudo bash ~/panel/scripts/biomas-instalar.sh"
+    return jsonify(ok=True, output=("Actualizando el mapa. Tarda un par de minutos: "
+                                    "se recompila el lector de biomas contra %s."
+                                    % (d.get("jar") or "la versión de ahora")) + aviso)
 
 
 # signed=True o Flask no acepta coordenadas negativas y media mitad del

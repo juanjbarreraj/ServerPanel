@@ -108,6 +108,12 @@ class PanelFalso:
         self.mundo_info = {"ok": True, "legible": True, "version": "26.2",
                            "version_servidor": "26.2", "bytes": 0,
                            "mas_nueva": False, "activo_nombre": "mundo de ahora"}
+        # Desfase de versión del mapa Explorar. Por defecto, al día: así las
+        # pruebas de siempre no ven un aviso que no esperaban.
+        self.desfase = {"jar": "server-26.2.jar", "version": "26.2",
+                        "biomas_jar": "server-26.2.jar", "al_dia": True,
+                        "javac": True, "motivo": "", "trabajando": False}
+        self.actualizados = 0          # cuántas veces se pulsó el botón
 
     # ---------------------------------------------------------------- rutas
     @staticmethod
@@ -129,7 +135,7 @@ class PanelFalso:
             return self._json({"players": []})
         if p == "/api/mapa2/estado":
             self.pedidos["estado"].append(ruta)
-            return self._json(self.estado)
+            return self._json(dict(self.estado, desfase=dict(self.desfase)))
         if p.startswith("/api/mapa2/azulejo"):
             return {"status": 200, "content_type": "image/png", "body": PNG_1PX}
         if p == "/api/mapa2/estructuras":
@@ -139,6 +145,8 @@ class PanelFalso:
                                "lejos_densas": False})
         if p == "/api/mapa2/hechas":
             return self._json({"ok": True, "hechas": self.hechas})
+        if p == "/api/mapa2/version":
+            return self._json(dict(self.desfase))
         if p == "/api/mundos":
             return self._json({"ok": True, "mundos": [], "activo": "world",
                                "trabajo": {"estado": "quieto"}, "papelera": []})
@@ -166,6 +174,10 @@ class PanelFalso:
             ident = (campos.get("id") or b"?").decode("utf-8", "replace")
             self.subidas[ident] = self.subidas.get(ident, 0) + len(campos.get("trozo") or b"")
             return ruta.fulfill(**self._json({"ok": True, "recibido": self.subidas[ident]}))
+        if p == "/api/mapa2/actualizar" and ruta.request.method == "POST":
+            self.actualizados += 1
+            self.desfase = dict(self.desfase, trabajando=True)
+            return ruta.fulfill(**self._json({"ok": True, "output": "Actualizando el mapa."}))
         if p == "/api/mundos/inspeccionar" and ruta.request.method == "POST":
             cuerpo = json.loads(ruta.request.post_data or "{}")
             info = dict(self.mundo_info)

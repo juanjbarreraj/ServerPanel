@@ -582,6 +582,13 @@ tr.rowbtn:hover td{background:rgba(111,212,78,.07)}
 .m2-nota img{width:30px; height:30px; flex:0 0 30px; image-rendering:pixelated; margin-top:1px}
 .m2-nota b{display:block; font-size:.78rem; color:var(--ink); margin-bottom:3px}
 .m2-nota span{display:block; font-size:.72rem; color:var(--ink3); line-height:1.55}
+/* El aviso de versión NO es lo mismo que la nota de los generadores: aquella
+   explica cómo funciona una capa, esta dice que lo que estás viendo está mal.
+   Se distingue con el borde de aviso, no con otro tamaño ni otra caja. */
+.m2-nota.aviso{border-left:3px solid var(--warn)}
+.m2-nota.aviso b{color:var(--warn)}
+.m2-nota-acc{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px}
+.m2-nota-acc .estado{font-size:.7rem; color:var(--ink3)}
 .m2-zona-barra{flex:1 1 150px; min-width:110px; height:7px; border-radius:4px;
   background:rgba(0,0,0,.45); overflow:hidden}
 .m2-zona-barra i{display:block; height:100%; width:0; background:var(--slime);
@@ -1286,6 +1293,20 @@ button,a,.slot,.m2-cap,.tabslot{-webkit-tap-highlight-color:transparent}
         </div>
       </div>
 
+      <!-- Minecraft se actualiza solo, pero el lector de biomas va COMPILADO
+           contra el jar. Si no llega a recompilarse —porque en la máquina no
+           hay compilador—, este mapa sigue dibujando los biomas de la versión
+           anterior sin fallar, sin avisar y sin que se note. Este es el aviso
+           que faltaba, y el botón que lo arregla sin abrir una terminal. -->
+      <div class="m2-nota aviso" id="m2-version-nota">
+        <img src="/static/ui/s-reiniciar.png?v=15" alt="" onerror="this.style.display='none'">
+        <div>
+          <b>Este mapa no está calculado con la versión que hay puesta</b>
+          <span id="m2-version-n"></span>
+          <div class="m2-nota-acc" id="m2-version-acc"></div>
+        </div>
+      </div>
+
       <div class="m2-top">
         <span class="m2-ir">
           X <input id="m2-x" inputmode="numeric" placeholder="0" onkeydown="if(event.key==='Enter')m2Ir()">
@@ -1476,6 +1497,7 @@ button,a,.slot,.m2-cap,.tabslot{-webkit-tap-highlight-color:transparent}
       <div class="actions">
         <button class="btn small" onclick="sysOp('regen_icons','¿Regenerar todos los íconos? (1-2 min)')"><img class="bico" src="/static/ui/s-paleta.png?v=15" alt="" onerror="this.outerHTML='🎨 '">Regenerar íconos</button>
         <button class="btn small warn" onclick="sysOp('restart_panel','¿Reiniciar el panel? (~10 seg fuera)')"><img class="bico" src="/static/ui/s-reiniciar.png?v=15" alt="" onerror="this.outerHTML='♻️ '">Reiniciar panel</button>
+        <button class="btn small" id="sys-m2-btn" onclick="sysMapa2()"><img class="bico" src="/static/ui/explorar.png?v=15" alt="" onerror="this.outerHTML='🧭 '">Actualizar mapa Explorar</button>
         <button class="btn small danger" onclick="sysPaper()"><img class="bico" src="/static/ui/s-paper.png?v=15" alt="" onerror="this.outerHTML='📄 '">Migrar a Paper</button>
         <a class="btn small ghost" href="/api/system/backup_extras"><img class="bico" src="/static/ui/copias.png?v=15" alt="" onerror="this.outerHTML='💾 '">Respaldo (fotos+cuentas)</a>
       </div>
@@ -3269,6 +3291,9 @@ const M2 = {
   cx:0, cz:0,               // qué punto del mundo está en el centro
   esc:1/8,                  // píxeles de pantalla por bloque
   azulejos:new Map(),       // "bpp/tx/tz" → Image | 'cargando' | {falla:t}
+  sello:0,                  // rompe-cachés, solo tras poner el mapa al día
+  desfase:null,             // {jar, biomas_jar, al_dia, javac, …} de /api/mapa2/version
+  vistoV:0,                 // cuándo se miró el desfase por última vez
   pidiendo:0,
   iconos:new Map(),         // tipo → Image
   apagados:new Set(),       // los que el usuario apagó
@@ -3300,7 +3325,17 @@ async function m2Cargar(){
   // ocupa cuatro filas y empuja el mapa fuera de la pantalla. Así que no se
   // guarda la elección, y volver a esta pestaña, o recargar, devuelve la tira.
   M2.modo = 'tira';
-  if (M2.listo) { m2Capas(); m2Medir(); m2Pinta(); return; }
+  if (M2.listo) {
+    m2Capas(); m2Medir(); m2Pinta(); m2NotaVersion();
+    // Minecraft puede haberse actualizado con la pestaña abierta. Se vuelve a
+    // mirar, pero como mucho cada diez minutos: es un `stat`, no hace falta
+    // gastarlo en cada ida y vuelta entre pestañas.
+    if (Date.now() - M2.vistoV > 600000){
+      M2.vistoV = Date.now();
+      api('/api/mapa2/version').then(v => m2NotaVersion(v)).catch(()=>{});
+    }
+    return;
+  }
   let d=null;
   try{ d = await api('/api/mapa2/estado'); }catch(_){}
   const caja=$('m2-caja'), off=$('m2-apagado');
@@ -3313,6 +3348,9 @@ async function m2Cargar(){
   }
   off.classList.add('hidden'); caja.classList.remove('hidden');
   M2.est = d; M2.listo = true;
+  M2.vistoV = Date.now();
+  m2NotaVersion(d.desfase);
+  if (d.desfase && d.desfase.trabajando) m2MirarVersion();
   $('m2-semilla').textContent = d.semilla || '—';
   $('m2-version').textContent = d.version ? ('Java ' + d.version) : '—';
   $('m2-dimension').textContent = d.dimension || 'Overworld';
@@ -3462,7 +3500,11 @@ function m2PideAzulejo(bpp,tx,tz){
   const im=new Image();
   im.onload =()=>{ M2.pidiendo--; M2.azulejos.set(k,im); m2Pinta(); };
   im.onerror=()=>{ M2.pidiendo--; M2.azulejos.set(k,{falla:Date.now()}); m2Pinta(); };
-  im.src=`/api/mapa2/azulejo/${bpp}/${tx}/${tz}.png`;
+  // El sello solo se pone cuando el mapa se acaba de poner al día. La URL de un
+  // azulejo es la misma antes y después de recompilar —mismo nivel, mismas
+  // coordenadas—, así que sin él el navegador enseñaría los píxeles viejos de su
+  // propia caché y parecería que el botón no ha hecho nada.
+  im.src=`/api/mapa2/azulejo/${bpp}/${tx}/${tz}.png` + (M2.sello ? '?v='+M2.sello : '');
 }
 
 /* La memoria no es infinita: al pasear mucho se acumulan miles de azulejos. */
@@ -3886,6 +3928,96 @@ function m2NotaGens(){
   const n=$('m2-gens-nota'); if (!n) return;
   const hay = !!(M2.est && (M2.est.tipos||[]).some(t=>t.k==='spawner'));
   n.classList.toggle('ver', hay && !M2.apagados.has('spawner'));
+}
+
+/* ---------- el aviso de versión ----------
+
+   Minecraft se actualiza solo. Las tablas de estructuras que lee el panel se
+   recargan solas con el jar nuevo, pero el lector de biomas va COMPILADO contra
+   el jar y solo se recompila al reiniciarse — y si en la máquina no hay
+   compilador de Java, arranca con las clases de antes y sigue contestando tan
+   rápido como siempre, con los biomas de la versión anterior.
+
+   Ese es el fallo peor de todos: no peta, no tarda más, no escribe un error en
+   ningún sitio que alguien mire. Solo está mal. Así que el panel lo compara y
+   lo dice, y quien pueda arreglarlo tiene el botón aquí mismo. */
+function m2NotaVersion(v){
+  if (v) M2.desfase = v;
+  const n=$('m2-version-nota'); if (!n) return;
+  const d = M2.desfase;
+  // al_dia es a tres valores: dar por viejo lo que no se sabe llenaría esto de
+  // avisos falsos, y un aviso que sale cuando no toca deja de leerse.
+  const viejo = !!(d && d.al_dia === false);
+  n.classList.toggle('ver', viejo || !!(d && d.trabajando));
+  if (!viejo && !(d && d.trabajando)) return;
+
+  $('m2-version-n').textContent = d.trabajando
+    ? 'Recompilando el lector de biomas contra ' + (d.jar || 'la versión de ahora') +
+      '. Tarda un par de minutos; puedes seguir usando el panel.'
+    : (d.motivo || 'el lector de biomas se compiló con otra versión') +
+      '. Los iconos y los chunks de slime ya son los de ahora; los colores del fondo todavía no.';
+
+  const acc=$('m2-version-acc'); acc.innerHTML='';
+  // ME se declara con `let`, así que NO está en `window`: preguntar por
+  // window.ME daba siempre undefined y el admin se quedaba sin botón.
+  if (!(ME && ME.role==='admin')){
+    const s=document.createElement('span'); s.className='estado';
+    s.textContent='Avísale a un admin para que lo actualice.';
+    acc.appendChild(s); return;
+  }
+  const b=document.createElement('button');
+  b.className='btn small'; b.id='m2-version-btn';
+  b.textContent = d.trabajando ? 'Actualizando…' : 'Actualizar ahora';
+  b.disabled = !!d.trabajando;
+  b.onclick = m2Actualizar;
+  acc.appendChild(b);
+  if (!d.javac && !d.trabajando){
+    const s=document.createElement('span'); s.className='estado';
+    s.textContent='La máquina no tiene compilador de Java, así que puede que no lo consiga.';
+    acc.appendChild(s);
+  }
+}
+
+async function m2Actualizar(){
+  const b=$('m2-version-btn');
+  if (b){ b.disabled=true; b.textContent='Actualizando…'; }
+  let r=null;
+  try{ r = await api('/api/mapa2/actualizar', {}); }catch(_){}
+  toast((r && (r.output || r.error)) || 'No pude lanzarlo');
+  m2MirarVersion();
+}
+
+/* Se pregunta hasta que el lector vuelve a contestar. Un botón que dice «hecho»
+   en cuanto se pulsa y deja el mapa exactamente igual durante tres minutos es
+   peor que no tener botón: la siguiente vez ya no te lo crees. */
+let M2_RELOJ_V = null;
+function m2MirarVersion(){
+  if (M2_RELOJ_V) return;
+  let vueltas = 0;
+  const tic = async () => {
+    let v=null;
+    try{ v = await api('/api/mapa2/version'); }catch(_){}
+    if (v) m2NotaVersion(v);
+    // 150 vueltas ≈ 10 min, más que el plazo del propio trabajo. Sin tope, un
+    // servidor que nunca suelta la marca deja el navegador preguntando para
+    // siempre.
+    if ((v && !v.trabajando) || ++vueltas > 150){
+      clearInterval(M2_RELOJ_V); M2_RELOJ_V=null;
+      if (v && v.al_dia){
+        // Los azulejos de ahora son de la versión vieja, en memoria y en la
+        // caché del navegador: fuera los dos, o no se ve el cambio.
+        M2.sello = Date.now();
+        M2.azulejos.clear();
+        m2Pinta();
+        toast('Mapa al día con ' + (v.jar || 'la versión de ahora'));
+      } else if (v && v.al_dia === false){
+        toast(v.javac ? 'No se pudo actualizar. Mira el registro en Sistema.'
+                      : 'Falta el compilador de Java en el servidor.');
+      }
+    }
+  };
+  M2_RELOJ_V = setInterval(tic, 4000);
+  tic();
 }
 
 /* ---------- moverse ---------- */
@@ -4471,6 +4603,7 @@ async function loadSistema(){
    dormido más de lo que debería. Con el server desatendido, esto es lo que
    evita enterarse tarde de que algo dejó de actualizarse. */
 function sysAuto(lista){
+  window._sysAuto = lista;          // para que sysMapa2() sepa cuándo terminó
   const caja=$('sys-auto'); if(!caja) return;
   if(!lista.length){ caja.textContent='—'; return; }
   const cuando=s=>{
@@ -4486,10 +4619,14 @@ function sysAuto(lista){
     const col = a.pausa ? 'var(--warn)' : (a.ok ? 'var(--good)' : 'var(--crit)');
     const cnota = a.pausa ? 'var(--ink3)' : 'var(--crit)';
     const nota = a.nota ? `, <span style="color:${cnota}">${esc(a.nota)}</span>` : '';
+    // Algunas líneas no se miden en tiempo: el mapa Explorar no está «dormido»,
+    // está compilado contra una versión u otra. Cuando traen su propio texto se
+    // usa ese, porque «hace 3 días» ahí no querría decir nada.
+    const der = a.estado ? esc(a.estado) : (a.pausa ? 'en pausa' : cuando(a.edad));
     return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0">
       <span class="dot" style="background:${col};margin:0"></span>
       <span style="flex:1;min-width:0">${esc(a.nombre)}</span>
-      <span style="color:${a.pausa||a.ok?'var(--ink3)':'var(--crit)'};white-space:nowrap">${a.pausa?'en pausa':cuando(a.edad)}</span>
+      <span style="color:${a.pausa||a.ok?'var(--ink3)':'var(--crit)'};white-space:nowrap">${der}</span>
       </div>${nota?`<div style="padding-left:18px">${nota}</div>`:''}`;
   }).join('');
 }
@@ -4526,6 +4663,25 @@ async function sysOp(op, msg){
   const r=await api('/api/system/'+op,{});
   toast(r.output||r.error||'Hecho');
   setTimeout(loadSistema, 1200);
+}
+/* El mismo botón que hay dentro de Explorar, aquí para quien entre a Sistema a
+   ver qué lleva parado. Comparten endpoint y marca de trabajo, así que pulsar
+   los dos no lanza dos recompilaciones. */
+async function sysMapa2(){
+  const b=$('sys-m2-btn');
+  if (b){ b.disabled=true; }
+  let r=null;
+  try{ r = await api('/api/mapa2/actualizar', {}); }catch(_){}
+  toast((r && (r.output || r.error)) || 'No pude lanzarlo');
+  // El semáforo de arriba enseña «actualizando…» mientras dure, y vuelve a
+  // verde solo cuando el lector contesta con el jar nuevo.
+  const tic = setInterval(async () => {
+    await loadSistema();
+    const a = (window._sysAuto||[]).find(x=>x.id==='mapa2');
+    if (!a || !a.pausa){ clearInterval(tic); if (b) b.disabled=false; }
+  }, 5000);
+  setTimeout(()=>{ clearInterval(tic); if (b) b.disabled=false; }, 11 * 60000);
+  loadSistema();
 }
 async function sysPaper(){
   if (!confirm('¿Migrar el motor a Paper? El server queda ~3 minutos fuera. Se hace un backup antes.')) return;
