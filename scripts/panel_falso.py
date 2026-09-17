@@ -28,6 +28,7 @@ Uso:
     pag.goto(pf.BASE)
 """
 import base64
+import io
 import json
 import os
 import re
@@ -38,9 +39,32 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 
-# Un PNG de 1x1: vale como azulejo del mapa, que aquí no se mira.
+# Un PNG de 1x1: vale como azulejo del mapa cuando no se miran los píxeles.
 PNG_1PX = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+
+
+def azulejo_png(colores, lado=256):
+    """Un azulejo de verdad, en franjas verticales de esos colores.
+
+    Hace falta para probar lo que dice el mapa bajo el ratón: ese nombre sale de
+    LEER EL COLOR del píxel ya dibujado y buscarlo en la leyenda. Con un azulejo
+    de 1x1 esa parte no se puede probar, y es justo donde se escondió un fallo.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return PNG_1PX
+    im = Image.new("RGB", (lado, lado))
+    px = im.load()
+    n = len(colores)
+    for x in range(lado):
+        c = colores[min(n - 1, x * n // lado)]
+        for y in range(lado):
+            px[x, y] = c
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
 
 # Las capas, como las manda /api/mapa2/estado del panel de verdad.
 TIPOS = [
@@ -67,7 +91,19 @@ TIPOS = [
 ESTADO = {
     "ok": True, "semilla": "1244994422874902852", "y": 63,
     "niveles": [4, 8, 16, 32, 64, 128, 256, 512], "tam": 256,
-    "leyenda": {"0": {"id": "minecraft:plains", "es": "Llanura", "en": "Plains", "c": "#79c05a"}},
+    # Dos biomas, no uno: con uno solo no se puede comprobar que el nombre que
+    # sale bajo el ratón es el del sitio donde está el ratón.
+    "leyenda": {
+        "0": {"id": "minecraft:plains", "es": "Llanura", "en": "Plains", "c": "#8db360"},
+        "8": {"id": "minecraft:dappled_forest", "es": "Bosque moteado",
+              "en": "Dappled forest", "c": "#a55f16"},
+        # Los dos colores MÁS JUNTOS de la paleta de verdad (distancia 5,74).
+        # Están aquí para que la prueba del margen se haga contra el caso peor.
+        "20": {"id": "minecraft:windswept_hills", "es": "Colinas ventosas",
+               "en": "Windswept Hills", "c": "#606060"},
+        "21": {"id": "minecraft:basalt_deltas", "es": "Deltas de basalto",
+               "en": "Basalt Deltas", "c": "#645f64"},
+    },
     "tipos": TIPOS, "aparicion": [0, 64, 0], "version": "26.2",
     "dimension": "Overworld", "fortalezas": [],
     "variantes": {"spawner_zombie": {"icono": "spawner_zombie",
@@ -117,6 +153,9 @@ class PanelFalso:
         # Biomas que el servicio conoce y la paleta del panel no sabe pintar.
         self.estado.setdefault("sin_color", [])
         self.estado.setdefault("huella", "abc12345")
+        # Mitad izquierda llanura, mitad derecha bosque moteado — los mismos
+        # colores que la leyenda de arriba.
+        self.azulejo = azulejo_png([(141, 179, 96), (165, 95, 22)])
 
     # ---------------------------------------------------------------- rutas
     @staticmethod
@@ -140,7 +179,7 @@ class PanelFalso:
             self.pedidos["estado"].append(ruta)
             return self._json(dict(self.estado, desfase=dict(self.desfase)))
         if p.startswith("/api/mapa2/azulejo"):
-            return {"status": 200, "content_type": "image/png", "body": PNG_1PX}
+            return {"status": 200, "content_type": "image/png", "body": self.azulejo}
         if p == "/api/mapa2/estructuras":
             self.pedidos["estructuras"].append(ruta)
             e = list(self.estructuras) + (self.gens if "gens=1" in ruta else [])

@@ -3312,7 +3312,8 @@ const M2 = {
   estructuras:[], cuenta:{}, recorte:null,
   slime:null,               // {cx, cz, n, datos} del trozo pedido
   verSlime:false, verAparicion:true,
-  porColor:new Map(),       // "r,g,b" → bioma, para decir el bioma sin pedir nada
+  porColor:new Map(),       // color exacto de la leyenda → bioma
+  porCerca:new Map(),       // color LEÍDO del lienzo → bioma (ver m2BiomaDeColor)
   hechas:{},                // "tipo:x:z" → {por, t}: lo que ya visitó alguien
   variantes:{},             // "village_snowy" → {icono, es, en}: dibujo propio
   modo:'tira',              // 'tira' (iconos) o 'lista' (icono + nombre)
@@ -3360,6 +3361,7 @@ async function m2Cargar(){
   off.classList.add('hidden'); caja.classList.remove('hidden');
   M2.est = d; M2.listo = true;
   M2.huella = d.huella || '';
+  M2.porCerca.clear();          // otra leyenda, otros colores: fuera lo resuelto
   M2.vistoV = Date.now();
   m2NotaVersion(d.desfase);
   m2NotaColores();
@@ -4182,6 +4184,41 @@ function m2Enganchar(){
    buscar — y ahí es donde antes se quedaba sin nombre. En ese caso se le
    pregunta al servidor, con un respiro para no ahogarlo mientras se mueve el
    ratón. Así SIEMPRE sale el bioma. */
+/* El color leído del lienzo NO siempre es exactamente el de la leyenda.
+   En una pantalla de gama amplia —cualquier Mac reciente— el navegador convierte
+   de espacio de color al componer el lienzo y al leerlo, y en 8 bits algunos
+   valores vuelven con un ±1 en algún canal: la llanura sale #8cb361 en vez de
+   #8db360. Buscando el color EXACTO, esos biomas no se encontraban nunca, y el
+   panel enseñaba «lo último que se supo» mientras preguntaba al servidor — o
+   sea, el nombre del bioma anterior. Parecía que se equivocaba; en realidad iba
+   un paso por detrás.
+
+   Así que se busca el más parecido, con un margen medido, no inventado:
+
+     · los dos colores más juntos de toda la paleta son las colinas ventosas
+       (96,96,96) y los deltas de basalto (100,95,100), a distancia 5,74;
+     · se acepta como mucho a distancia 2,45 (d² ≤ 6);
+     · un color desviado está a 2,45 como mucho de SU bioma, y por tanto a
+       5,74 − 2,45 = 3,29 como mínimo de cualquier otro. No hay empate posible.
+
+   Y se guarda lo resuelto: el ratón pasa por los mismos colores mil veces. */
+const M2_CERCA = 6;              // d² máxima admitida, ver arriba
+function m2BiomaDeColor(r, g, b){
+  const k = (r<<16)|(g<<8)|b;
+  const exacto = M2.porColor.get(k);
+  if (exacto) return exacto;
+  if (M2.porCerca.has(k)) return M2.porCerca.get(k);
+  let mejor = null, dm = Infinity;
+  for (const [c, bio] of M2.porColor){
+    const dr = ((c>>16)&255)-r, dg = ((c>>8)&255)-g, db = (c&255)-b;
+    const d = dr*dr + dg*dg + db*db;
+    if (d < dm){ dm = d; mejor = bio; }
+  }
+  const res = dm <= M2_CERCA ? mejor : null;
+  M2.porCerca.set(k, res);
+  return res;
+}
+
 let m2TimerBioma=null, m2UltimoBioma='';
 function m2Mirar(px,py){
   const x=Math.floor(m2dex(px)), z=Math.floor(m2dez(py));
@@ -4189,7 +4226,7 @@ function m2Mirar(px,py){
   try{
     const g=$('m2-bio').getContext('2d', {willReadFrequently:true});
     const d=g.getImageData(Math.round(px*M2.dpr), Math.round(py*M2.dpr), 1, 1).data;
-    const b=M2.porColor.get((d[0]<<16)|(d[1]<<8)|d[2]);
+    const b=m2BiomaDeColor(d[0], d[1], d[2]);
     if (b) nombre = LANG==='en' ? b.en : b.es;
   }catch(_){}
   if (nombre){
