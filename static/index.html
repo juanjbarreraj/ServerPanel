@@ -1307,6 +1307,17 @@ button,a,.slot,.m2-cap,.tabslot{-webkit-tap-highlight-color:transparent}
         </div>
       </div>
 
+      <!-- Un bioma que el juego conoce y el panel no sabe pintar sale en rosa
+           chillón y no se distingue de nada. Que lo diga él, en vez de que haya
+           que echarlo de menos mirando el mapa. -->
+      <div class="m2-nota aviso" id="m2-color-nota">
+        <img src="/static/ui/s-paleta.png?v=15" alt="" onerror="this.style.display='none'">
+        <div>
+          <b>Hay biomas que este panel no sabe de qué color pintar</b>
+          <span id="m2-color-n"></span>
+        </div>
+      </div>
+
       <div class="m2-top">
         <span class="m2-ir">
           X <input id="m2-x" inputmode="numeric" placeholder="0" onkeydown="if(event.key==='Enter')m2Ir()">
@@ -3326,7 +3337,7 @@ async function m2Cargar(){
   // guarda la elección, y volver a esta pestaña, o recargar, devuelve la tira.
   M2.modo = 'tira';
   if (M2.listo) {
-    m2Capas(); m2Medir(); m2Pinta(); m2NotaVersion();
+    m2Capas(); m2Medir(); m2Pinta(); m2NotaVersion(); m2NotaColores();
     // Minecraft puede haberse actualizado con la pestaña abierta. Se vuelve a
     // mirar, pero como mucho cada diez minutos: es un `stat`, no hace falta
     // gastarlo en cada ida y vuelta entre pestañas.
@@ -3350,6 +3361,7 @@ async function m2Cargar(){
   M2.est = d; M2.listo = true;
   M2.vistoV = Date.now();
   m2NotaVersion(d.desfase);
+  m2NotaColores();
   if (d.desfase && d.desfase.trabajando) m2MirarVersion();
   $('m2-semilla').textContent = d.semilla || '—';
   $('m2-version').textContent = d.version ? ('Java ' + d.version) : '—';
@@ -3976,6 +3988,20 @@ function m2NotaVersion(v){
     s.textContent='La máquina no tiene compilador de Java, así que puede que no lo consiga.';
     acc.appendChild(s);
   }
+}
+
+/* Los biomas que el servicio conoce y la paleta no. Van en rosa chillón y en el
+   mapa parecen una mancha más, así que si nadie lo dice no se descubre: el
+   Bosque Moteado de la 26.3 estuvo así hasta que Juan lo echó de menos. */
+function m2NotaColores(){
+  const n=$('m2-color-nota'); if (!n) return;
+  const faltan = (M2.est && M2.est.sin_color) || [];
+  n.classList.toggle('ver', faltan.length > 0);
+  if (!faltan.length) return;
+  const lista = faltan.map(b => b.split(':').pop().replace(/_/g,' ')).join(', ');
+  $('m2-color-n').textContent =
+    (faltan.length === 1 ? 'Sale en rosa chillón: ' : 'Salen en rosa chillón: ') + lista +
+    '. El mapa está bien, lo que falta es el color; dímelo y lo añado a la paleta.';
 }
 
 async function m2Actualizar(){

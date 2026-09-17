@@ -156,6 +156,27 @@ def main():
            "el botón sigue ahí: puede que el JDK se instalara y esto no lo sepa")
         nav.close(); pf.para()
 
+        # ── 6 · un bioma que la paleta no conoce ────────────────────────────
+        titulo("6 · si el juego trae un bioma que el panel no sabe pintar")
+        pf = PanelFalso()
+        pf.estado["sin_color"] = ["minecraft:dappled_forest"]
+        nav, pag = abre(pw, pf, errores)
+        vis = pag.evaluate("() => document.getElementById('m2-color-nota')"
+                           ".classList.contains('ver')")
+        ok(vis, "sale el aviso solo, sin que nadie mire el mapa con lupa")
+        t = pag.inner_text("#m2-color-nota")
+        ok("dappled forest" in t, "y dice cuál es: %r" % t.split("\n")[-1][:80])
+        nav.close(); pf.para()
+
+        titulo("7 · y si están todos, calla")
+        pf = PanelFalso()
+        pf.estado["sin_color"] = []
+        nav, pag = abre(pw, pf, errores)
+        ok(not pag.evaluate("() => document.getElementById('m2-color-nota')"
+                            ".classList.contains('ver')"),
+           "con la paleta completa no se dice nada")
+        nav.close(); pf.para()
+
         ok(not errores, "sin errores de JavaScript en todo el recorrido"
            + (": %s" % errores[:2] if errores else ""))
 

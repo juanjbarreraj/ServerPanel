@@ -86,6 +86,14 @@ PALETA = {
     "old_growth_birch_forest":   (88, 156, 108),
     "dark_forest":               (64, 81, 26),
     "pale_garden":               (117, 133, 122),
+    # El Bosque Moteado llegó con la 26.3 y AMIDST no tiene color para él, así
+    # que este lo elegí yo — y conviene decir cómo, porque «un naranja» no vale.
+    # Se partió del color de hierba del propio bioma (#df6827) y se buscó, dentro
+    # de esa familia de ámbares, el que más lejos queda de TODOS los colores que
+    # ya hay (distancia en Lab, que es la que se parece a lo que ve el ojo). El
+    # #df6827 tal cual se queda a ΔE 12 de las tierras rojas: en el mapa serían
+    # la misma mancha. Este está a ΔE 33 del más parecido (el desierto).
+    "dappled_forest":            (165, 95, 22),
     "taiga":                     (11, 102, 89),
     "snowy_taiga":               (49, 85, 74),
     "old_growth_pine_taiga":     (89, 102, 81),
@@ -140,6 +148,7 @@ BONITO = {
     "basalt_deltas": "Deltas de basalto", "beach": "Playa",
     "birch_forest": "Bosque de abedules", "cherry_grove": "Arboleda de cerezos",
     "cold_ocean": "Océano frío", "crimson_forest": "Bosque carmesí",
+    "dappled_forest": "Bosque moteado",
     "dark_forest": "Bosque oscuro", "deep_cold_ocean": "Océano frío profundo",
     "deep_dark": "Oscuridad profunda", "deep_frozen_ocean": "Océano helado profundo",
     "deep_lukewarm_ocean": "Océano templado profundo", "deep_ocean": "Océano profundo",

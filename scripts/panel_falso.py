@@ -114,6 +114,8 @@ class PanelFalso:
                         "biomas_jar": "server-26.2.jar", "al_dia": True,
                         "javac": True, "motivo": "", "trabajando": False}
         self.actualizados = 0          # cuántas veces se pulsó el botón
+        # Biomas que el servicio conoce y la paleta del panel no sabe pintar.
+        self.estado.setdefault("sin_color", [])
 
     # ---------------------------------------------------------------- rutas
     @staticmethod

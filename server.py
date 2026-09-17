@@ -4108,6 +4108,12 @@ def api_m2_estado():
         r, g, az = b.color(bid)
         es, en = nombres(bid)
         leyenda[i] = {"id": bid, "es": es, "en": en, "c": "#%02x%02x%02x" % (r, g, az)}
+    # Biomas que el juego conoce y este panel no sabe de qué color pintar. Salen
+    # en el rosa de «falta» y no se distinguen de nada, así que hay que decirlo:
+    # con la 26.3 llegó el Bosque Moteado y de esto no se enteró nadie hasta que
+    # Juan lo echó de menos mirando el mapa. Cuesta una resta, se hace siempre.
+    sin_color = sorted({bid for bid in srv.leyenda().values()
+                        if b.color(bid) == b.FALTA})
     # Cada cuántos bloques va, como mucho, una de cada tipo. Sale de la propia
     # rejilla con la que Minecraft las coloca, así que no hay que ajustarlo a
     # mano nunca: es lo que le permite al mapa saber cuándo dibujar un tipo
@@ -4174,7 +4180,7 @@ def api_m2_estado():
                    niveles=b.NIVELES, tam=b.TAM, leyenda=leyenda, tipos=tipos,
                    aparicion=punto_de_aparicion(), version=mc_version(),
                    dimension="Overworld", fortalezas=fortalezas, variantes=variantes,
-                   desfase=_m2_desfase())
+                   desfase=_m2_desfase(), sin_color=sin_color)
 
 
 @app.get("/api/mapa2/version")

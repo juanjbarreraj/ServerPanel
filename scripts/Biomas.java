@@ -256,6 +256,23 @@ public class Biomas {
      * y si no cambia, no se pierde nada de lo ya hecho. */
     public String huella() {
         long h = 1125899906842597L;
+
+        // (1) La LISTA COMPLETA de biomas del registro.
+        //
+        // Esta mitad se añadió después de un fallo que costó encontrar. La
+        // huella era solo el muestreo de abajo: 1.089 puntos del mundo. La 26.3
+        // añadió el Bosque Moteado, ninguno de esos 1.089 puntos cayó en uno, y
+        // la huella no se movió ni un bit. Como la caché de azulejos va por
+        // huella, el mapa siguió sirviendo los dibujos de la 26.2 — sin bioma
+        // nuevo, sin avisar, para siempre.
+        //
+        // Una huella que MUESTREA puede no enterarse de un cambio. Esta parte no
+        // muestrea: recorre el registro entero, así que añadir, quitar o
+        // renombrar un bioma la cambia sí o sí.
+        for (String n : NOMBRES) h = h * 31 + n.hashCode();
+
+        // (2) Y el muestreo del terreno, que pilla lo contrario: que los biomas
+        // sean los mismos de siempre pero estén repartidos de otra forma.
         for (int z = -8192; z <= 8192; z += 512)
             for (int x = -8192; x <= 8192; x += 512)
                 h = h * 31 + nombreEn(x, Y_SUPERFICIE, z).hashCode();
