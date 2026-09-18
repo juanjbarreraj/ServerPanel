@@ -178,7 +178,7 @@ def main():
     ok(not (mc / "world/datapacks/vigilancia").exists(), "no ha escrito nada")
 
     titulo("2 · pocos logros, y con tope")
-    r = corre()
+    r = corre("--sin-probar")
     ok(r.returncode == 0, "se instala (%d): %s" % (r.returncode, r.stderr[-120:]))
     pack = mc / "world/datapacks/vigilancia"
     advs = sorted(p for p in (pack / "data/vigilancia/advancement").glob("*.json")
@@ -412,6 +412,37 @@ def main():
        "tampoco escribe nada")
     shutil.rmtree(otro, ignore_errors=True)
     shutil.rmtree(sin_raiz, ignore_errors=True)
+
+    titulo("16 · nada entra en el mundo sin pasar por el banco de pruebas")
+    # La lección operativa del 18/09/2026: `reload` NO detecta un datapack malo
+    # —los logros son datos de registro y los registros solo se cargan al abrir
+    # el mundo—, así que el único sitio donde se puede ver es arrancando un
+    # servidor. Por eso el script lo arranca él mismo y no instala si falla.
+    #
+    # Aquí el banco de pruebas falla enseguida y a propósito: en este escenario
+    # no hay un server.jar de verdad que arrancar.
+    shutil.rmtree(panel / "data/vigilancia-pack", ignore_errors=True)
+    r = corre()                                   # sin --sin-probar
+    salida = r.stdout + r.stderr
+    ok(r.returncode != 0,
+       "si el banco de pruebas no da el visto bueno, sale con error (%d)" % r.returncode)
+    ok(not pack.exists(),
+       "y el datapack NO llega al mundo — que es lo que dejó el servidor sin "
+       "arrancar la primera vez")
+    ok((panel / "data/vigilancia-pack").exists(),
+       "se queda generado aparte, para poder mirarlo")
+    ok("no lo instalo" in salida.lower(), "y lo dice con todas las letras")
+    # 🔴 «no he podido probarlo» y «el datapack está mal» NO son lo mismo, y
+    # confundirlos manda a buscar donde no hay nada. Aquí falta el server.jar,
+    # así que tiene que ser lo primero.
+    ok("no he podido probarlo" in salida.lower()
+       and "dejaría el servidor sin arrancar" not in salida,
+       "y distingue «no he podido probarlo» de «el datapack está mal»")
+    r = corre("--sin-probar")
+    ok(r.returncode == 0 and pack.exists(),
+       "con --sin-probar sí entra, para una urgencia")
+    ok("sin-probar" in (r.stdout + r.stderr),
+       "pero avisando de que se ha saltado la comprobación")
 
 
 if __name__ == "__main__":

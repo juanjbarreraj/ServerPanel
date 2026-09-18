@@ -20,7 +20,8 @@
 #   bash scripts/probar-datapack.sh ~/minecraft/world/datapacks/vigilancia
 #   bash scripts/probar-datapack.sh            # prueba TODOS los del mundo
 #
-# Tarda un minuto y pico y sale 0 si carga, 1 si no.
+# Tarda un minuto y pico. Códigos de salida, y la diferencia importa:
+#   0 = carga · 1 = NO carga · 2 = no he podido probarlo (que no es lo mismo)
 # ─────────────────────────────────────────────────────────────────────────
 set -u
 
@@ -38,7 +39,7 @@ trap limpia EXIT
 # Por FECHA, no por nombre (ver claude/el-jar-por-nombre.md).
 LANZADOR="$MC/server.jar"
 if [ ! -f "$LANZADOR" ]; then
-  decir "no encuentro $LANZADOR"; exit 1
+  decir "no encuentro $LANZADOR"; exit 2  # 2 = no he podido probar
 fi
 
 # ── qué se prueba ────────────────────────────────────────────────────────
@@ -78,7 +79,7 @@ enable-query=false
 PROPS
 
 for p in "${PACKS[@]}"; do
-  if [ ! -e "$p" ]; then decir "no existe: $p"; exit 1; fi
+  if [ ! -e "$p" ]; then decir "no existe: $p"; exit 2; fi
   cp -r "$p" "$BANCO/mundos/mundo/datapacks/"
   decir "se prueba: $(basename "$p")"
 done
@@ -152,7 +153,8 @@ case "$ESTADO" in
       | grep -A4 -iE "ERROR|Failed to (load|parse)" | head -40 | sed 's/^/        /'
     exit 1 ;;
   *)
-    decir "✘ no dio señales en $ESPERA s. Últimas líneas:"
+    decir "✘ no dio señales en $ESPERA s — esto NO dice que el datapack esté mal,"
+    decir "  dice que la prueba no llegó a ninguna conclusión. Últimas líneas:"
     tail -15 "$SALIDA" | sed 's/^/        /'
-    exit 1 ;;
+    exit 2 ;;
 esac

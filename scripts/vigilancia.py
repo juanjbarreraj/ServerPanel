@@ -60,15 +60,28 @@ Un logro se consigue UNA VEZ por jugador. Sin esto, el segundo lobo que mate
 alguien no avisaría nunca. Cada logro lleva una función de recompensa con una
 línea, `advancement revoke @s only …`, que lo rearma en el acto.
 
+🔴 SE PRUEBA SOLO, Y SI NO PASA NO SE INSTALA
+---------------------------------------------
+El 18/09/2026 este datapack dejó el servidor sin arrancar, y lo peor no fue el
+fallo: fue que **no había forma de verlo**. `reload` no lo detecta, porque en
+esta versión los logros son datos de REGISTRO y los registros solo se cargan al
+abrir el mundo. O sea que un datapack roto se ve perfecto en un servidor
+encendido y tumba el siguiente arranque, días después.
+
+Por eso esto ya no escribe en `world/datapacks/` directamente. Genera el pack
+aparte, arranca con él un servidor de mentira (`probar-datapack.sh`: mundo nuevo
+en /tmp, otro puerto, el mundo de verdad ni se abre) y **solo si carga** lo
+mueve al mundo.
+
 USO (en el servidor)
 --------------------
     python3 ~/panel/scripts/vigilancia.py --ver    # enseña qué haría, no toca nada
-    python3 ~/panel/scripts/vigilancia.py          # lo instala
+    python3 ~/panel/scripts/vigilancia.py          # lo prueba y, si pasa, lo instala
     python3 ~/panel/scripts/vigilancia.py --quitar # lo borra
 
 Después, una sola vez: `reload` en la consola. Nunca más.
 """
-import glob, json, os, re, shutil, struct, sys, zipfile
+import glob, json, os, re, shutil, struct, subprocess, sys, zipfile
 from pathlib import Path
 
 AQUI = Path(__file__).resolve().parent
@@ -80,6 +93,15 @@ PANEL = Path(os.environ.get("PANEL_DIR", AQUI.parent))
 WORLD = MC / "world"
 PACK  = WORLD / "datapacks" / "vigilancia"
 NS    = "vigilancia"
+
+# 🔴 El datapack NO se escribe directamente en el mundo. Se escribe aquí, se
+# arranca un servidor de mentira que intente cargarlo, y solo si carga se mueve
+# al mundo. El 18/09/2026 se escribió directo, cargaba mal, y el servidor se
+# quedó sin arrancar — y nadie podía saberlo, porque `reload` no comprueba esto
+# (los logros son datos de REGISTRO y los registros solo se cargan al abrir el
+# mundo). Ver claude/vigilancia-mascotas.md.
+BANCO  = PANEL / "data" / "vigilancia-pack"
+PRUEBA = AQUI / "probar-datapack.sh"
 MARCA = "☠"                      # con esto el panel distingue estos logros
 LISTA = PANEL / "data" / "vigilados.json"
 
@@ -445,12 +467,12 @@ def main():
         return 0
 
     # ------------------------------------------------------------ escribir
-    if PACK.exists():
-        shutil.rmtree(PACK)
-    carp_adv = PACK / "data" / NS / info["carpeta"]
+    if BANCO.exists():
+        shutil.rmtree(BANCO)
+    carp_adv = BANCO / "data" / NS / info["carpeta"]
     carp_adv.mkdir(parents=True, exist_ok=True)
 
-    (PACK / "pack.mcmeta").write_text(json.dumps(
+    (BANCO / "pack.mcmeta").write_text(json.dumps(
         {"pack": {"description": "Vigilancia de animales (panel Califree)",
                   "pack_format": info["pack_format"]}}, indent=2))
 
@@ -510,11 +532,59 @@ def main():
         # aprende todo lo demás: se escriben las DOS. Una carpeta que el
         # servidor no conozca la ignora, y así no hay nada que adivinar.
         for nombre_carpeta in ("function", "functions"):
-            c = PACK / "data" / NS / nombre_carpeta
+            c = BANCO / "data" / NS / nombre_carpeta
             c.mkdir(parents=True, exist_ok=True)
             (c / ("rearmar_%s.mcfunction" % et)).write_text(
                 "# rearma el logro para que avise también la próxima vez\n"
                 "advancement revoke @s only %s:%s\n" % (NS, et))
+
+    # ── la prueba, antes de que esto toque el mundo ──────────────────────
+    #
+    # 🔴 Esto no es opcional y no se salta por defecto. El 18/09/2026 el
+    # datapack se escribió directo en `world/datapacks/`, `reload` no se quejó
+    # —no puede: los logros son datos de registro y los registros solo se
+    # cargan al abrir el mundo— y el servidor se quedó sin arrancar horas
+    # después, cuando ya nadie lo relacionaba con esto.
+    #
+    # Lo que hace `probar-datapack.sh`: arranca un servidor aparte, con un
+    # mundo nuevo en /tmp y en otro puerto, y mira si carga. Tarda un minuto y
+    # pico y el mundo de verdad ni se abre.
+    if "--sin-probar" in sys.argv:
+        print("\n  ⚠ --sin-probar: me salto el banco de pruebas porque me lo has")
+        print("    pedido. Si el datapack está mal, el servidor no arrancará la")
+        print("    próxima vez que se reinicie, no ahora.")
+    elif not PRUEBA.exists():
+        print("\n✗ No encuentro %s." % PRUEBA)
+        print("  Sin poder probarlo NO lo meto en el mundo: un datapack malo no")
+        print("  se nota hasta el siguiente arranque. Despliega el panel entero")
+        print("  y vuelve a correr esto.")
+        print("  (El datapack generado se queda en %s)" % BANCO)
+        return 1
+    else:
+        print("\n" + "═" * 62)
+        print("  Probándolo en un mundo de mentira antes de tocar el tuyo…")
+        print("═" * 62)
+        r = subprocess.run(["bash", str(PRUEBA), str(BANCO)],
+                           env=dict(os.environ, MC_DIR=str(MC), PANEL_DIR=str(PANEL)))
+        if r.returncode == 2:
+            # el banco de pruebas no llegó a arrancar: eso NO es «el datapack
+            # está mal», y decirlo así mandaría a buscar donde no hay nada.
+            print("\n✗ No he podido probarlo, así que no lo instalo.")
+            print("  Esto no dice que el datapack esté mal: dice que la prueba no")
+            print("  pudo correr (mira el motivo justo aquí arriba).")
+            print("  El datapack generado se queda en %s." % BANCO)
+            return 1
+        if r.returncode != 0:
+            print("\n✗ No lo instalo: ese datapack dejaría el servidor sin arrancar.")
+            print("  Tu mundo está intacto — esto ni se ha acercado a él.")
+            print("  El datapack generado se queda en %s por si quieres mirarlo." % BANCO)
+            return 1
+
+    # ── y ahora sí, al mundo ─────────────────────────────────────────────
+    PACK.parent.mkdir(parents=True, exist_ok=True)
+    if PACK.exists():
+        shutil.rmtree(PACK)
+    shutil.copytree(BANCO, PACK)
 
     LISTA.parent.mkdir(parents=True, exist_ok=True)
     LISTA.write_text(json.dumps(
@@ -522,7 +592,7 @@ def main():
          "otro": OTRO}, indent=2, ensure_ascii=False))
 
     print("\n" + "═" * 62)
-    print("  Datapack escrito: %s" % PACK)
+    print("  Datapack probado e instalado: %s" % PACK)
     print("  %d logros, uno por especie — y ya no se vuelve a tocar nunca" % len(grupos))
     print("═" * 62)
     print("""
