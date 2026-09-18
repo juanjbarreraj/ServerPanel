@@ -1753,6 +1753,8 @@ const I18N = {
   hist_played:'jugó {0}', hist_online:'lleva {0} conectado',
   hist_cut:'la sesión se cortó al reiniciar el servidor',
   hist_killed:'mató a', hist_got:'consiguió', hist_hidden:'el sitio solo lo ve quien murió',
+  hist_pet_died:'Se murió {0}', hist_pet_of:'mascota de {0}', hist_pet_any:'un animal',
+  hist_pet_note:'Minecraft no apunta cómo muere un animal: solo se sabe que ya no está',
   hist_latest:'Lo último en el server', hist_seeall:'Ver toda la historia',
   hist_wait:'Armando la historia con los registros viejos…',
   hist_nomsg:'Falta generar las frases del juego en el servidor.',
@@ -1765,6 +1767,9 @@ const I18N = {
   dist_pig:'En cerdo', dist_strider:'En lavagante', dist_fly:'Volando',
   th_player:'Jugador', th_hours:'Horas', th_deaths:'Muertes', th_mobs:'Mobs', th_pvp:'PvP',
   th_km:'Km caminados', th_seen:'Última vez', online_tag:'(en línea)',
+  seen_panel:'El panel le vio conectado', seen_log:'Del registro del servidor',
+  seen_fichero:'Aproximado: fecha de su fichero en un mundo guardado',
+  seen_activo:'Aproximado: fecha de su fichero en el mundo de ahora',
   now:'ahora mismo', min_ago:'hace {0} min', h_ago:'hace {0} h', d_ago:'hace {0} días',
   mem_title:'Memorias del server', mem_global:'Globales', mem_indiv:'Individuales',
   mem_note:'El álbum del server, mira y comparte los mejores momentos.',
@@ -1802,6 +1807,8 @@ const I18N = {
   hist_played:'played {0}', hist_online:'online for {0}',
   hist_cut:'the session was cut short by a server restart',
   hist_killed:'killed', hist_got:'earned', hist_hidden:'only the player who died can see the spot',
+  hist_pet_died:'{0} died', hist_pet_of:'{0}’s pet', hist_pet_any:'an animal',
+  hist_pet_note:'Minecraft never records how an animal dies — only that it is gone',
   hist_latest:'Latest on the server', hist_seeall:'See the whole history',
   hist_wait:'Building the history from the old logs…',
   hist_nomsg:'The game phrases still need to be generated on the server.',
@@ -1814,6 +1821,9 @@ const I18N = {
   dist_pig:'By pig', dist_strider:'By strider', dist_fly:'Flown',
   th_player:'Player', th_hours:'Hours', th_deaths:'Deaths', th_mobs:'Mobs', th_pvp:'PvP',
   th_km:'Km walked', th_seen:'Last seen', online_tag:'(online)',
+  seen_panel:'The panel saw them online', seen_log:'From the server log',
+  seen_fichero:'Approximate: the date of their file in a saved world',
+  seen_activo:'Approximate: the date of their file in the current world',
   now:'just now', min_ago:'{0} min ago', h_ago:'{0} h ago', d_ago:'{0} days ago',
   mem_title:'Server Memories', mem_global:'Global', mem_indiv:'Individual',
   mem_note:'The server album, browse and share the best moments.',
@@ -2229,9 +2239,19 @@ function psortStat(p){
       (p.adv_total ? `${p.adv_done}/${p.adv_total} · ${Math.round(p.adv_pct)}%` : '—');
     case 'xp':     return `${pIco('s-xp','✨')} ${t('lvl_short')} ${fmtN(p.xp_level||0)}`;
     case 'seen':   return p.online ? t('online_tag').replace(/[()]/g,'')
-                                   : `${pIco('tick','🕒')} ${ago(p.last_seen)}`;
-    default: return p.online ? t('online_tag').replace(/[()]/g,'') : ago(p.last_seen);
+                                   : `${pIco('tick','🕒')} ${vistoEn(p)}`;
+    default: return p.online ? t('online_tag').replace(/[()]/g,'') : vistoEn(p);
   }
+}
+// De dónde salió la fecha de «última vez». Las dos últimas son el mtime de un
+// fichero del mundo, y eso lo mueve cualquier cosa (subir un mundo, restaurar
+// una copia). Que se vea al pasar el ratón en vez de dar todas por igual.
+function vistoEn(p){
+  const k = {panel:'seen_panel', log:'seen_log',
+             fichero:'seen_fichero', activo:'seen_activo'}[p.last_seen_src];
+  const txt = ago(p.last_seen);
+  return k ? `<span title="${t(k)}">${txt}${p.last_seen_src==='panel'||p.last_seen_src==='log'?'':'*'}</span>`
+           : txt;
 }
 function renderPGrid(){
   const grid=$('pgrid'); grid.innerHTML='';
@@ -2366,7 +2386,7 @@ function pvStats(s){
     [t('th_deaths'), fmtN(b.deaths||0)],
     [t('th_mobs'), fmtN(b.mob_kills||0)],
     [t('th_pvp'), fmtN(b.player_kills||0)],
-    [t('th_seen'), b.last_seen?ago(b.last_seen):'—'],
+    [t('th_seen'), b.last_seen?vistoEn(b):'—'],
   ].map(([l,v])=>`<div class="card tile pvt"><div class="lab">${l}</div><div class="pvt-val">${v}</div></div>`).join('');
   const cols=$('pv-cols'); cols.innerHTML='';
   cols.appendChild(statCol(hIco('s-dist','📏')+t('st_dist'), s.distance.total, s.distance.rows.map(r=>({
@@ -4886,11 +4906,29 @@ function hiFila(e){
     ico = hiIco('logro','🏅');
     txt = `<b>${nom}</b> ${t('hist_got')} <b>${esc(e.titulo||'')}</b>`;
   } else if (e.k==='mobmuerto'){
-    /* muerte de un mob con nombre, la trae el datapack de vigilancia.
-       Se pinta como una muerte, no como un logro. */
+    /* Dos orígenes distintos con la misma pinta de muerte:
+       · el datapack de vigilancia, que SÍ sabe quién lo mató;
+       · el censo de mascotas, que solo sabe que el bicho ya no está —
+         Minecraft no apunta en ningún sitio de qué murió un animal. */
     cls=' muerte';
     ico = hiIco('muerte','💀');
-    txt = `<b>${nom}</b> ${t('hist_killed')} <b>${esc(e.victima||'')}</b>`;
+    const quien = esc(e.victima||'');
+    const bicho = esc(e.bicho_es&&LANG!=='en' ? e.bicho_es : (e.bicho_en||e.bicho_es||e.bicho||''));
+    if (e.censo){
+      const qui = quien ? `<b>${quien}</b>${bicho?` (${bicho})`:''}`
+                        : (bicho ? `<b>${bicho}</b>` : t('hist_pet_any'));
+      txt = t('hist_pet_died', qui);
+      const piezas=[];
+      if (e.p) piezas.push(t('hist_pet_of', esc(e.p)));
+      if (e.x!==undefined && e.x!==null) piezas.push(`${e.x}, ${e.y}, ${e.z}`);
+      const bio = e.bioma && (LANG==='en' ? e.bioma.en : e.bioma.es);
+      if (bio) piezas.push(esc(bio));
+      if (e.dim && e.dim!=='minecraft:overworld') piezas.push(esc(DIM_NOM[e.dim]||e.dim));
+      if (e.lugar_oculto) piezas.push(t('hist_hidden'));
+      sub = piezas.join(' · ');
+    } else {
+      txt = `<b>${nom}</b> ${t('hist_killed')} <b>${quien}</b>`;
+    }
   } else {
     cls=' muerte';
     ico = hiIco('muerte','💀');

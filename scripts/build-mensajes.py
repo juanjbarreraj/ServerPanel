@@ -222,7 +222,21 @@ def main():
     salida["efectos"] = efectos
     print("  efectos: %d" % len(efectos))
 
-    # ------------------------------------------- 5) nada silencioso
+    # ------------------------------------------------- 5) nombres de bichos
+    # Para la Historia: cuando se muere una mascota hay que poder decir «el lobo
+    # de Tazzk93», y el id que trae el censo es `wolf`. Los nombres salen del
+    # jar como todo lo demás; escribirlos a mano sería inventarse las
+    # traducciones y quedarse corto en cuanto Mojang añada un bicho.
+    bichos = {}
+    for clave, txt in en.items():
+        m = re.fullmatch(r"entity\.minecraft\.([a-z0-9_]+)", clave)
+        if not m:
+            continue
+        bichos[m.group(1)] = {"en": txt, "es": es.get(clave, txt)}
+    salida["bichos"] = bichos
+    print("  bichos: %d nombres" % len(bichos))
+
+    # ------------------------------------------- 6) nada silencioso
     # Si una plantilla no produce regex, el evento entero desaparece del feed sin
     # que nadie se entere. Pasó de verdad: las entradas y los logros usan "%s" y
     # el script solo entendía "%1$s", así que solo salían las muertes. Ahora eso
@@ -235,6 +249,8 @@ def main():
             faltan.append("sesión/" + campo)
     if not any((v or {}).get("rx") for v in logros.values()):
         faltan.append("logros")
+    if not bichos:
+        faltan.append("nombres de bichos")
     if faltan:
         print("\n✗ NO puedo leer: %s" % ", ".join(faltan))
         print("  El feed saldría incompleto. Revisa las claves en el jar antes de seguir.")

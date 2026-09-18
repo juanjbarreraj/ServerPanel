@@ -495,9 +495,129 @@ def xp_level(dat: Path) -> int:
     _xp_cache[dat.name] = (mt, lvl)
     return lvl
 
+# ------------------------------------------ la última vez que se le vio jugar
+#
+# 🔴 GOTCHA: esto era el mtime de `world/players/data/<uuid>.dat`. Ese fichero
+# vive DENTRO de `world/`, y cambiar de mundo cambia la carpeta entera. O sea
+# que el panel no enseñaba «la última vez que se conectó» sino «la última vez
+# que jugó EN ESTE MUNDO». Estrenar un mundo lo dejaba en blanco, y un mundo
+# venido de un zip lo ponía TODO a la hora de la subida, porque descomprimir
+# escribe los ficheros de nuevo: por eso parecía que se reseteaba justo en el
+# momento del cambio.
+#
+# El dato no es de ningún mundo, así que se guarda en el panel y punto.
+#
+# Tres fuentes, por orden de confianza:
+#   panel   — el panel vio a esa persona conectada (se apunta cada 30 s)
+#   log     — una sesión cerrada en la Historia; la hora la escribió Minecraft
+#   fichero — el mtime del .dat, solo cuando no hay nada mejor
+VISTOS_F = DATA_DIR / "vistos.json"
+_vistos_cache = {"mtime": None, "data": {}}
+_vistos_lock  = threading.Lock()
+# El panel corre con un solo trabajador y varios hilos (gunicorn -w 1), así que
+# un Lock de hilos basta. Lo que NO basta es escribir encima: se escribe a un
+# temporal y se renombra, que en el mismo disco es atómico, para que un corte
+# de luz a mitad no deje un JSON roto y con él la fecha de todos perdida.
+
+def vistos_leer() -> dict:
+    """uuid -> {"t": epoch, "src": "panel|log|fichero"}. Cacheado por mtime."""
+    try:
+        mt = VISTOS_F.stat().st_mtime
+    except OSError:
+        return {}
+    if _vistos_cache["mtime"] != mt:
+        try:
+            d = json.loads(VISTOS_F.read_text())
+        except Exception:
+            return _vistos_cache["data"]
+        if not isinstance(d, dict):
+            d = {}
+        _vistos_cache["mtime"], _vistos_cache["data"] = mt, d
+    return _vistos_cache["data"]
+
+# 🔴 La regla que costó pensarla: MANDA LA FUENTE, NO LA HORA.
+#
+# Lo natural sería «me quedo con la fecha más nueva». Pues no: descomprimir un
+# mundo de un zip deja TODOS los ficheros con la hora de la subida, así que el
+# mtime del mundo puesto es siempre el más nuevo y el más falso. Quedándose con
+# el más nuevo, el dato bueno del log no gana jamás y se sigue viendo la hora
+# del cambio de mundo — que es exactamente el fallo que hay que arreglar.
+#
+# Así que: una fuente mejor pisa siempre a una peor, aunque diga una hora más
+# vieja; y a igual fuente, gana la hora más nueva.
+#
+#   panel   3  el panel le vio conectado (lo apunta cada 30 s)
+#   log     2  Minecraft lo escribió en el log y la Historia lo tradujo
+#   fichero 1  mtime de su .dat en un mundo GUARDADO
+#   activo  0  mtime de su .dat en el mundo puesto ahora — el más manipulable
+_VISTO_PESO = {"activo": 0, "fichero": 1, "log": 2, "panel": 3}
+
+def vistos_apuntar(marcas):
+    """marcas = {uuid: (epoch, fuente)}.
+
+    Se relee de disco DENTRO del candado antes de guardar. Es la lección del
+    feed: un candado no sirve de nada si dentro escribes lo que leíste fuera.
+    """
+    marcas = {u: (float(t), s) for u, (t, s) in (marcas or {}).items()
+              if u and t and float(t) > 0}
+    if not marcas:
+        return 0
+    techo = time.time() + 3600          # nada del futuro: un reloj torcido no manda
+    cambios = 0
+    with _vistos_lock:
+        try:
+            d = json.loads(VISTOS_F.read_text())
+            if not isinstance(d, dict):
+                d = {}
+        except Exception:
+            d = {}
+        for u, (t, src) in marcas.items():
+            if t > techo:
+                continue
+            viejo = d.get(u)
+            if viejo is None:
+                d[u] = {"t": round(t), "src": src}
+                cambios += 1
+                continue
+            tv = float(viejo.get("t") or 0)
+            pn = _VISTO_PESO.get(src, 0)
+            pv = _VISTO_PESO.get(viejo.get("src") or "activo", 0)
+            if pn > pv or (pn == pv and t > tv):
+                d[u] = {"t": round(t), "src": src}
+                cambios += 1
+        if not cambios:
+            return 0
+        tmp = VISTOS_F.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d))
+        os.replace(tmp, VISTOS_F)
+        _vistos_cache["mtime"], _vistos_cache["data"] = VISTOS_F.stat().st_mtime, d
+    return cambios
+
+def vistos_marcar_online(nombres, cuando=None):
+    """A quien está conectado se le ve AHORA. Es la fuente más fiable de todas."""
+    if not nombres:
+        return 0
+    cuando = cuando or time.time()
+    porn = {(n or "").lower(): u for u, n in usercache().items()}
+    return vistos_apuntar({porn[n.lower()]: (cuando, "panel")
+                           for n in nombres if n and n.lower() in porn})
+
+def _vistos_loop():
+    """Apunta cada 30 s a quien esté dentro. Barato: `online_players()` ya está
+    cacheado 4 s y lo pide media docena de sitios más."""
+    time.sleep(12)
+    while True:
+        try:
+            vistos_marcar_online(online_players() or [])
+            _salud("vistos", ok=True)
+        except Exception as ex:
+            _salud("vistos", ok=False, nota=f"{type(ex).__name__}: {ex}")
+        time.sleep(30)
+
 def player_stats():
     names = usercache()
     online = set(online_players() or [])
+    guardado = vistos_leer()
     out = []
     sdir = stats_dir()
     ddir = sdir.parent / "data"
@@ -523,7 +643,14 @@ def player_stats():
         placed = sum(v for k, v in used.items() if k in block_ids)
         name = names.get(uuid, uuid[:8])
         dat = ddir / f"{uuid}.dat"
-        last_seen = dat.stat().st_mtime if dat.exists() else f.stat().st_mtime
+        # El mtime solo manda cuando no hay nada guardado: es lo único que
+        # depende del mundo que esté puesto (ver el bloque de `vistos_leer`).
+        v = guardado.get(uuid) or {}
+        if v.get("t"):
+            last_seen, last_src = float(v["t"]), v.get("src") or "panel"
+        else:
+            last_seen = dat.stat().st_mtime if dat.exists() else f.stat().st_mtime
+            last_src = "fichero"
         out.append({
             "uuid": uuid, "name": name, "online": name in online,
             "play_hours": round(st.get("minecraft:play_time", 0) / 20 / 3600, 1),
@@ -536,6 +663,7 @@ def player_stats():
             "damage_taken": round(st.get("minecraft:damage_taken", 0) / 10, 0),
             "damage_dealt": round(st.get("minecraft:damage_dealt", 0) / 10, 0),
             "last_seen": last_seen,
+            "last_seen_src": last_src,
             "xp_level": xp_level(dat) if dat.exists() else 0,
         })
         if cat:
@@ -2752,6 +2880,20 @@ def _automatismos():
     f = _salud_estado.get("feed", {})
     añadir("feed", "Historia (lee el log cada 20 s)",
            f.get("t"), 300, "" if f.get("ok", True) else f.get("nota", ""))
+    if not f.get("ok", True):
+        salidas[-1]["ok"] = False          # leyó, pero no leyó nada: eso es rojo
+
+    v = _salud_estado.get("vistos", {})
+    añadir("vistos", "Última conexión de cada jugador (cada 30 s)",
+           v.get("t"), 300, "" if v.get("ok", True) else v.get("nota", ""))
+    if not v.get("ok", True):
+        salidas[-1]["ok"] = False
+
+    ms = _salud_estado.get("mascotas", {})
+    añadir("mascotas", "Censo de mascotas (cada 3 min)",
+           ms.get("t"), 900, "" if ms.get("ok", True) else ms.get("nota", ""))
+    if not ms.get("ok", True):
+        salidas[-1]["ok"] = False
 
     if MAPA_CONGELADO.exists():
         # No es que el mapa lleve dormido: está parado a propósito porque
@@ -4772,20 +4914,49 @@ def _añadir(fichero, eventos):
         for e in eventos:
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
+# 🔴 GOTCHA: `feed_scan` tenía TRES salidas silenciosas por `return False`, y el
+# hilo de arriba marcaba la Historia en verde igual. Si faltaba `mensajes.json`
+# o no se podía leer el log, la Historia se congelaba y la tarjeta de Sistema
+# seguía diciendo que todo iba bien. Un automatismo parado tiene que verse.
+_feed_por_que = {"nota": ""}
+
 def feed_scan():
     """Lee lo nuevo de latest.log. Barato: recuerda dónde se quedó."""
     msgs = mensajes()
     if not msgs:
+        _feed_por_que["nota"] = ("falta o no se puede leer data/mensajes.json — "
+                                 "corre scripts/build-mensajes.py en el servidor")
         return False
     log = MC_DIR / "logs/latest.log"
     try:
         st = log.stat()
     except OSError:
+        _feed_por_que["nota"] = "no encuentro %s" % log
         return False
+    _feed_por_que["nota"] = ""
+    # 🔴 El principio del fichero, para saber si es OTRO fichero.
+    #
+    # Al reiniciarse Minecraft, log4j comprime `latest.log` en un `.log.gz`,
+    # borra el original y crea uno nuevo. Detectar eso por el inode funciona
+    # casi siempre... pero el inode que acaba de quedar libre lo puede reusar el
+    # fichero nuevo, y entonces el panel cree que es el mismo de antes, se
+    # coloca en el byte donde se quedó y lee basura o nada. Un feed congelado
+    # justo después de un reinicio y sin un solo error en ninguna parte.
+    #
+    # La primera línea de un log de Minecraft lleva la hora del arranque, así
+    # que dos ficheros distintos no empiezan igual. Comparar 160 bytes cuesta
+    # nada y cierra el agujero del todo.
+    try:
+        with open(log, "rb") as f:
+            cabeza = hashlib.sha1(f.read(160)).hexdigest()[:16]
+    except OSError:
+        cabeza = None
     with _feed_exclusivo():
         estado = _feed_state()
         lat = estado.setdefault("latest", {})
-        nuevo_fichero = (lat.get("inode") != st.st_ino or st.st_size < lat.get("offset", 0))
+        nuevo_fichero = (lat.get("inode") != st.st_ino
+                         or st.st_size < lat.get("offset", 0)
+                         or (lat.get("cabeza") and cabeza and cabeza != lat["cabeza"]))
         if nuevo_fichero:
             # El servidor reinició. Las sesiones que quedaron abiertas no van a
             # recibir nunca su "left the game", así que se cierran en la última
@@ -4805,24 +4976,43 @@ def feed_scan():
                 f.seek(lat.get("offset", 0))
                 trozo = f.read()
                 lat["offset"] = f.tell()
-        except OSError:
+        except OSError as ex:
+            _feed_por_que["nota"] = "no pude leer latest.log: %s" % ex
             return False
         lat["inode"] = st.st_ino
+        lat["cabeza"] = cabeza
         if not trozo.strip():
             _feed_state_save(estado)
             return True
 
+        lineas = []
         if lat.get("ultimo_ts"):
             t = time.localtime(lat["ultimo_ts"])
             dia0 = [t.tm_year, t.tm_mon, t.tm_mday]
             hora_previa = t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec
             lineas, _h, _s = _lineas_con_fecha(trozo, dia0, hora_previa)
-        else:
-            # Primera lectura de este fichero: no se sabe qué día empezó. Se ancla
-            # la ÚLTIMA línea al mtime (que es justo cuando se escribió) y se
-            # cuenta hacia atrás cuántos cambios de día hubo. Si la última línea
-            # es de una hora MAYOR que la del mtime, el fichero cruzó medianoche
-            # y hay que restar un día más.
+        # 🔴 RED DE SEGURIDAD CONTRA LAS FECHAS DEL FUTURO.
+        #
+        # Contar los días mirando si la hora retrocede funciona… hasta que una
+        # línea rara del log trae una hora que no toca (una traza de error, una
+        # librería que escribe con otro formato). Entonces se suma un día de
+        # más, y ese día de más se guarda en `ultimo_ts` y se arrastra a la
+        # siguiente lectura, y a la siguiente. Los eventos acaban fechados en el
+        # futuro; como la Historia se ordena por fecha, se quedan clavados
+        # arriba y TODO lo que pasa después queda enterrado debajo.
+        #
+        # Visto desde fuera es indistinguible de «la Historia no se actualiza»,
+        # que es justo el fallo que costó encontrar. Así que si lo calculado se
+        # va al futuro, no se discute: se vuelve a anclar al mtime del fichero,
+        # que es la hora en que Minecraft escribió la última línea de verdad.
+        if not lineas or lineas[-1][0] > time.time() + 3600:
+            if lineas:
+                _syslog("[feed] fechas en el futuro (%s): vuelvo a anclar al fichero"
+                        % time.strftime("%F %T", time.localtime(lineas[-1][0])))
+            # Se ancla la ÚLTIMA línea al mtime (que es justo cuando se
+            # escribió) y se cuenta hacia atrás cuántos cambios de día hubo. Si
+            # la última línea es de una hora MAYOR que la del mtime, el fichero
+            # cruzó medianoche y hay que restar un día más.
             #
             # No se suman segundos a los timestamps ya calculados: se vuelve a
             # calcular con el día bueno. Sumar 86400 se rompe en los cambios de
@@ -4846,6 +5036,13 @@ def feed_scan():
         _procesar(lineas, msgs, estado, eventos, en_vivo=True)
         _añadir(FEED_F, eventos)
         _feed_state_save(estado)
+    # La hora de una sesión cerrada la escribió Minecraft en el log: es mejor
+    # dato que el mtime de ningún fichero, y sobrevive al cambio de mundo.
+    try:
+        vistos_apuntar({e["u"]: (e.get("fin") or e.get("t"), "log")
+                        for e in eventos if e.get("u")})
+    except Exception:
+        pass
     return True
 
 def feed_relleno():
@@ -4999,6 +5196,17 @@ def _texto_muerte(ev):
     return _rellenar(plant.get("es") or crudo, partes), \
            _rellenar(plant.get("en") or crudo, partes)
 
+def _nombre_bicho(bid):
+    """«wolf» -> («Lobo», «Wolf»). Los nombres salen del jar, como todo lo demás
+    (build-mensajes.py, clave `entity.minecraft.<id>`). Si el fichero es de
+    antes de que esto existiera, se enseña el id y no pasa nada."""
+    if not bid:
+        return None, None
+    b = ((mensajes() or {}).get("bichos") or {}).get(bid)
+    if not b:
+        return None, None
+    return b.get("es") or b.get("en"), b.get("en") or b.get("es")
+
 def _feed_publico(u, eventos):
     out = []
     for ev in eventos:
@@ -5007,10 +5215,14 @@ def _feed_publico(u, eventos):
             e["es"], e["en"] = _texto_muerte(ev)
             for k in ("frase", "args"):
                 e.pop(k, None)
-            if not _puede_ver_lugar(u, e):
-                for k in ("x", "y", "z"):
-                    e.pop(k, None)
-                e["lugar_oculto"] = ev.get("x") is not None
+        elif e.get("k") == "mobmuerto" and e.get("bicho"):
+            e["bicho_es"], e["bicho_en"] = _nombre_bicho(e["bicho"])
+        # Dónde murió una mascota es dónde quedaron sus cosas y las de su dueño:
+        # la misma regla que con las personas.
+        if e.get("k") in ("muerte", "mobmuerto") and not _puede_ver_lugar(u, e):
+            for k in ("x", "y", "z"):
+                e.pop(k, None)
+            e["lugar_oculto"] = ev.get("x") is not None
         out.append(e)
     return out
 
@@ -5037,10 +5249,201 @@ def api_feed():
     return jsonify(eventos=_feed_publico(u, ev), listo=True,
                    relleno=estado.get("relleno"), hay_mas=len(ev) == limite)
 
+# ------------------------------------ rescatar la última conexión de cada uno
+def _vistos_de_los_ficheros():
+    """El mtime del .dat y del .json de stats, de TODOS los mundos.
+
+    Es el peor dato que hay, pero es el único para quien no aparece en ningún
+    log que se conserve. El del mundo PUESTO va aparte (`activo`) y pesa menos
+    que el de un mundo guardado: si el mundo de ahora vino de un zip, todos sus
+    ficheros llevan la hora de la subida y no significan nada."""
+    marcas = {}
+    carpetas = [(MC_DIR / "world", "activo")]
+    try:
+        carpetas += [(d / "mundo", "fichero")
+                     for d in sorted((MC_DIR / "mundos").iterdir()) if d.is_dir()]
+    except OSError:
+        pass
+    for w, fuente in carpetas:
+        for sub, ext in (("players/data", ".dat"), ("players/stats", ".json"),
+                         ("playerdata", ".dat"), ("stats", ".json")):
+            carp = w / sub
+            if not carp.is_dir():
+                continue
+            for p in carp.iterdir():
+                if p.suffix != ext:
+                    continue
+                uuid = p.stem
+                if len(uuid) != 36:
+                    continue
+                try:
+                    t = p.stat().st_mtime
+                except OSError:
+                    continue
+                hay = marcas.get(uuid)
+                # dentro de la misma fuente gana la hora más nueva; entre
+                # fuentes, el desempate lo hace `vistos_apuntar`
+                if hay is None or (_VISTO_PESO[fuente] > _VISTO_PESO[hay[1]]) \
+                        or (hay[1] == fuente and t > hay[0]):
+                    marcas[uuid] = (t, fuente)
+    return marcas
+
+def _vistos_del_feed():
+    """La hora buena: la escribió Minecraft en el log y la Historia ya la tiene
+    traducida a eventos. Para una sesión vale el FIN, no el principio."""
+    marcas, porn = {}, {}
+    for u, n in usercache().items():
+        porn[(n or "").lower()] = u
+    for fichero in (FEEDHIST_F, FEED_F):
+        try:
+            with open(fichero, "r", errors="replace") as f:
+                for linea in f:
+                    linea = linea.strip()
+                    if not linea:
+                        continue
+                    try:
+                        e = json.loads(linea)
+                    except Exception:
+                        continue
+                    u = e.get("u") or porn.get((e.get("p") or "").lower())
+                    if not u:
+                        continue
+                    t = e.get("fin") or e.get("t") or 0
+                    if t > (marcas.get(u, (0, ""))[0]):
+                        marcas[u] = (float(t), "log")
+        except OSError:
+            continue
+    return marcas
+
+def vistos_rescate():
+    """Rellena lo que falte con lo mejor que se pueda demostrar.
+
+    Se puede correr las veces que haga falta: `vistos_apuntar` solo sube. Por
+    eso corre en CADA arranque del panel — cuando la Historia recupera días que
+    se había saltado, la fecha de esas personas se corrige sola."""
+    n = 0
+    try:
+        n += vistos_apuntar(_vistos_de_los_ficheros())
+    except Exception as ex:
+        _syslog(f"[vistos] no pude leer los ficheros de los mundos: {ex}")
+    try:
+        n += vistos_apuntar(_vistos_del_feed())
+    except Exception as ex:
+        _syslog(f"[vistos] no pude leer la Historia: {ex}")
+    if n:
+        _syslog(f"[vistos] {n} fechas de última conexión puestas al día")
+    return n
+
+# ================================================ muertes de mascotas (censo)
+#
+# 🔴 Minecraft NO apunta en ningún sitio que un mob se haya muerto. Lo comprobé
+# en el jar: la lista entera de disparadores de logro tiene 58 entradas y
+# ninguna es «un bicho ha muerto». Las únicas cercanas son `player_killed_entity`
+# y `entity_killed_player`. Por eso el datapack de vigilancia solo puede cazar
+# las muertes que causa un JUGADOR, y una mascota casi nunca muere así: muere de
+# un creeper, de una caída, de lava o ahogada.
+#
+# La única señal que queda es que el bicho deje de estar en los ficheros del
+# mundo. De eso se encarga scripts/mascotas.py, que es donde está explicado cómo
+# se evita dar por muerto a uno que solo se cambió de chunk.
+MASCOTAS_PY = PANEL_DIR / "scripts" / "mascotas.py"
+MASCOTAS_CADA = 180
+_mascotas_mod = {"m": None, "visto": False}
+
+# El censo guarda la dimensión en corto; el feed usa el id largo, como las
+# muertes de jugador, para que el panel las pinte igual.
+_DIM_LARGA = {"overworld": "minecraft:overworld", "nether": "minecraft:the_nether",
+              "end": "minecraft:the_end"}
+
+def mascotas_mod():
+    if _mascotas_mod["m"] is None and not _mascotas_mod["visto"]:
+        _mascotas_mod["visto"] = True
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("mascotas", MASCOTAS_PY)
+            m = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(m)
+            m.MC, m.PANEL = MC_DIR, PANEL_DIR
+            m.ESTADO_F = DATA_DIR / "mascotas.json"
+            _mascotas_mod["m"] = m
+        except Exception as ex:
+            _syslog(f"[mascotas] no pude cargar {MASCOTAS_PY}: {ex}")
+    return _mascotas_mod["m"]
+
+MASCOTAS_VENTANA = 3600     # s para considerar que es la misma muerte
+
+def _ya_contada(victima, desde):
+    """¿Ya lo dijo el datapack de vigilancia?
+
+    Los dos sistemas ven la misma muerte por caminos distintos: si a un bicho
+    con nombre lo mata un jugador, el datapack lo anuncia al instante y el censo
+    lo echa de menos unos minutos después. Sin esto saldría dos veces en la
+    Historia, y la segunda además sin decir quién fue.
+    """
+    if not victima:
+        return False        # sin nombre el datapack no puede haberlo dicho
+    corte = desde - MASCOTAS_VENTANA
+    for e in _leer_cola(FEED_F, 400):
+        if (e.get("k") == "mobmuerto" and not e.get("censo")
+                and (e.get("victima") or "").strip().lower() == victima.strip().lower()
+                and e.get("t", 0) >= corte):
+            return True
+    return False
+
+def _feed_mascotas(muertas):
+    """Mete en la Historia lo que el censo ha echado de menos."""
+    nombres = usercache()
+    eventos = []
+    for m in muertas:
+        if _ya_contada(m.get("n"), m.get("t") or time.time()):
+            continue
+        dueño = m.get("dueño")
+        ev = {"t": m.get("t") or time.time(), "k": "mobmuerto",
+              "p": nombres.get(dueño) if dueño else None, "u": dueño,
+              "victima": m.get("n"), "bicho": m.get("tipo"),
+              "dim": _DIM_LARGA.get(m.get("dim"), m.get("dim")), "censo": True}
+        pos = m.get("pos")
+        if pos and len(pos) == 3:
+            ev["x"], ev["y"], ev["z"] = int(pos[0]), int(pos[1]), int(pos[2])
+            b = _bioma_suave(ev["dim"] or "minecraft:overworld", ev["x"], ev["z"])
+            if b:
+                ev["bioma"] = b
+        eventos.append(ev)
+    if not eventos:
+        return
+    with _feed_exclusivo():
+        _añadir(FEED_F, eventos)
+    _syslog("[mascotas] %d muerte(s): %s" % (
+        len(eventos), ", ".join((e.get("victima") or e.get("bicho") or "?")
+                                for e in eventos)[:200]))
+
+def _mascotas_loop():
+    """Cada 3 minutos. Una pasada normal solo lee los ficheros de región que
+    han cambiado —uno o dos—, así que no cuesta casi nada; el repaso completo
+    solo ocurre cuando de verdad falta alguien."""
+    time.sleep(40)
+    while True:
+        try:
+            m = mascotas_mod()
+            if m is None:
+                _salud("mascotas", ok=False, nota="falta scripts/mascotas.py")
+            else:
+                r = m.pasada(guardar_ya=lambda: rcon_try("save-all flush"))
+                if r.get("muertas"):
+                    _feed_mascotas(r["muertas"])
+                _salud("mascotas", ok=True)
+        except Exception as ex:
+            _salud("mascotas", ok=False, nota=f"{type(ex).__name__}: {ex}")
+        time.sleep(MASCOTAS_CADA)
+
 def _feed_loop():
     """Lee el log cada 20 s aunque no haya nadie mirando el panel: si nadie lo
     lee en caliente, las muertes se quedan sin coordenadas para siempre."""
     time.sleep(8)
+    try:
+        vistos_rescate()
+    except Exception:
+        pass
     try:
         threading.Thread(target=feed_relleno, daemon=True).start()
     except Exception:
@@ -5048,9 +5451,13 @@ def _feed_loop():
     seguidos = 0
     while True:
         try:
-            feed_scan()
+            bien = feed_scan()
             seguidos = 0
-            _salud("feed", ok=True)
+            # Que devuelva False no es una excepción, pero SÍ es que la Historia
+            # no está leyendo nada. Antes esto se marcaba en verde igual.
+            # `_salud` ya deja rastro en system.log cuando el estado CAMBIA, así
+            # que no hace falta escribir una línea cada 20 s para siempre.
+            _salud("feed", ok=bool(bien), nota="" if bien else _feed_por_que["nota"])
         except Exception as ex:
             # Antes esto era un `pass` mudo. Si el feed empezaba a fallar, la
             # Historia se congelaba y no había ni una pista de por qué.
@@ -5061,6 +5468,8 @@ def _feed_loop():
         time.sleep(20)
 
 threading.Thread(target=_feed_loop, daemon=True).start()
+threading.Thread(target=_vistos_loop, daemon=True).start()
+threading.Thread(target=_mascotas_loop, daemon=True).start()
 
 # ==================================== posición, teleport y efectos (solo admin)
 #
