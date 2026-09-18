@@ -1346,6 +1346,10 @@ button,a,.slot,.m2-cap,.tabslot{-webkit-tap-highlight-color:transparent}
       <h3><img class="hico" src="/static/ui/historia.png?v=11" alt=""
            onerror="this.outerHTML='🕰️ '"><span data-i18n="hist_title">Lo que ha pasado en el server</span></h3>
       <div class="note hidden" id="hi-relleno"></div>
+      <!-- Las frases con las que se lee el log se sacan del jar. Si el jar ya es
+           otro, pueden haber cambiado y la Historia se queda muda SIN dar
+           ningún error: es exactamente lo que pasó. Que se vea. -->
+      <div class="m2-nota aviso hidden" id="hi-version-nota"></div>
       <div class="hi-f" style="margin-top:12px" id="hi-filtros"></div>
       <div class="hilist" id="hi-lista"></div>
       <div style="text-align:center; margin-top:14px">
@@ -1753,6 +1757,8 @@ const I18N = {
   hist_played:'jugó {0}', hist_online:'lleva {0} conectado',
   hist_cut:'la sesión se cortó al reiniciar el servidor',
   hist_killed:'mató a', hist_got:'consiguió', hist_hidden:'el sitio solo lo ve quien murió',
+  hist_ver_t:'La Historia puede estar perdiéndose cosas',
+  hist_ver_b:'Las frases con las que se lee el registro del servidor se hicieron para la versión {0}, y Minecraft ya va por la {1}. Si alguna frase cambió, ese tipo de evento deja de aparecer sin dar ningún error.',
   hist_pet_died:'Se murió {0}', hist_pet_of:'mascota de {0}', hist_pet_any:'un animal',
   hist_pet_note:'Minecraft no apunta cómo muere un animal: solo se sabe que ya no está',
   hist_latest:'Lo último en el server', hist_seeall:'Ver toda la historia',
@@ -1807,6 +1813,8 @@ const I18N = {
   hist_played:'played {0}', hist_online:'online for {0}',
   hist_cut:'the session was cut short by a server restart',
   hist_killed:'killed', hist_got:'earned', hist_hidden:'only the player who died can see the spot',
+  hist_ver_t:'The Story may be missing things',
+  hist_ver_b:'The phrases used to read the server log were built for version {0}, and Minecraft is now on {1}. If any phrase changed, that kind of event silently stops showing up.',
   hist_pet_died:'{0} died', hist_pet_of:'{0}’s pet', hist_pet_any:'an animal',
   hist_pet_note:'Minecraft never records how an animal dies — only that it is gone',
   hist_latest:'Latest on the server', hist_seeall:'See the whole history',
@@ -4982,6 +4990,7 @@ async function hiCargar(reinicio){
   if (reinicio) caja.innerHTML='';
   if (r.listo===false){ caja.innerHTML=`<div class="note">${t('hist_nomsg')}</div>`; return; }
 
+  hiNotaVersion(r.frases);
   const rel=$('hi-relleno');
   if (r.relleno && r.relleno.hechos < r.relleno.total){
     rel.classList.remove('hidden');
@@ -4996,6 +5005,18 @@ async function hiCargar(reinicio){
   $('hi-mas').classList.toggle('hidden', HI_FIN || !ev.length);
 }
 function hiMas(){ hiCargar(false); }
+
+/* Las frases con las que se lee el log salen del jar del servidor. Si Minecraft
+   se actualiza y no se vuelven a generar, una frase que haya cambiado deja de
+   casar y ese tipo de evento desaparece de la Historia sin error ninguno. Pasó.
+   Así que si `mensajes.json` se hizo para otra versión, se dice aquí. */
+function hiNotaVersion(f){
+  const n=$('hi-version-nota'); if(!n) return;
+  if (!f || !f.desfase){ n.classList.add('hidden'); return; }
+  n.classList.remove('hidden');
+  n.innerHTML = `<b>${t('hist_ver_t')}</b><br>${t('hist_ver_b', esc(f.frases||'?'), esc(f.jar||'?'))}`
+    + (ME && ME.role==='admin' ? `<br><code>python3 ~/panel/scripts/build-mensajes.py</code>` : '');
+}
 
 async function hiMini(){
   const caja=$('hi-mini'); if(!caja) return;

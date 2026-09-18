@@ -549,8 +549,15 @@ def vistos_leer() -> dict:
 #   panel   3  el panel le vio conectado (lo apunta cada 30 s)
 #   log     2  Minecraft lo escribió en el log y la Historia lo tradujo
 #   fichero 1  mtime de su .dat en un mundo GUARDADO
-#   activo  0  mtime de su .dat en el mundo puesto ahora — el más manipulable
-_VISTO_PESO = {"activo": 0, "fichero": 1, "log": 2, "panel": 3}
+#   activo  1  mtime de su .dat en el mundo puesto ahora
+#
+# `activo` y `fichero` pesan IGUAL y gana el más nuevo. Al principio puse
+# `activo` por debajo, porque el mundo puesto es el que se reescribe al subir un
+# zip… pero eso lo quita ya `_fechas_de_un_mundo` tirando los copiados en
+# bloque, y dejarlo más bajo tenía un efecto feo: a quien de verdad había jugado
+# ayer en el mundo de ahora se le enseñaba una fecha de un mundo guardado, o sea
+# más vieja. Limpiado el copiado, un mtime es un mtime.
+_VISTO_PESO = {"activo": 1, "fichero": 1, "log": 2, "panel": 3}
 
 def vistos_apuntar(marcas):
     """marcas = {uuid: (epoch, fuente)}.
@@ -649,8 +656,11 @@ def player_stats():
         if v.get("t"):
             last_seen, last_src = float(v["t"]), v.get("src") or "panel"
         else:
+            # Sin nada guardado ni en el log: queda el mtime del mundo puesto,
+            # que es lo que había antes. Puede ser la hora de una subida y no de
+            # una partida, así que se marca como aproximado y el panel lo dice.
             last_seen = dat.stat().st_mtime if dat.exists() else f.stat().st_mtime
-            last_src = "fichero"
+            last_src = "activo"
         out.append({
             "uuid": uuid, "name": name, "online": name in online,
             "play_hours": round(st.get("minecraft:play_time", 0) / 20 / 3600, 1),
@@ -2882,6 +2892,14 @@ def _automatismos():
            f.get("t"), 300, "" if f.get("ok", True) else f.get("nota", ""))
     if not f.get("ok", True):
         salidas[-1]["ok"] = False          # leyó, pero no leyó nada: eso es rojo
+    else:
+        d = _frases_desfase()
+        if d["desfase"]:
+            # Lee el log perfectamente y aun así puede no entender nada.
+            salidas[-1]["ok"] = False
+            salidas[-1]["nota"] = (
+                "las frases del juego se hicieron para la %s y el servidor ya va por "
+                "la %s — corre scripts/build-mensajes.py" % (d["frases"], d["jar"]))
 
     v = _salud_estado.get("vistos", {})
     añadir("vistos", "Última conexión de cada jugador (cada 30 s)",
@@ -4767,8 +4785,44 @@ def _dia_de_archivo(nombre):
     return [int(m.group(1)), int(m.group(2)), int(m.group(3))]
 
 # --------------------------------------------------------------- el traductor
+#
+# 🔴 EL FALLO QUE DEJÓ LA HISTORIA MUDA SEIS DÍAS (26.3, septiembre 2026)
+#
+# La 26.3 empezó a escribir en la consola los mensajes de difusión con un
+# prefijo delante:
+#
+#     [00:44:36] [Server thread/INFO]: System chat: JEYtheFlash joined the game
+#     [00:45:21] [Server thread/INFO]: System chat: JEYtheFlash left the game
+#
+# Antes la línea era «JEYtheFlash joined the game» a secas. Las plantillas salen
+# del jar (`build-mensajes.py`) y ahí no aparece ese prefijo por ninguna parte:
+# lo pone el código del servidor al escribir en consola. Resultado: desde la
+# 26.3 no casaba NADA — ni entradas, ni salidas, ni muertes, ni logros. El log
+# se leía perfectamente, las líneas se entendían, el cursor iba al día, y la
+# Historia llevaba seis días sin un solo evento y sin un solo error.
+#
+# No se quita «System chat: » a mano, por si en la siguiente versión se llama de
+# otra forma: se quita CUALQUIER prefijo corto de la forma «unas palabras: »,
+# pero solo si sin él la línea sí casa.
+#
+# ⚠️ El prefijo tiene que llevar AL MENOS UN ESPACIO, y eso no es un detalle
+# estético: un nombre de Minecraft no puede tener espacios. Sin esa condición,
+# si algún día el chat se escribiera «Ana: hola», cualquiera podría escribir
+# «Ana: Beto left the game» y meter un evento falso en la Historia. Es el mismo
+# cuidado que ya tenían las plantillas al limitar el nombre a [A-Za-z0-9_]{1,16}.
+_PREFIJO_DIFUSION = re.compile(r"^[A-Za-z]+(?: [A-Za-z]+){1,3}: ")
+
 def _interpretar(msg, msgs):
     """Una línea del log -> (tipo, jugador, extra) o None."""
+    r = _interpretar_crudo(msg, msgs)
+    if r is not None:
+        return r
+    m = _PREFIJO_DIFUSION.match(msg)
+    if m:
+        return _interpretar_crudo(msg[m.end():], msgs)
+    return None
+
+def _interpretar_crudo(msg, msgs):
     for campo, rx in msgs["_sesion"].items():
         g = rx.match(msg)
         if g:
@@ -5045,6 +5099,17 @@ def feed_scan():
         pass
     return True
 
+# 🔴 Cuando el LECTOR cambia —una frase nueva, un prefijo nuevo—, los logs que ya
+# se dieron por leídos hay que volver a leerlos: si no, los eventos que no se
+# entendían en su día siguen faltando para siempre, y no hay forma de saber que
+# faltan. Subir este número lo hace solo en el siguiente arranque del panel, sin
+# tener que correr `build-mensajes.py --rehacer-feed` (que además borra las
+# coordenadas de las muertes capturadas en vivo, y esas no se recuperan).
+#
+#   1  el lector de siempre
+#   2  2026-09-18: la 26.3 antepone «System chat: » a los mensajes de difusión
+FEED_LECTOR = 2
+
 def feed_relleno():
     """Una sola vez: lee los .log.gz viejos y arma la historia hacia atrás."""
     msgs = mensajes()
@@ -5053,6 +5118,21 @@ def feed_relleno():
     carpeta = MC_DIR / "logs"
     if not carpeta.is_dir():
         return
+    with _feed_exclusivo():
+        estado = _feed_state()
+        if estado.get("lector") != FEED_LECTOR:
+            cuantos = len(estado.get("archivos") or [])
+            estado["archivos"] = []
+            estado["lector"] = FEED_LECTOR
+            _feed_state_save(estado)
+            # El fichero del relleno se rehace entero; el de los eventos en vivo
+            # NO se toca, que es donde están las coordenadas de las muertes.
+            try:
+                FEEDHIST_F.unlink()
+            except OSError:
+                pass
+            _syslog("[feed] el lector cambió (v%d): vuelvo a leer los %d logs "
+                    "guardados" % (FEED_LECTOR, cuantos))
     estado = _feed_state()
     hechos = set(estado.get("archivos", []))
     pend = []
@@ -5134,10 +5214,33 @@ def _leer_cola(fichero, limite):
             pass
     return out
 
+def _sin_repetidos(ev):
+    """El mismo suceso no puede salir dos veces.
+
+    Los dos ficheros pueden solaparse: `feed.jsonl` lo escribe la lectura en
+    caliente y `feed-historico.jsonl` el relleno de los `.log.gz`, y un log que
+    se archivó mientras el panel estaba leyéndolo acaba en los dos. Antes no se
+    notaba porque el relleno solo corría una vez; al rehacerlo cuando cambia el
+    lector, sí.
+
+    La clave lleva TODO lo que distingue un suceso de otro (la hora, el tipo, la
+    persona y su detalle), no solo la hora: dos logros del mismo jugador en el
+    mismo segundo son dos logros de verdad y tienen que salir los dos.
+    """
+    visto, fuera = set(), []
+    for e in ev:
+        k = (e.get("t"), e.get("k"), e.get("p"), e.get("fin"),
+             e.get("titulo"), e.get("clave"), e.get("victima"))
+        if k in visto:
+            continue
+        visto.add(k)
+        fuera.append(e)
+    return fuera
+
 def feed_eventos(limite=200, antes=None, tipos=None):
     """Los eventos más nuevos primero. `antes` = timestamp para paginar."""
     cuantos = limite * 4 + 200        # de sobra para filtrar y paginar
-    ev = _leer_cola(FEED_F, cuantos) + _leer_cola(FEEDHIST_F, cuantos)
+    ev = _sin_repetidos(_leer_cola(FEED_F, cuantos) + _leer_cola(FEEDHIST_F, cuantos))
     # las sesiones que siguen abiertas no están en el fichero: se sintetizan
     estado = _feed_state()
     conectados = set(online_players() or [])
@@ -5207,6 +5310,18 @@ def _nombre_bicho(bid):
         return None, None
     return b.get("es") or b.get("en"), b.get("en") or b.get("es")
 
+# 🔴 Las frases con las que se lee el log salen del jar (build-mensajes.py). Si
+# Minecraft se actualiza y no se vuelven a generar, una frase que haya cambiado
+# deja de casar y ESE TIPO DE EVENTO desaparece de la Historia sin un solo
+# error: el log se lee, las líneas se entienden, y no sale nada. Es el mismo
+# fallo silencioso de siempre, así que se avisa en vez de esperar a que alguien
+# eche de menos sus propias muertes.
+def _frases_desfase():
+    m = mensajes() or {}
+    hechas, jar = m.get("version"), mc_version()
+    return {"frases": hechas, "jar": jar,
+            "desfase": bool(hechas and jar and str(hechas) != str(jar))}
+
 def _feed_publico(u, eventos):
     out = []
     for ev in eventos:
@@ -5247,9 +5362,46 @@ def api_feed():
     ev = feed_eventos(limite, antes, tipos)
     estado = _feed_state()
     return jsonify(eventos=_feed_publico(u, ev), listo=True,
-                   relleno=estado.get("relleno"), hay_mas=len(ev) == limite)
+                   relleno=estado.get("relleno"), frases=_frases_desfase(),
+                   hay_mas=len(ev) == limite)
 
 # ------------------------------------ rescatar la última conexión de cada uno
+# 🔴 Cuántos jugadores tienen que compartir el mismo segundo para que deje de
+# ser una coincidencia. Tres personas no se desconectan el mismo segundo: eso es
+# que a esos ficheros los escribió una copia, no el juego.
+_VISTO_COPIA = 3
+
+def _fechas_de_un_mundo(w: Path):
+    """{uuid: mtime} de los ficheros de jugador de UN mundo, ya limpiado.
+
+    Se quita lo que sea un copiado en bloque. Esto no es una manía: en el
+    servidor de Juan, **57 de los 58 `.dat` del mundo puesto tenían exactamente
+    la misma fecha**, el segundo en que se descomprimió un zip de 618 MB. Con
+    ese dato dentro, «última vez conectado» decía que todo el mundo entró a la
+    vez el día de la subida.
+    """
+    crudo = {}
+    for sub, ext in (("players/data", ".dat"), ("players/stats", ".json"),
+                     ("playerdata", ".dat"), ("stats", ".json")):
+        carp = w / sub
+        if not carp.is_dir():
+            continue
+        for p in carp.iterdir():
+            if p.suffix != ext or len(p.stem) != 36:
+                continue
+            try:
+                t = p.stat().st_mtime
+            except OSError:
+                continue
+            if t > crudo.get(p.stem, 0):
+                crudo[p.stem] = t
+    # Se cuentan JUGADORES por segundo, no ficheros: el .dat y el .json de una
+    # misma persona se escriben a la vez y contarían doble.
+    cuantos = {}
+    for t in crudo.values():
+        cuantos[int(t)] = cuantos.get(int(t), 0) + 1
+    return {u: t for u, t in crudo.items() if cuantos[int(t)] < _VISTO_COPIA}
+
 def _vistos_de_los_ficheros():
     """El mtime del .dat y del .json de stats, de TODOS los mundos.
 
@@ -5265,27 +5417,12 @@ def _vistos_de_los_ficheros():
     except OSError:
         pass
     for w, fuente in carpetas:
-        for sub, ext in (("players/data", ".dat"), ("players/stats", ".json"),
-                         ("playerdata", ".dat"), ("stats", ".json")):
-            carp = w / sub
-            if not carp.is_dir():
-                continue
-            for p in carp.iterdir():
-                if p.suffix != ext:
-                    continue
-                uuid = p.stem
-                if len(uuid) != 36:
-                    continue
-                try:
-                    t = p.stat().st_mtime
-                except OSError:
-                    continue
-                hay = marcas.get(uuid)
-                # dentro de la misma fuente gana la hora más nueva; entre
-                # fuentes, el desempate lo hace `vistos_apuntar`
-                if hay is None or (_VISTO_PESO[fuente] > _VISTO_PESO[hay[1]]) \
-                        or (hay[1] == fuente and t > hay[0]):
-                    marcas[uuid] = (t, fuente)
+        for uuid, t in _fechas_de_un_mundo(w).items():
+            # Ya limpiados los copiados, entre mundos gana simplemente el mtime
+            # más nuevo. La etiqueta se guarda para poder decir en la interfaz
+            # que ese dato es aproximado.
+            if t > marcas.get(uuid, (0, ""))[0]:
+                marcas[uuid] = (t, fuente)
     return marcas
 
 def _vistos_del_feed():
@@ -5444,8 +5581,19 @@ def _feed_loop():
         vistos_rescate()
     except Exception:
         pass
+    def _rellenar_y_recontar():
+        # El rescate de «última conexión» se hace DOS veces a propósito: antes,
+        # con lo que ya hubiera, y otra vez cuando el relleno termina. Si el
+        # relleno acaba de recuperar días de log que antes no se entendían, las
+        # fechas buenas están dentro y sin esta segunda pasada no se verían
+        # hasta el siguiente arranque del panel.
+        feed_relleno()
+        try:
+            vistos_rescate()
+        except Exception:
+            pass
     try:
-        threading.Thread(target=feed_relleno, daemon=True).start()
+        threading.Thread(target=_rellenar_y_recontar, daemon=True).start()
     except Exception:
         pass
     seguidos = 0

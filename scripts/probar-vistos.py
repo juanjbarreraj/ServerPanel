@@ -108,7 +108,8 @@ def main():
     ok(len(p) == 3, "salen los tres jugadores del mundo activo (%d)" % len(p))
     ok(abs(p[ANA]["last_seen"] - (ahora - 300)) < 5,
        "la fecha es la del .dat del mundo puesto")
-    ok(p[ANA]["last_seen_src"] == "fichero", "y se dice de dónde salió: «fichero»")
+    ok(p[ANA]["last_seen_src"] == "activo",
+       "y se dice de dónde salió: del fichero del mundo puesto")
 
     titulo("2 · el rescate: de los mundos guardados y de la Historia")
     # La Historia sabe la hora BUENA de Ana y Beto porque la escribió Minecraft
@@ -159,20 +160,20 @@ def main():
        "y una fuente PEOR no la arrastra hacia atrás")
 
     titulo("5 · manda la fuente, no la hora")
-    # Esto es lo que arregla el fallo: el mtime del mundo puesto es SIEMPRE el
-    # más nuevo cuando el mundo vino de un zip, y es el que menos vale.
+    # Esto es lo que arregla el fallo: el mtime de un fichero es siempre el más
+    # nuevo cuando el mundo vino de un zip, y es el que menos vale.
     DANI = "44444444-4444-4444-4444-444444444444"
     t = ahora - 5 * DIA
     srv.vistos_apuntar({DANI: (t, "activo")})
-    ok(srv.vistos_leer()[DANI]["src"] == "activo", "primero, el mundo puesto")
-    srv.vistos_apuntar({DANI: (t - 10 * DIA, "fichero")})
-    ok(srv.vistos_leer()[DANI]["src"] == "fichero",
-       "un mundo GUARDADO le gana, aunque diga una fecha más vieja")
+    ok(srv.vistos_leer()[DANI]["src"] == "activo", "primero, el mtime de un fichero")
+    srv.vistos_apuntar({DANI: (t + DIA, "fichero")})
+    ok(abs(srv.vistos_leer()[DANI]["t"] - (t + DIA)) < 2,
+       "entre ficheros de dos mundos gana el más nuevo, venga del que venga")
     srv.vistos_apuntar({DANI: (t - 20 * DIA, "log")})
     ok(srv.vistos_leer()[DANI]["src"] == "log", "y el log le gana a los dos")
     srv.vistos_apuntar({DANI: (ahora, "activo")})
     ok(srv.vistos_leer()[DANI]["src"] == "log",
-       "un mtime de HOY del mundo puesto NO pisa al log — ese es el fallo de Juan")
+       "un mtime de HOY NO pisa al log — ese es el fallo de Juan")
     ok(abs(srv.vistos_leer()[DANI]["t"] - (t - 20 * DIA)) < 2, "la hora se queda quieta")
 
     titulo("6 · a quien está dentro se le ve AHORA")
@@ -206,7 +207,84 @@ def main():
     ok(abs(srv.vistos_leer()[ANA]["t"] - (ahora - 3 * DIA + HORA)) < 5,
        "con la fecha buena de Ana otra vez")
 
-    titulo("9 · la Historia parada se ve en rojo, no en verde")
+    titulo("9 · un copiado en bloque no cuenta como «se conectó»")
+    # El caso REAL del servidor de Juan: 57 de los 58 .dat del mundo puesto
+    # tenían exactamente la misma fecha — el segundo en que se descomprimió un
+    # zip de 618 MB. Con ese dato dentro, la última conexión de todos era la
+    # hora de la subida.
+    copia = base / "minecraft/mundos/subido-de-un-zip/mundo"
+    subida = ahora - 2 * DIA
+    for i in range(20):
+        u = "%08d-1111-2222-3333-444444444444" % i
+        escribir(copia / "players/data" / (u + ".dat"), "x", subida)
+        escribir(copia / "players/stats" / (u + ".json"), "{}", subida)
+    # dos que sí jugaron DESPUÉS de la subida: esos son de verdad
+    solo = "99999999-1111-2222-3333-444444444444"
+    escribir(copia / "players/data" / (solo + ".dat"), "x", ahora - 6 * HORA)
+    escribir(copia / "players/stats" / (solo + ".json"), "{}", ahora - 6 * HORA)
+
+    fechas = srv._fechas_de_un_mundo(copia)
+    ok(len(fechas) == 1, "de 21 jugadores solo sobrevive 1 fecha (%d)" % len(fechas))
+    ok(solo in fechas, "la del único que jugó después de la subida")
+    ok(abs(fechas.get(solo, 0) - (ahora - 6 * HORA)) < 5, "con su hora buena")
+    ok(not any(abs(t - subida) < 2 for t in fechas.values()),
+       "y ni una sola con la hora del zip")
+
+    srv.vistos_rescate()
+    g = srv.vistos_leer()
+    ok(not any(abs(float(v["t"]) - subida) < 2 for v in g.values()),
+       "así que nadie acaba «visto» a la hora en que se subió el mundo")
+    # y el .dat y el .json de una misma persona no cuentan como dos jugadores
+    uno = base / "minecraft/mundos/solo-uno/mundo"
+    escribir(uno / "players/data" / (solo + ".dat"), "x", ahora - 9 * DIA)
+    escribir(uno / "players/stats" / (solo + ".json"), "{}", ahora - 9 * DIA)
+    ok(len(srv._fechas_de_un_mundo(uno)) == 1,
+       "un jugador solo, con sus dos ficheros a la misma hora, no es un copiado")
+
+    titulo("10 · el caso REAL del servidor, con sus fechas de verdad")
+    # Reconstruido de lo que salió en el servidor de Juan el 18/09/2026:
+    #   world (puesto)                          57 .dat a 2026-09-16 13:40:05
+    #                                           (el segundo del zip de 618 MB)
+    #                                           + JEY a 2026-09-18 01:56
+    #   mundos/antes-20260912-2020              44 a 2026-08-08 04:09:13 (otro zip)
+    #                                           + 14 fechas individuales de verdad
+    #   mundos/antes-20260916-1340              57 a 2026-09-12 20:19:34 (otro zip)
+    #                                           + 966ac1cc y JEY, reales
+    base2 = Path(tempfile.mkdtemp(prefix="probar-vistos-real-"))
+    mc2 = base2 / "minecraft"
+    JEY = "c5829560-f1a1-4013-b6f6-b57dce771189"
+    N66 = "966ac1cc-aee5-47bb-9c02-2f9faf821074"
+    OTRO = "4664aaff-466e-4619-a18c-3cbb085a466f"
+    ZIP_HOY, ZIP_A, ZIP_B = ahora - 2 * DIA, ahora - 41 * DIA, ahora - 6 * DIA
+    JEY_HOY, N66_REAL, OTRO_REAL = ahora - 14 * HORA, ahora - 3 * DIA, ahora - 13 * DIA
+
+    def poblar(w, masa, sueltos):
+        for i in range(masa):
+            u = "%08d-0000-0000-0000-000000000000" % i
+            escribir(w / "players/data" / (u + ".dat"), "x", sueltos[0])
+        for u, t in sueltos[1].items():
+            escribir(w / "players/data" / (u + ".dat"), "x", t)
+
+    poblar(mc2 / "world", 30, (ZIP_HOY, {JEY: JEY_HOY}))
+    poblar(mc2 / "mundos/antes-a/mundo", 30, (ZIP_A, {OTRO: OTRO_REAL, JEY: ahora - 6 * DIA}))
+    poblar(mc2 / "mundos/antes-b/mundo", 30, (ZIP_B, {N66: N66_REAL, JEY: ahora - 5 * DIA}))
+
+    srv.MC_DIR = mc2
+    try:
+        marcas = srv._vistos_de_los_ficheros()
+    finally:
+        srv.MC_DIR = mc
+    ok(abs(marcas[JEY][0] - JEY_HOY) < 5,
+       "JEY, que jugó HOY en el mundo puesto, se queda con la de hoy")
+    ok(abs(marcas[N66][0] - N66_REAL) < 5, "966ac1cc con la suya de hace 3 días")
+    ok(abs(marcas[OTRO][0] - OTRO_REAL) < 5,
+       "y el que solo sale en el mundo más viejo, con la suya de hace 13")
+    ok(not any(abs(t - z) < 2 for t, _s in marcas.values()
+               for z in (ZIP_HOY, ZIP_A, ZIP_B)),
+       "ninguna de las tres horas de zip sobrevive")
+    ok(len(marcas) == 3, "solo quedan las 3 fechas que significan algo (%d)" % len(marcas))
+
+    titulo("11 · la Historia parada se ve en rojo, no en verde")
     # Tres `return False` mudos hacían que la Historia se congelara con la
     # tarjeta de Sistema en verde. Sin mensajes.json no se puede leer nada.
     ok(srv.feed_scan() is False, "sin mensajes.json, feed_scan dice que NO leyó")

@@ -198,7 +198,32 @@ def main():
     ok(len(eventos()) == antes, "no se relee el log ni se duplica nada")
     ok(srv._feed_state()["latest"].get("cabeza"), "y a partir de ahora ya la lleva")
 
-    titulo("8 · si el contador de días se desmadró, se vuelve a anclar solo")
+    titulo("8 · si las frases son de otra versión, se dice")
+    # El fallo silencioso de la misma familia: el log se lee, las líneas se
+    # entienden, y aun así no sale ni un evento porque las frases del juego
+    # cambiaron y `mensajes.json` sigue siendo el de hace dos versiones.
+    (mc / "versions/26.3").mkdir(parents=True, exist_ok=True)
+    (mc / "versions/26.3/server-26.3.jar").write_text("x")
+    srv._ver_cache.update(t=0, val=None)
+    d = srv._frases_desfase()
+    ok(d["desfase"] is False, "con el jar y las frases en la misma versión, callado")
+    srv._salud("feed", ok=True)
+    ok(next(x for x in srv._automatismos() if x["id"] == "feed")["ok"],
+       "y la fila de Sistema en verde")
+
+    (mc / "versions/26.9").mkdir(parents=True, exist_ok=True)
+    (mc / "versions/26.9/server-26.9.jar").write_text("x")
+    srv._ver_cache.update(t=0, val=None)
+    d = srv._frases_desfase()
+    ok(d["desfase"] is True, "si el servidor pasa a la 26.9, se detecta")
+    ok(d["frases"] == "26.3" and d["jar"] == "26.9",
+       "y se nombran las dos versiones: %s vs %s" % (d["frases"], d["jar"]))
+    fila = next(x for x in srv._automatismos() if x["id"] == "feed")
+    ok(not fila["ok"], "la Historia pasa a ROJO aunque esté leyendo el log")
+    ok("build-mensajes" in (fila["nota"] or ""),
+       "con la orden que lo arregla: %r" % (fila["nota"] or "")[-40:])
+
+    titulo("9 · si el contador de días se desmadró, se vuelve a anclar solo")
     # La fecha de cada línea se cuenta mirando si la hora retrocede. Una línea
     # rara puede sumar un día de más, ese día se guarda en `ultimo_ts` y se
     # arrastra a la siguiente lectura. Los eventos acaban en el FUTURO y, como
@@ -221,6 +246,91 @@ def main():
     top = eventos()[0]
     ok(top["t"] < time.time() + 3600,
        "y lo primero que se ve en la Historia ya no es algo de dentro de 10 días")
+
+
+    titulo("10 · la 26.3 antepone «System chat: » a todo lo que difunde")
+    # Líneas COPIADAS del log del servidor de Juan el 18/09/2026. Esto es lo que
+    # dejó la Historia muda seis días: las plantillas salen del jar y ahí ese
+    # prefijo no aparece, porque lo pone el código al escribir en consola.
+    M = srv.mensajes()
+    def leer(msg):
+        r = srv._interpretar(msg, M)
+        return None if r is None else (r[0], r[1])
+
+    ok(leer("System chat: JEYtheFlash joined the game") == ("entro", "JEYtheFlash"),
+       "una entrada con el prefijo de la 26.3 se entiende")
+    ok(leer("System chat: JEYtheFlash left the game") == ("salio", "JEYtheFlash"),
+       "y una salida")
+    ok(leer("System chat: Ana was slain by Zombie") == ("muerte", "Ana"),
+       "y una muerte")
+    ok((leer("System chat: Ana has made the advancement [Zoología aplicada]") or (None,))[0]
+       == "logro", "y un logro")
+    ok(leer("Ana joined the game") == ("entro", "Ana"),
+       "y las líneas SIN prefijo, de los logs de antes de la 26.3, siguen valiendo")
+
+    # y de punta a punta, leyendo el log como lo lee el panel
+    with open(LOG, "a") as f:
+        f.write(linea("13:00:00", "System chat: Ana joined the game") +
+                linea("13:30:00", "System chat: Ana has made the advancement [Zoología]") +
+                linea("13:45:00", "System chat: Ana left the game"))
+    srv.feed_scan()
+    ev = eventos()
+    ok(any(e["k"] == "logro" and e["p"] == "Ana" for e in ev),
+       "el logro llega a la Historia leyendo el log de verdad")
+    ses = [e for e in ev if e["k"] == "sesion" and e["p"] == "Ana" and e.get("seg") == 2700]
+    ok(ses, "y la sesión sale entera, con sus 45 minutos")
+
+    titulo("11 · pero el prefijo no se puede falsificar")
+    # Si algún día el chat se escribiera «Ana: hola», sin cuidado cualquiera
+    # podría escribir «Ana: Beto left the game». Por eso el prefijo tiene que
+    # llevar un espacio: un nombre de Minecraft no puede tenerlo.
+    ok(leer("Ana: Beto left the game") is None,
+       "un nombre de jugador NO sirve de prefijo")
+    ok(leer("JEYtheFlash: Ana was slain by Zombie") is None, "ni aunque sea una muerte")
+    ok(leer("System chat: <Ana> Beto left the game") is None,
+       "ni el chat de alguien dentro de un mensaje de difusión")
+    ok(leer("System chat: [Ana] Beto left the game") is None,
+       "ni un /say")
+    ok(leer("System chat: [JEYtheFlash: Set own game mode to Survival Mode]") is None,
+       "ni la respuesta a una orden")
+    ok(leer("Player JEYtheFlash standing on air - force-sending blocks below") is None,
+       "y una línea corriente del servidor sigue sin ser nada")
+
+    titulo("12 · al cambiar el lector se vuelven a leer los logs guardados")
+    # Sin esto, los seis días que no se entendían seguirían faltando para
+    # siempre: los .log.gz están marcados como ya procesados.
+    est = srv._feed_state()
+    est["archivos"] = ["2026-09-17-1.log.gz"]
+    est["lector"] = 1
+    srv._feed_state_save(est)
+    srv.FEEDHIST_F.write_text(json.dumps({"t": 1, "k": "sesion", "p": "viejo"}) + "\n")
+    srv.feed_relleno()
+    est = srv._feed_state()
+    ok(est.get("lector") == srv.FEED_LECTOR,
+       "el estado se queda con la versión nueva del lector (%s)" % est.get("lector"))
+    ok("2026-09-17-1.log.gz" not in (est.get("archivos") or [])
+       or gz.name in (est.get("archivos") or []),
+       "la lista de «ya leídos» se vació para volver a leerlos")
+    ok(gz.name in (est.get("archivos") or []),
+       "y el log guardado de verdad se ha procesado")
+    ok(srv.FEED_F.exists(), "el fichero de eventos EN VIVO no se toca")
+
+    titulo("13 · y el mismo suceso no sale dos veces")
+    # Un log que se archiva mientras el panel lo está leyendo acaba en los dos
+    # ficheros. Antes no se notaba porque el relleno solo corría una vez.
+    ev = eventos()
+    claves = [(e.get("t"), e.get("k"), e.get("p"), e.get("fin"), e.get("titulo"),
+               e.get("clave"), e.get("victima")) for e in ev]
+    ok(len(claves) == len(set(claves)),
+       "no hay ni un evento repetido en la Historia (%d de %d)"
+       % (len(set(claves)), len(claves)))
+    # dos logros del mismo jugador en el mismo segundo SÍ son dos
+    dos = srv._sin_repetidos([
+        {"t": 100, "k": "logro", "p": "Ana", "titulo": "Uno"},
+        {"t": 100, "k": "logro", "p": "Ana", "titulo": "Dos"},
+        {"t": 100, "k": "logro", "p": "Ana", "titulo": "Uno"}])
+    ok(len(dos) == 2, "pero dos logros distintos en el mismo segundo se quedan (%d)"
+       % len(dos))
 
 
 if __name__ == "__main__":
