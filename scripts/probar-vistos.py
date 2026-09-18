@@ -71,12 +71,20 @@ def montar(base: Path, ahora):
     escribir(mc / "server.properties", "level-name=world\n")
     escribir(mc / "logs" / "latest.log", "[10:00:00] [Server thread/INFO]: Done (9.9s)!\n")
 
-    # ── el mundo ACTIVO: estrenado hoy. Todos sus ficheros son de hace 5 min,
-    #    que es justo lo que hacía parecer que la fecha se reseteaba.
+    # ── el mundo ACTIVO: subido de un zip hace 5 minutos. Casi todos los
+    #    ficheros llevan ESA hora, que es justo lo que hacía parecer que la
+    #    fecha de todo el mundo se reseteaba al cambiar de mundo.
     hoy = ahora - 300
     for u in (ANA, BETO, CARO):
         escribir(mc / "world/players/stats" / (u + ".json"), '{"stats":{}}', hoy)
         escribir(mc / "world/players/data" / (u + ".dat"), "x", hoy)
+    for i in range(3):                       # más gente en el mismo copiado
+        escribir(mc / "world/players/data" / ("0000000%d-0000-0000-0000-000000000000.dat" % i),
+                 "x", hoy)
+    # Ana sí jugó DESPUÉS de la subida: su fichero tiene hora propia.
+    ana = ahora - 2 * HORA
+    escribir(mc / "world/players/stats" / (ANA + ".json"), '{"stats":{}}', ana)
+    escribir(mc / "world/players/data" / (ANA + ".dat"), "x", ana)
     escribir(mc / "world/level.dat", "x", hoy)
 
     # ── el mundo de ANTES, guardado, con las fechas de verdad
@@ -101,15 +109,19 @@ def main():
     srv = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(srv)               # ← el server.py DE VERDAD
 
-    titulo("1 · sin nada guardado, se sigue mirando el fichero")
-    # Es la compatibilidad hacia atrás: en un panel que nunca ha guardado nada,
-    # el comportamiento tiene que ser exactamente el de siempre.
+    titulo("1 · sin nada guardado: el fichero vale, la hora de la subida NO")
     p = {x["uuid"]: x for x in srv.player_stats()}
     ok(len(p) == 3, "salen los tres jugadores del mundo activo (%d)" % len(p))
-    ok(abs(p[ANA]["last_seen"] - (ahora - 300)) < 5,
-       "la fecha es la del .dat del mundo puesto")
+    ok(abs((p[ANA]["last_seen"] or 0) - (ahora - 2 * HORA)) < 5,
+       "de Ana, que jugó después de la subida, se usa su .dat")
     ok(p[ANA]["last_seen_src"] == "activo",
        "y se dice de dónde salió: del fichero del mundo puesto")
+    # 🔴 Lo que se quejaba Juan: «la última vez de casi todos está mal desde
+    # que cambié de mundo». Era la hora del zip, y no hay forma de distinguirla
+    # de un dato bueno. Más vale decir que no se sabe.
+    ok(p[BETO]["last_seen"] is None,
+       "de Beto NO se enseña nada: su fichero es de la hora del zip")
+    ok(p[CARO]["last_seen"] is None, "ni de Caro")
 
     titulo("2 · el rescate: de los mundos guardados y de la Historia")
     # La Historia sabe la hora BUENA de Ana y Beto porque la escribió Minecraft
@@ -284,7 +296,55 @@ def main():
        "ninguna de las tres horas de zip sobrevive")
     ok(len(marcas) == 3, "solo quedan las 3 fechas que significan algo (%d)" % len(marcas))
 
-    titulo("11 · la Historia parada se ve en rojo, no en verde")
+    titulo("11 · la fecha escondida en usercache.json")
+    # Minecraft pone `expiresOn` a un mes después de la última vez que resolvió
+    # ese perfil, cosa que hace cuando alguien entra. O sea que menos un mes es,
+    # con poco error, su última conexión — y esto vive FUERA de `world/`.
+    # El formato y la constante están sacados del jar
+    # (`CachedUserNameToIdResolver`: campo `expiresOn`, `yyyy-MM-dd HH:mm:ss Z`,
+    # `GAMEPROFILES_EXPIRATION_MONTHS = 1`).
+    from datetime import datetime, timedelta, timezone
+    jugo = datetime.now(timezone.utc) - timedelta(days=9)
+    cad = (jugo.replace(year=jugo.year + (1 if jugo.month == 12 else 0),
+                        month=1 if jugo.month == 12 else jugo.month + 1))
+    escribir(mc / "usercache.json", json.dumps(
+        [{"uuid": u, "name": n,
+          "expiresOn": cad.strftime("%Y-%m-%d %H:%M:%S %z")} for u, n in NOMBRES.items()]
+        + [{"uuid": "no-sirve", "name": "X", "expiresOn": "vete tú a saber"}]))
+    srv._nombres_cache["claves"] = None
+    marcas = srv._vistos_del_usercache()
+    ok(len(marcas) == 3, "salen los tres, y la entrada ilegible se ignora (%d)" % len(marcas))
+    ok(abs(marcas[BETO][0] - jugo.timestamp()) < 120,
+       "la fecha es `expiresOn` menos un mes de calendario")
+    ok(marcas[BETO][1] == "usercache", "y se marca de dónde vino")
+
+    srv.vistos_rescate()
+    p = {x["uuid"]: x for x in srv.player_stats()}
+    ok(p[BETO]["last_seen"] is not None,
+       "Beto, que antes no tenía NADA, ahora tiene una fecha")
+    ok(abs(p[BETO]["last_seen"] - jugo.timestamp()) < 120, "y es la de hace 9 días")
+    ok(p[ANA]["last_seen_src"] in ("log", "panel"),
+       "pero a quien sí sale en el log no le pisa nada: %s" % p[ANA]["last_seen_src"])
+
+    titulo("12 · una marca mala guardada no puede bloquear el arreglo")
+    # Sin esto el arreglo no habría servido de nada en el servidor de Juan: allí
+    # ya había marcas con la hora en que se subió el mundo, escritas por una
+    # versión del panel que aún no sabía detectar los copiados. Y como una marca
+    # nunca baja dentro de la misma fuente, se habrían quedado para siempre.
+    srv.vistos_apuntar({CARO: (ahora - 60, "activo")})     # la hora de un zip
+    ok(abs(srv.vistos_leer()[CARO]["t"] - (ahora - 60)) < 5, "la marca mala está puesta")
+    srv.vistos_rescate()
+    g = srv.vistos_leer()
+    ok(g[CARO]["t"] < ahora - 3 * DIA,
+       "el rescate la tira y vuelve a deducirla: %s"
+       % time.strftime("%F %T", time.localtime(g[CARO]["t"])))
+    # pero lo OBSERVADO no se tira
+    srv.vistos_apuntar({CARO: (ahora - 120, "panel")})
+    srv.vistos_rescate()
+    ok(abs(srv.vistos_leer()[CARO]["t"] - (ahora - 120)) < 5,
+       "haberle visto conectado sí se conserva: eso es un hecho, no una deducción")
+
+    titulo("13 · la Historia parada se ve en rojo, no en verde")
     # Tres `return False` mudos hacían que la Historia se congelara con la
     # tarjeta de Sistema en verde. Sin mensajes.json no se puede leer nada.
     ok(srv.feed_scan() is False, "sin mensajes.json, feed_scan dice que NO leyó")

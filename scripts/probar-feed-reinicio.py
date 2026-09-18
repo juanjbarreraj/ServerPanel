@@ -304,6 +304,16 @@ def main():
     est["lector"] = 1
     srv._feed_state_save(est)
     srv.FEEDHIST_F.write_text(json.dumps({"t": 1, "k": "sesion", "p": "viejo"}) + "\n")
+    cursor_antes = srv._feed_state()["latest"].get("offset")
+    ok(cursor_antes and cursor_antes > 0, "el cursor del log vivo está al final (%s)"
+       % cursor_antes)
+    ok(srv.feed_relector() is True, "se nota que el lector cambió")
+    # 🔴 Lo que faltaba en la v2: rebobinar el fichero VIVO. Su cursor estaba al
+    # final tras haberlo recorrido sin entender nada, así que lo de después del
+    # último arranque del servidor no se volvía a leer nunca.
+    ok(not srv._feed_state()["latest"].get("offset"),
+       "y latest.log vuelve al principio, no solo los .log.gz")
+    ok(srv.feed_relector() is False, "y no se repite en el siguiente arranque")
     srv.feed_relleno()
     est = srv._feed_state()
     ok(est.get("lector") == srv.FEED_LECTOR,
@@ -315,7 +325,33 @@ def main():
        "y el log guardado de verdad se ha procesado")
     ok(srv.FEED_F.exists(), "el fichero de eventos EN VIVO no se toca")
 
-    titulo("13 · y el mismo suceso no sale dos veces")
+    titulo("13 · el caso de Juan: «ayer jugué y no aparece ni mi conexión»")
+    # Reproducción exacta del hueco que dejó la v2: el lector roto se había
+    # comido latest.log ENTERO sin entender nada, así que su cursor estaba al
+    # final. Arreglar el lector y releer solo los .log.gz no devuelve nada de lo
+    # que pasó desde el último arranque del servidor.
+    LOG.write_text(linea("09:00:01", "Starting minecraft server version 26.3") +
+                   linea("09:02:00", "System chat: Nacho joined the game") +
+                   linea("09:20:00", "System chat: Nacho was slain by Creeper") +
+                   linea("09:40:00", "System chat: Nacho left the game"))
+    srv.FEED_F.unlink(missing_ok=True)
+    srv.FEEDHIST_F.unlink(missing_ok=True)
+    srv._feed_state_save({"latest": {"inode": LOG.stat().st_ino,
+                                     "offset": LOG.stat().st_size,
+                                     "ultimo_ts": time.time()},
+                          "archivos": [], "abiertas": {}, "lector": 2})
+    srv.feed_scan()
+    ok(not [e for e in eventos() if e.get("p") == "Nacho"],
+       "de partida, lo de Nacho no está: el cursor ya se había pasado el log")
+    srv.feed_relector()
+    srv.feed_scan()
+    ev = [e for e in eventos() if e.get("p") == "Nacho"]
+    ok(any(e["k"] == "sesion" for e in ev), "tras rebobinar, su conexión aparece")
+    ok(any(e["k"] == "muerte" for e in ev), "y su muerte también")
+    ses = [e for e in ev if e["k"] == "sesion"]
+    ok(ses and ses[0].get("seg") == 2280, "con la duración buena (38 min)")
+
+    titulo("14 · y el mismo suceso no sale dos veces")
     # Un log que se archiva mientras el panel lo está leyendo acaba en los dos
     # ficheros. Antes no se notaba porque el relleno solo corría una vez.
     ev = eventos()

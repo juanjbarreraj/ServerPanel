@@ -550,6 +550,7 @@ def vistos_leer() -> dict:
 #   log     2  Minecraft lo escribió en el log y la Historia lo tradujo
 #   fichero 1  mtime de su .dat en un mundo GUARDADO
 #   activo  1  mtime de su .dat en el mundo puesto ahora
+#   usercache 1  `expiresOn` de usercache.json menos un mes (ver más abajo)
 #
 # `activo` y `fichero` pesan IGUAL y gana el más nuevo. Al principio puse
 # `activo` por debajo, porque el mundo puesto es el que se reescribe al subir un
@@ -557,7 +558,7 @@ def vistos_leer() -> dict:
 # bloque, y dejarlo más bajo tenía un efecto feo: a quien de verdad había jugado
 # ayer en el mundo de ahora se le enseñaba una fecha de un mundo guardado, o sea
 # más vieja. Limpiado el copiado, un mtime es un mtime.
-_VISTO_PESO = {"activo": 1, "fichero": 1, "log": 2, "panel": 3}
+_VISTO_PESO = {"activo": 1, "fichero": 1, "usercache": 1, "log": 2, "panel": 3}
 
 def vistos_apuntar(marcas):
     """marcas = {uuid: (epoch, fuente)}.
@@ -625,6 +626,12 @@ def player_stats():
     names = usercache()
     online = set(online_players() or [])
     guardado = vistos_leer()
+    # Las fechas del mundo puesto, ya sin los copiados en bloque (ver
+    # `_fechas_de_un_mundo`). Solo se usan como último recurso.
+    try:
+        limpias = _fechas_de_un_mundo(MC_DIR / "world")
+    except Exception:
+        limpias = {}
     out = []
     sdir = stats_dir()
     ddir = sdir.parent / "data"
@@ -656,11 +663,18 @@ def player_stats():
         if v.get("t"):
             last_seen, last_src = float(v["t"]), v.get("src") or "panel"
         else:
-            # Sin nada guardado ni en el log: queda el mtime del mundo puesto,
-            # que es lo que había antes. Puede ser la hora de una subida y no de
-            # una partida, así que se marca como aproximado y el panel lo dice.
-            last_seen = dat.stat().st_mtime if dat.exists() else f.stat().st_mtime
-            last_src = "activo"
+            # 🔴 Sin nada guardado ni en el log queda el mtime del mundo puesto,
+            # que es lo que se enseñaba antes. Pero si ese mtime es parte de un
+            # copiado en bloque —lo que deja subir un mundo en un zip— NO se
+            # enseña: se dice que no se sabe.
+            #
+            # Enseñar «hace 3 días» cuando lo que pasó hace 3 días es que Juan
+            # subió un mundo de 618 MB es peor que no enseñar nada, porque no
+            # hay forma de distinguirlo de un dato bueno. Y era exactamente la
+            # queja: «la última vez de casi todos está mal desde que cambié de
+            # mundo».
+            last_seen = limpias.get(uuid)
+            last_src = "activo" if last_seen else None
         out.append({
             "uuid": uuid, "name": name, "online": name in online,
             "play_hours": round(st.get("minecraft:play_time", 0) / 20 / 3600, 1),
@@ -5113,7 +5127,45 @@ def feed_scan():
 #
 #   1  el lector de siempre
 #   2  2026-09-18: la 26.3 antepone «System chat: » a los mensajes de difusión
-FEED_LECTOR = 2
+#   1  el lector de siempre
+#   2  2026-09-18: la 26.3 antepone «System chat: » a los mensajes de difusión
+#   3  2026-09-19: el v2 solo rehacía los .log.gz; faltaba rebobinar latest.log
+FEED_LECTOR = 3
+
+def feed_relector():
+    """Si el lector cambió, hay que volver a leerlo TODO. Devuelve si lo hizo.
+
+    🔴 La v2 de esto solo vaciaba la lista de `.log.gz` ya procesados, y se dejó
+    fuera lo más importante: **el cursor de `latest.log`**. Ese cursor estaba al
+    final del fichero —lo había recorrido entero sin entender nada—, así que
+    todo lo que hubiera pasado desde el último arranque del servidor no se
+    volvía a leer jamás. Juan lo vio enseguida: «ayer jugué y no aparece ni mi
+    conexión». Rebobinar el fichero vivo es justo lo que faltaba.
+
+    Se corre ANTES que nada, no dentro del relleno, para que el primer
+    `feed_scan` ya empiece desde el principio.
+    """
+    with _feed_exclusivo():
+        estado = _feed_state()
+        if estado.get("lector") == FEED_LECTOR:
+            return False
+        cuantos = len(estado.get("archivos") or [])
+        estado["archivos"] = []      # los .log.gz se vuelven a leer
+        estado["latest"] = {}        # y latest.log vuelve al byte 0
+        estado["abiertas"] = {}      # las sesiones se rearman al releer
+        estado["lector"] = FEED_LECTOR
+        _feed_state_save(estado)
+        # El fichero del relleno se rehace entero; el de los eventos en vivo NO
+        # se toca, que es donde están las coordenadas de las muertes. Que algún
+        # suceso quede en los dos ficheros no importa: `_sin_repetidos` lo
+        # resuelve al enseñarlo.
+        try:
+            FEEDHIST_F.unlink()
+        except OSError:
+            pass
+    _syslog("[feed] el lector cambió (v%d): releo los %d logs guardados y "
+            "rebobino latest.log" % (FEED_LECTOR, cuantos))
+    return True
 
 def feed_relleno():
     """Una sola vez: lee los .log.gz viejos y arma la historia hacia atrás."""
@@ -5123,21 +5175,6 @@ def feed_relleno():
     carpeta = MC_DIR / "logs"
     if not carpeta.is_dir():
         return
-    with _feed_exclusivo():
-        estado = _feed_state()
-        if estado.get("lector") != FEED_LECTOR:
-            cuantos = len(estado.get("archivos") or [])
-            estado["archivos"] = []
-            estado["lector"] = FEED_LECTOR
-            _feed_state_save(estado)
-            # El fichero del relleno se rehace entero; el de los eventos en vivo
-            # NO se toca, que es donde están las coordenadas de las muertes.
-            try:
-                FEEDHIST_F.unlink()
-            except OSError:
-                pass
-            _syslog("[feed] el lector cambió (v%d): vuelvo a leer los %d logs "
-                    "guardados" % (FEED_LECTOR, cuantos))
     estado = _feed_state()
     hechos = set(estado.get("archivos", []))
     pend = []
@@ -5430,6 +5467,53 @@ def _vistos_de_los_ficheros():
                 marcas[uuid] = (t, fuente)
     return marcas
 
+def _un_mes_antes(dt):
+    """Un mes de calendario hacia atrás, como lo cuenta Java."""
+    a, m = (dt.year, dt.month - 1) if dt.month > 1 else (dt.year - 1, 12)
+    bisiesto = a % 4 == 0 and (a % 100 != 0 or a % 400 == 0)
+    dias = (31, 29 if bisiesto else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)[m - 1]
+    return dt.replace(year=a, month=m, day=min(dt.day, dias))
+
+def _vistos_del_usercache():
+    """La fecha escondida en `usercache.json`.
+
+    Minecraft apunta en cada entrada un `expiresOn`, y lo pone a **un mes
+    después** de la última vez que resolvió ese perfil — cosa que hace cuando
+    alguien entra. O sea que `expiresOn` menos un mes es, con muy poco error, la
+    última vez que esa persona se conectó. Y esto vive FUERA de `world/`, así
+    que sobrevive a cambiar de mundo y a subir un zip.
+
+    No me lo he inventado: está sacado del jar del servidor
+    (`CachedUserNameToIdResolver`), que trae el nombre del campo, el formato de
+    la fecha —`yyyy-MM-dd HH:mm:ss Z`— y la constante
+    `GAMEPROFILES_EXPIRATION_MONTHS = 1`.
+
+    Ojo con lo que NO es: el perfil también se resuelve al hacer `whitelist
+    add`, así que puede quedar un poco por delante de la última partida. Y las
+    entradas caducan al mes: de quien lleve más sin jugar, no hay nada. Por eso
+    pesa lo mismo que un mtime y menos que el log.
+    """
+    from datetime import datetime
+    marcas = {}
+    try:
+        entradas = json.loads((MC_DIR / "usercache.json").read_text())
+    except Exception:
+        return marcas
+    if not isinstance(entradas, list):
+        return marcas
+    for e in entradas:
+        u, cad = (e or {}).get("uuid"), (e or {}).get("expiresOn")
+        if not u or not cad:
+            continue
+        for formato in ("%Y-%m-%d %H:%M:%S %z", "%b %d, %Y %I:%M:%S %p"):
+            try:
+                dt = datetime.strptime(cad, formato)
+            except ValueError:
+                continue
+            marcas[u] = (_un_mes_antes(dt).timestamp(), "usercache")
+            break
+    return marcas
+
 def _vistos_del_feed():
     """La hora buena: la escribió Minecraft en el log y la Historia ya la tiene
     traducida a eventos. Para una sesión vale el FIN, no el principio."""
@@ -5457,17 +5541,55 @@ def _vistos_del_feed():
             continue
     return marcas
 
+def _vistos_olvidar_derivados():
+    """Tira las marcas SACADAS DE FICHEROS y deja solo lo que se observó.
+
+    🔴 Esto no es limpieza: es lo que hace que un arreglo llegue a servir. Una
+    marca deducida de un mtime se guardaba y, como `vistos_apuntar` nunca baja
+    una fecha dentro de la misma fuente, **una marca mala se quedaba para
+    siempre bloqueando al dato bueno**. En el servidor de Juan había marcas con
+    la hora en que se subió un mundo, escritas antes de que el panel supiera
+    detectar los copiados en bloque; sin esto, el arreglo no habría cambiado
+    nada de lo que él veía.
+
+    Lo deducido se recalcula entero en cada arranque —es barato y siempre sale
+    igual—. Lo observado (verle conectado, o una hora que escribió Minecraft en
+    el log) es un hecho y se conserva.
+    """
+    with _vistos_lock:
+        try:
+            d = json.loads(VISTOS_F.read_text())
+            if not isinstance(d, dict):
+                return
+        except Exception:
+            return
+        queda = {u: m for u, m in d.items()
+                 if isinstance(m, dict) and m.get("src") in ("panel", "log")}
+        if len(queda) == len(d):
+            return
+        tmp = VISTOS_F.with_suffix(".tmp")
+        tmp.write_text(json.dumps(queda))
+        os.replace(tmp, VISTOS_F)
+        _vistos_cache["mtime"], _vistos_cache["data"] = VISTOS_F.stat().st_mtime, queda
+        _syslog("[vistos] %d fechas deducidas de ficheros se recalculan"
+                % (len(d) - len(queda)))
+
 def vistos_rescate():
     """Rellena lo que falte con lo mejor que se pueda demostrar.
 
     Se puede correr las veces que haga falta: `vistos_apuntar` solo sube. Por
     eso corre en CADA arranque del panel — cuando la Historia recupera días que
     se había saltado, la fecha de esas personas se corrige sola."""
+    _vistos_olvidar_derivados()
     n = 0
     try:
         n += vistos_apuntar(_vistos_de_los_ficheros())
     except Exception as ex:
         _syslog(f"[vistos] no pude leer los ficheros de los mundos: {ex}")
+    try:
+        n += vistos_apuntar(_vistos_del_usercache())
+    except Exception as ex:
+        _syslog(f"[vistos] no pude leer usercache.json: {ex}")
     try:
         n += vistos_apuntar(_vistos_del_feed())
     except Exception as ex:
@@ -5582,6 +5704,11 @@ def _feed_loop():
     """Lee el log cada 20 s aunque no haya nadie mirando el panel: si nadie lo
     lee en caliente, las muertes se quedan sin coordenadas para siempre."""
     time.sleep(8)
+    # Lo primero de todo: si el lector cambió, rebobinar antes de leer nada.
+    try:
+        feed_relector()
+    except Exception as ex:
+        _syslog(f"[feed] no pude rebobinar: {ex}")
     try:
         vistos_rescate()
     except Exception:

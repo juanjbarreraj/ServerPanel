@@ -1774,6 +1774,8 @@ const I18N = {
   th_player:'Jugador', th_hours:'Horas', th_deaths:'Muertes', th_mobs:'Mobs', th_pvp:'PvP',
   th_km:'Km caminados', th_seen:'Última vez', online_tag:'(en línea)',
   seen_panel:'El panel le vio conectado', seen_log:'Del registro del servidor',
+  seen_usercache:'Aproximado: sacado de la caché de perfiles del servidor',
+  seen_nada:'No se sabe. El fichero de esta persona se reescribió al subir el mundo, y no jugó en ningún día que quede en el registro',
   seen_fichero:'Aproximado: fecha de su fichero en un mundo guardado',
   seen_activo:'Aproximado: fecha de su fichero en el mundo de ahora',
   now:'ahora mismo', min_ago:'hace {0} min', h_ago:'hace {0} h', d_ago:'hace {0} días',
@@ -1830,6 +1832,8 @@ const I18N = {
   th_player:'Player', th_hours:'Hours', th_deaths:'Deaths', th_mobs:'Mobs', th_pvp:'PvP',
   th_km:'Km walked', th_seen:'Last seen', online_tag:'(online)',
   seen_panel:'The panel saw them online', seen_log:'From the server log',
+  seen_usercache:'Approximate: taken from the server profile cache',
+  seen_nada:'Unknown. Their file was rewritten when the world was uploaded, and they did not play on any day still kept in the log',
   seen_fichero:'Approximate: the date of their file in a saved world',
   seen_activo:'Approximate: the date of their file in the current world',
   now:'just now', min_ago:'{0} min ago', h_ago:'{0} h ago', d_ago:'{0} days ago',
@@ -2255,7 +2259,11 @@ function psortStat(p){
 // fichero del mundo, y eso lo mueve cualquier cosa (subir un mundo, restaurar
 // una copia). Que se vea al pasar el ratón en vez de dar todas por igual.
 function vistoEn(p){
-  const k = {panel:'seen_panel', log:'seen_log',
+  // Sin dato de fiar no se enseña una fecha: se dice que no se sabe. La que
+  // había era la hora en que se subió el mundo, y eso no lo distingue nadie de
+  // una partida de verdad.
+  if (!p.last_seen) return `<span title="${t('seen_nada')}">—</span>`;
+  const k = {panel:'seen_panel', log:'seen_log', usercache:'seen_usercache',
              fichero:'seen_fichero', activo:'seen_activo'}[p.last_seen_src];
   const txt = ago(p.last_seen);
   return k ? `<span title="${t(k)}">${txt}${p.last_seen_src==='panel'||p.last_seen_src==='log'?'':'*'}</span>`
