@@ -68,7 +68,7 @@ USO (en el servidor)
 
 Después, una sola vez: `reload` en la consola. Nunca más.
 """
-import glob, json, os, re, shutil, sys, zipfile
+import glob, json, os, re, shutil, struct, sys, zipfile
 from pathlib import Path
 
 AQUI = Path(__file__).resolve().parent
@@ -125,6 +125,74 @@ def jar_del_servidor():
     raise SystemExit("No encontré un jar con logros dentro. Busqué en %s" % (MC / "versions"))
 
 
+def cadenas_de_clase(datos):
+    """Los textos del pool de constantes de un .class, en orden y sin librerías.
+
+    Hace falta para preguntarle al jar QUÉ sub-predicados de entidad existen.
+    Eso no está en ningún JSON de vanilla —vanilla nunca filtra por etiqueta—,
+    solo en el código que los registra.
+    """
+    if datos[:4] != b"\xca\xfe\xba\xbe":
+        return []
+    n = struct.unpack_from(">H", datos, 8)[0]
+    i, fuera, k = 10, [], 1
+    while k < n:
+        etiqueta = datos[i]; i += 1
+        if etiqueta == 1:
+            largo = struct.unpack_from(">H", datos, i)[0]; i += 2
+            fuera.append(datos[i:i + largo].decode("utf-8", "replace")); i += largo
+        elif etiqueta in (7, 8, 16, 19, 20):  i += 2
+        elif etiqueta == 15:                  i += 3
+        elif etiqueta in (5, 6):              i += 8; k += 1   # long/double
+        else:                                 i += 4
+        k += 1
+    return fuera
+
+
+def predicado_de_etiquetas(z, nombres):
+    """Cómo se pide «lleva esta etiqueta» en ESTA versión.
+
+    🔴 Aquí es donde se tumbó el servidor el 18/09/2026. Yo escribí de memoria
+
+        {"nbt": "{Tags:[\\"cf_wolf\\"]}"}
+
+    y el arranque murió con `No key type in MapLike[{"nbt":...}]`. En esta
+    versión un predicado de entidad es un MAPA de `<id registrado>: <valor>`
+    —se ve en el propio vanilla: `{"minecraft:entity_type": "minecraft:blaze"}`—
+    y `nbt` a secas no es uno de esos ids.
+
+    Lo que sí hay, y es mejor, es `entity_tags`: un predicado dedicado a las
+    etiquetas de scoreboard, con `any_of` / `all_of` / `none_of`. Compara
+    conjuntos en vez de serializar el NBT entero del bicho en cada muerte, así
+    que además de correcto es más barato.
+
+    Devuelve una función etiqueta -> predicado, o None si no lo encuentra.
+    """
+    clases = [n for n in nombres
+              if n.endswith(".class")
+              and ("predicates/entity" in n or "critereon" in n)]
+    for n in clases:
+        if not n.endswith("EntityTagPredicate.class"):
+            continue
+        cad = cadenas_de_clase(z.read(n))
+        # El nombre del campo EN EL JSON: `any_of`. Ojo, que en el pool también
+        # está `anyOf`, que es el nombre del campo del record en Java y aparece
+        # ANTES. Coger el primero que casara escribía `anyOf` en el datapack y
+        # el logro no habría cargado — el mismo tipo de error que todo esto.
+        # Se prefiere el de guion bajo, que es el que usan los códecs.
+        claves = [c for c in cad if re.fullmatch(r"an[yY]_?[oO]f", c)]
+        clave = next((c for c in claves if "_" in c), claves[0] if claves else "any_of")
+        # y el id con el que está registrado, que sale de la clase que registra
+        for m in clases:
+            if not m.endswith("EntitySubPredicates.class"):
+                continue
+            ids = cadenas_de_clase(z.read(m))
+            if "entity_tags" in ids and "entity_type" in ids:
+                return (lambda et, _c=clave:
+                        {"minecraft:entity_tags": {_c: [et]}}), "entity_tags"
+    return None, None
+
+
 def aprender_del_jar(z):
     """Saca del jar TODO lo que cambia entre versiones. Nada de memoria."""
     nombres = z.namelist()
@@ -158,9 +226,22 @@ def aprender_del_jar(z):
     except Exception:
         pass
 
-    # 3) un logro REAL que use player_killed_entity, para copiar su esquema
+    # 3) un logro REAL que use player_killed_entity **y que filtre a la
+    #    víctima**, para copiar su esquema.
+    #
+    # 🔴 Antes valía cualquiera con ese disparador, y ahí estaba el fallo que
+    # tumbó el servidor: el primero que salía era uno que filtra por el ARMA
+    # (`killing_blow`) y no tiene `entity`. Al no haber `entity` de molde, se
+    # inventaba la forma —un diccionario suelto— y encima se quedaba con el
+    # `killing_blow` del molde, o sea que el logro solo habría saltado matando
+    # con una carga de viento de breeze. Dos fallos de un solo descuido.
+    #
+    # La forma buena se copia entera de vanilla:
+    #   "entity": [{"condition": "minecraft:entity_properties",
+    #               "entity": "this",
+    #               "predicate": {"minecraft:entity_type": "minecraft:blaze"}}]
     molde = None
-    for n in nombres:
+    for n in sorted(nombres):
         if not n.startswith("data/minecraft/%s/" % carpeta) or not n.endswith(".json"):
             continue
         try:
@@ -168,11 +249,34 @@ def aprender_del_jar(z):
         except Exception:
             continue
         for crit in (d.get("criteria") or {}).values():
-            if crit.get("trigger", "").endswith("player_killed_entity"):
-                molde = (n, d, crit)
-                break
+            if not crit.get("trigger", "").endswith("player_killed_entity"):
+                continue
+            ent = (crit.get("conditions") or {}).get("entity")
+            if ent in (None, [], {}):          # sin víctima no sirve de molde
+                continue
+            molde = (n, d, crit)
+            break
         if molde:
             break
+
+    # 3b) una RAÍZ de vanilla: de ahí salen el `background` (sin él, esta
+    #     versión se niega a arrancar: «Visible advancement roots must have
+    #     background») y unos criterios que seguro existen en este jar.
+    raiz = None
+    for n in sorted(nombres):
+        if not re.match(r"data/minecraft/%s/[a-z_]+/root\.json$" % carpeta, n):
+            continue
+        try:
+            d = json.loads(z.read(n))
+        except Exception:
+            continue
+        fondo = (d.get("display") or {}).get("background")
+        if fondo and d.get("criteria"):
+            raiz = {"de": n, "background": fondo, "criteria": d["criteria"]}
+            break
+
+    # 3c) cómo se pide «lleva esta etiqueta» (ver predicado_de_etiquetas)
+    hacer_pred, nombre_pred = predicado_de_etiquetas(z, nombres)
 
     # 4) un logro con display, para saber cómo se llaman sus campos
     display = None
@@ -188,7 +292,8 @@ def aprender_del_jar(z):
             break
 
     return {"carpeta": carpeta, "pack_format": pack_format,
-            "molde": molde, "display": display}
+            "molde": molde, "display": display, "raiz": raiz,
+            "hacer_pred": hacer_pred, "nombre_pred": nombre_pred}
 
 
 def clave_anuncio(display):
@@ -209,22 +314,23 @@ def icono_como(display):
 
 
 # --------------------------------------------------- condición de la víctima
-def condicion_victima(molde_crit, etiqueta):
-    """Copia la forma EXACTA de las condiciones del logro real y le cambia el
+def condicion_victima(molde_crit, etiqueta, hacer_pred):
+    """Copia la forma EXACTA del `entity` del logro real y le cambia el
     predicado por «lleva esta etiqueta».
 
-    En unas versiones `entity` es un objeto-predicado y en otras una lista de
-    condiciones. Se detecta mirando el logro de verdad, no adivinando.
+    🔴 SOLO `entity`. Antes se copiaba el bloque `conditions` entero y se le
+    metía `entity` dentro; como el molde traía su propio `killing_blow`, el
+    logro heredaba «y además hay que matarlo con tal arma». Del molde se coge
+    la FORMA, no las condiciones.
     """
-    cond = json.loads(json.dumps(molde_crit.get("conditions") or {}))   # copia
-    pred = {"nbt": '{Tags:["%s"]}' % etiqueta}
-    ent = cond.get("entity")
+    ent = (molde_crit.get("conditions") or {}).get("entity")
+    pred = hacer_pred(etiqueta)
     if isinstance(ent, list):
-        cond["entity"] = [{"condition": "minecraft:entity_properties",
-                           "entity": "this", "predicate": pred}]
-    else:
-        cond["entity"] = pred
-    return cond
+        # la forma de vanilla en esta versión: lista de condiciones de botín
+        plantilla = json.loads(json.dumps(ent[0]))
+        plantilla["predicate"] = pred
+        return {"entity": [plantilla]}
+    return {"entity": pred}
 
 
 # ------------------------------------------------------------------ nombres
@@ -278,8 +384,9 @@ def main():
         print("  puede negarse a cargar el datapack sin decir nada. Me paro.")
         return 1
     if not info["molde"]:
-        print("\n✗ No encontré ningún logro que use player_killed_entity en el jar.")
-        print("  Sin un molde real no me invento el formato. Párate aquí y dímelo.")
+        print("\n✗ No encontré ningún logro que use player_killed_entity CON un")
+        print("  filtro de víctima. Sin un molde real no me invento el formato.")
+        print("  Párate aquí y dímelo.")
         return 1
     nom_molde, _d, crit = info["molde"]
     print("  molde de 'matar' ....... %s" % nom_molde.split("/")[-1])
@@ -295,6 +402,25 @@ def main():
     print("  molde de 'display' ..... %s" % nom_disp.split("/")[-1])
     print("  campo del anuncio ...... %s" % k_anuncio)
     print("  campo del icono ........ %s" % k_icono)
+
+    # 🔴 Los dos que faltaban el día que se cayó el servidor. Se paran en seco,
+    # como el pack_format: un datapack a medias no es «casi bueno», es un
+    # servidor que no arranca.
+    if not info["hacer_pred"]:
+        print("\n✗ Este jar no registra `entity_tags`, así que no sé pedir")
+        print("  «lleva esta etiqueta» sin inventármelo — y inventármelo fue")
+        print("  exactamente lo que tumbó el servidor el 18/09/2026. Me paro.")
+        return 1
+    print("  filtro por etiqueta .... minecraft:%s" % info["nombre_pred"])
+    if not info["raiz"]:
+        print("\n✗ No encontré ninguna raíz de vanilla con `background`. Esta")
+        print("  versión no arranca con una raíz visible sin él. Me paro.")
+        return 1
+    print("  fondo de la raíz ....... %s  (de %s)"
+          % (info["raiz"]["background"], info["raiz"]["de"].split("/")[-2]))
+    print("  ejemplo de condición ... %s"
+          % json.dumps(condicion_victima(crit, "cf_wolf", info["hacer_pred"]),
+                       ensure_ascii=False)[:150])
 
     nombres, del_jar = nombres_de_especie()
     grupos = ESPECIES + [OTRO]
@@ -328,14 +454,40 @@ def main():
         {"pack": {"description": "Vigilancia de animales (panel Califree)",
                   "pack_format": info["pack_format"]}}, indent=2))
 
+    # ── la raíz ──────────────────────────────────────────────────────────
+    # Los ocho logros llevan `display` porque el anuncio en el chat vive ahí.
+    # Un logro con `display` y sin `parent` es una RAÍZ, y esta versión exige
+    # `background` en las raíces visibles — era el segundo error del arranque.
+    #
+    # Se podrían poner ocho fondos y tener ocho raíces, pero entonces el menú
+    # de logros del juego saldría con ocho pestañas nuevas. Con una raíz propia
+    # y los ocho colgando, es UNA pestaña. Sus criterios se copian tal cual de
+    # la raíz de vanilla: así el disparador seguro que existe en este jar, y da
+    # igual que no se cumpla nunca — un logro hijo no necesita que su padre
+    # esté conseguido.
+    (carp_adv / "raiz.json").write_text(json.dumps({
+        "display": {
+            "icon": {k_icono: "minecraft:skeleton_skull"},
+            "title": "%s Vigilancia" % MARCA,
+            "description": "Animales domesticados de otros jugadores",
+            "background": info["raiz"]["background"],
+            "frame": "task",
+            "show_toast": False,
+            k_anuncio: False,
+        },
+        "criteria": info["raiz"]["criteria"],
+    }, indent=2, ensure_ascii=False))
+
     etiquetas, titulos = {}, {}
     for g in grupos:
         et, nom = etiqueta_de(g), nombres[g]
         etiquetas[g] = et
         titulos["%s %s" % (MARCA, nom)] = g
         adv = {
-            "criteria": {"matar": {"trigger": crit["trigger"],
-                                   "conditions": condicion_victima(crit, et)}},
+            "parent": "%s:raiz" % NS,
+            "criteria": {"matar": {
+                "trigger": crit["trigger"],
+                "conditions": condicion_victima(crit, et, info["hacer_pred"])}},
             "display": {
                 "icon": {k_icono: "minecraft:skeleton_skull"},
                 "title": "%s %s" % (MARCA, nom),

@@ -52,27 +52,78 @@ def titulo(t):
 # `pack_version` nuevo (que es donde estaba el fallo del pack_format), un logro
 # con `player_killed_entity` cuya víctima va como LISTA de condiciones, y otro
 # con display. Un fixture cómodo es un fixture que miente.
+#
+# 🔴 Las formas de aquí son las del jar DE VERDAD, comprobadas contra
+# server-26.2.jar el 18/09/2026. Si este fixture miente, la prueba pasa y el
+# servidor no arranca — que es exactamente lo que ocurrió: el molde de antes
+# llevaba `{"type": "minecraft:ghast"}`, que es la forma VIEJA, y el generador
+# nunca tuvo que vérselas con la nueva.
+PRED_VANILLA = {"minecraft:entity_type": "minecraft:ghast"}
 MOLDE_MATAR = {
     "criteria": {"x": {"trigger": "minecraft:player_killed_entity",
                        "conditions": {"entity": [
                            {"condition": "minecraft:entity_properties",
                             "entity": "this",
-                            "predicate": {"type": "minecraft:ghast"}}]}}}}
+                            "predicate": PRED_VANILLA}]}}}}
+# Uno que dispara igual pero NO filtra a la víctima, y que además arrastra un
+# `killing_blow`. Va el primero por orden alfabético a propósito: es el molde
+# que se cogía antes, y con él el logro salía con «y además mátalo con una
+# carga de viento», aparte de con el predicado en la forma equivocada.
+MOLDE_TRAMPA = {
+    "criteria": {"x": {"trigger": "minecraft:player_killed_entity",
+                       "conditions": {"killing_blow": {
+                           "direct_entity": {
+                               "minecraft:entity_type": "minecraft:breeze_wind_charge"}}}}}}
 MOLDE_DISPLAY = {"display": {"icon": {"id": "minecraft:map"}, "title": "x",
                              "description": "x", "frame": "task",
                              "announce_to_chat": True}}
+MOLDE_RAIZ = {"display": {"icon": {"id": "minecraft:grass_block"}, "title": "r",
+                          "description": "r", "frame": "task",
+                          "background": "minecraft:gui/advancements/backgrounds/stone"},
+              "criteria": {"crafting_table": {"trigger": "minecraft:inventory_changed"}}}
 
 
-def jar_falso(ruta: Path, version="26.3"):
+def clase_falsa(textos):
+    """Un .class con esos textos en el pool de constantes.
+
+    No pretende ser cargable: lo que se prueba es el lector del pool, que es
+    como `vigilancia.py` averigua qué sub-predicados registra el jar. Eso no
+    está en ningún JSON de vanilla, solo en el código.
+    """
+    import struct
+    cuerpo = b""
+    for t in textos:
+        b = t.encode("utf-8")
+        cuerpo += b"\x01" + struct.pack(">H", len(b)) + b
+    return (b"\xca\xfe\xba\xbe" + struct.pack(">HH", 0, 65)
+            + struct.pack(">H", len(textos) + 1) + cuerpo)
+
+
+def jar_falso(ruta: Path, version="26.3", con_etiquetas=True):
     ruta.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(ruta, "w") as z:
         z.writestr("version.json", json.dumps(
             {"id": version, "pack_version": {"resource_major": 88, "resource_minor": 0,
                                              "data_major": 107, "data_minor": 1}}))
-        z.writestr("data/minecraft/advancement/nether/blowback.json",
+        z.writestr("data/minecraft/advancement/adventure/blowback.json",
+                   json.dumps(MOLDE_TRAMPA))
+        z.writestr("data/minecraft/advancement/nether/kill_a_mob.json",
                    json.dumps(MOLDE_MATAR))
         z.writestr("data/minecraft/advancement/adventure/adventuring_time.json",
                    json.dumps(MOLDE_DISPLAY))
+        z.writestr("data/minecraft/advancement/story/root.json",
+                   json.dumps(MOLDE_RAIZ))
+        base = "net/minecraft/advancements/predicates/entity/"
+        if con_etiquetas:
+            # Ojo al orden: `anyOf` (el campo del record) va ANTES que `any_of`
+            # (el del JSON) en el pool de verdad. Coger el primero escribía la
+            # clave equivocada.
+            z.writestr(base + "EntityTagPredicate.class",
+                       clase_falsa(["anyOf", "allOf", "noneOf",
+                                    "any_of", "all_of", "none_of"]))
+            z.writestr(base + "EntitySubPredicates.class",
+                       clase_falsa(["entity_type", "location", "distance", "nbt",
+                                    "flags", "equipment", "entity_tags"]))
 
 
 def main():
@@ -130,7 +181,8 @@ def main():
     r = corre()
     ok(r.returncode == 0, "se instala (%d): %s" % (r.returncode, r.stderr[-120:]))
     pack = mc / "world/datapacks/vigilancia"
-    advs = sorted((pack / "data/vigilancia/advancement").glob("*.json"))
+    advs = sorted(p for p in (pack / "data/vigilancia/advancement").glob("*.json")
+                  if p.name != "raiz.json")
     ok(len(advs) == 8, "8 logros, uno por especie (%d)" % len(advs))
     ok(len(advs) <= 12, "por debajo del tope, que es la promesa de rendimiento")
     # vanilla ya trae 89 criterios de este disparador: esto es un +9 %
@@ -166,10 +218,33 @@ def main():
     ok(isinstance(cond.get("entity"), list),
        "se ha copiado la forma del molde de verdad (lista de condiciones)")
     pred = cond["entity"][0]["predicate"]
-    ok(pred.get("nbt") == '{Tags:["cf_wolf"]}',
-       "y el predicado es solo «lleva esta etiqueta»: %s" % pred.get("nbt"))
+    ok(pred == {"minecraft:entity_tags": {"any_of": ["cf_wolf"]}},
+       "y el predicado es el `entity_tags` que registra el jar: %s" % json.dumps(pred))
     ok("minecraft:ghast" not in json.dumps(cond),
        "sin rastro del predicado del molde, que era de otro bicho")
+
+    # ── lo que tumbó el servidor el 18/09/2026 ──────────────────────────
+    # Tres cosas, y las tres se escribieron de memoria en vez de mirarlas.
+    ok("nbt" not in json.dumps(cond),
+       "NO se usa `nbt`: en esta versión no es un sub-predicado y el arranque "
+       "moría con «No key type in MapLike[{\"nbt\":…}]»")
+    ok(list(cond.keys()) == ["entity"],
+       "y del molde se copia la FORMA, no sus condiciones: nada de heredar el "
+       "`killing_blow` de un logro que iba de matar con carga de viento (%s)"
+       % list(cond.keys()))
+    ok("breeze_wind_charge" not in json.dumps(cond),
+       "en concreto, el arma del molde trampa no se cuela")
+    raiz = json.loads((pack / "data/vigilancia/advancement/raiz.json").read_text())
+    ok(raiz["display"].get("background"),
+       "la raíz lleva `background`: sin él esta versión NO ARRANCA («Visible "
+       "advancement roots must have background»)")
+    ok(uno.get("parent") == "vigilancia:raiz",
+       "y los ocho cuelgan de ella, así que el menú de logros gana UNA pestaña "
+       "y no ocho")
+    ok(all("background" in json.loads(a.read_text()).get("display", {})
+           or json.loads(a.read_text()).get("parent")
+           for a in (pack / "data/vigilancia/advancement").glob("*.json")),
+       "ningún logro se queda siendo raíz visible sin fondo")
     titulos = {json.loads((pack / "data/vigilancia/advancement" / a.name).read_text())
                ["display"]["title"] for a in advs}
     ok("☠ Lobo" in titulos, "el título sale en español, del jar vía mensajes.json")
@@ -298,6 +373,45 @@ def main():
     ok(r.returncode == 0 and not pack.exists(), "el datapack desaparece")
     ok(not (panel / "data/vigilados.json").exists(),
        "y el panel deja de esperar sus avisos")
+
+    titulo("15 · si no puede aprenderlo del jar, NO escribe nada")
+    # La lección del 18/09/2026: un datapack a medias no es «casi bueno», es un
+    # servidor que no arranca. Y el arranque falla horas o días después de
+    # escribirlo, cuando ya nadie lo relaciona. Así que se para aquí.
+    otro = Path(tempfile.mkdtemp(prefix="probar-vigilancia-cojo-"))
+    (otro / "minecraft/world/datapacks").mkdir(parents=True)
+    (otro / "panel/data").mkdir(parents=True)
+    jar_falso(otro / "minecraft/versions/26.3/server-26.3.jar", con_etiquetas=False)
+    r = subprocess.run([sys.executable, str(REPO / "scripts" / "vigilancia.py")],
+                       capture_output=True, text=True,
+                       env=dict(os.environ, MC_DIR=str(otro / "minecraft"),
+                                PANEL_DIR=str(otro / "panel")))
+    ok(r.returncode != 0, "jar sin `entity_tags`: se planta (código %d)" % r.returncode)
+    ok("entity_tags" in r.stdout, "y dice exactamente qué le falta")
+    ok(not (otro / "minecraft/world/datapacks/vigilancia").exists(),
+       "y NO deja un datapack a medias en el mundo")
+
+    # y lo mismo si no hay de dónde sacar el fondo de la raíz
+    sin_raiz = Path(tempfile.mkdtemp(prefix="probar-vigilancia-sinraiz-"))
+    (sin_raiz / "minecraft/world/datapacks").mkdir(parents=True)
+    (sin_raiz / "panel/data").mkdir(parents=True)
+    jar = sin_raiz / "minecraft/versions/26.3/server-26.3.jar"
+    jar_falso(jar)
+    sin = zipfile.ZipFile(jar)
+    guarda = {n: sin.read(n) for n in sin.namelist() if "story/root.json" not in n}
+    sin.close()
+    with zipfile.ZipFile(jar, "w") as z:
+        for n, d in guarda.items():
+            z.writestr(n, d)
+    r = subprocess.run([sys.executable, str(REPO / "scripts" / "vigilancia.py")],
+                       capture_output=True, text=True,
+                       env=dict(os.environ, MC_DIR=str(sin_raiz / "minecraft"),
+                                PANEL_DIR=str(sin_raiz / "panel")))
+    ok(r.returncode != 0, "jar sin raíz con fondo: se planta (código %d)" % r.returncode)
+    ok(not (sin_raiz / "minecraft/world/datapacks/vigilancia").exists(),
+       "tampoco escribe nada")
+    shutil.rmtree(otro, ignore_errors=True)
+    shutil.rmtree(sin_raiz, ignore_errors=True)
 
 
 if __name__ == "__main__":

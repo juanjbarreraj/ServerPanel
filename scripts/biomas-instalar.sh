@@ -148,12 +148,25 @@ Wants=minecraft.service
 [Service]
 Type=simple
 User=$USUARIO
-WorkingDirectory=$MC
+# 🔴 NO poner aquí \$MC. Este proceso lleva el jar del servidor en el
+# classpath, así que log4j2 puede coger la configuración de dentro del jar —
+# la de Minecraft— que escribe \`logs/latest.log\` RELATIVO a esta carpeta. Con
+# \$MC aquí, el lector rotaba el log del servidor al arrancar y Minecraft se
+# quedaba escribiendo en un fichero sin nombre: Historia y consola en negro
+# hasta el siguiente reinicio del servidor (18/09/2026).
+# El guion ya se defiende solo (configuración propia + \`cd\` a otra carpeta);
+# esto es el tercer cinturón, para que una instalación limpia no lo reintroduzca.
+WorkingDirectory=$PANEL
 Environment=MC_DIR=$MC
 Environment=PANEL_DIR=$PANEL
 ExecStart=/bin/bash $PANEL/scripts/biomas-servicio.sh
 Restart=always
 RestartSec=30
+# 143 = 128+15, o sea SIGTERM: es como acaba SIEMPRE al pararlo o reiniciarlo.
+# Sin esto, cada \`restart\` deja un «Failed with result 'exit-code'» en rojo en
+# el journal que no significa nada. Un rojo que sale cuando no toca enseña a no
+# mirar los rojos.
+SuccessExitStatus=143
 
 # Minecraft manda. Esto es un invitado en una máquina de 2 núcleos: cuando el
 # servidor necesite la CPU, este se aparta. Sin esto, dibujar el mapa podría
