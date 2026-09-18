@@ -164,5 +164,53 @@ for c in $(command -v java 2>/dev/null) /usr/lib/jvm/*/bin/java /opt/*/bin/java;
 done
 [ -z "$JAVA" ] && JAVA=/usr/bin/java
 decir "semilla $SEMILLA · puerto $PUERTO · $HILOS hilo(s)"
-exec "$JAVA" "-Xmx$MEMORIA" -cp "$CP:$CLASES" califree.Biomas \
+
+# ── 🔴 ESTE PROCESO ESTABA ROTANDO EL LOG DE MINECRAFT ───────────────────
+#
+# El lector de biomas lleva el jar del servidor en el classpath, así que log4j2
+# coge la configuración que viene DENTRO del jar: la de Minecraft. Esa escribe
+# en `logs/latest.log` **relativo al directorio de trabajo**, y la unidad de
+# systemd tiene WorkingDirectory=/home/ubuntu/minecraft. O sea: el mismo
+# fichero que usa el servidor. Y al arrancar lo ROTA.
+#
+# Medido en el servidor de Juan el 18/09/2026, con gente jugando:
+#
+#     latest.log ......... 284 bytes, 4 líneas
+#     de Minecraft ....... 0
+#     del lector de biomas 4
+#
+# Minecraft se quedó escribiendo en el fichero que este proceso le renombró
+# debajo, así que la Historia y la consola del panel dejaron de ver nada — sin
+# un solo error, hasta que Minecraft se reiniciara por su cuenta. Los cinco
+# `.log.gz` de 177 bytes del día 17 son exactamente eso: logs con estas cuatro
+# líneas y nada más.
+#
+# Dos cinturones, porque este fallo no se ve desde dentro:
+#
+#   1. configuración propia, que solo escribe por consola — la recoge journald,
+#      que es donde se mira este servicio (`journalctl -u biomas`);
+#   2. y aun así se trabaja desde otra carpeta, para que si algún día cambia el
+#      nombre de la propiedad, el fichero que se cree sea nuestro y no el suyo.
+CONF_LOG="$CLASES/log4j2-biomas.xml"
+cat > "$CONF_LOG" <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+  <Appenders>
+    <Console name="Consola" target="SYSTEM_OUT">
+      <PatternLayout pattern="[%d{HH:mm:ss}] [%t/%level]: %msg%n"/>
+    </Console>
+  </Appenders>
+  <Loggers>
+    <Root level="info"><AppenderRef ref="Consola"/></Root>
+  </Loggers>
+</Configuration>
+XML
+APARTE="$CLASES/aparte"
+mkdir -p "$APARTE" && cd "$APARTE" || cd /tmp
+# Nada de lo de arriba depende del directorio de trabajo: todas las rutas del
+# guion son absolutas y Biomas.java no abre un solo fichero.
+exec "$JAVA" "-Xmx$MEMORIA" \
+     "-Dlog4j2.configurationFile=$CONF_LOG" \
+     "-Dlog4j.configurationFile=$CONF_LOG" \
+     -cp "$CP:$CLASES" califree.Biomas \
      "$SEMILLA" --servicio --puerto "$PUERTO" --hilos "$HILOS"

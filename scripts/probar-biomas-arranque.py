@@ -69,6 +69,7 @@ class Escenario:
         self.clases = self.panel / "java-clases"
         self.sello = self.clases / ".compilado-de"
         self.diario = self.base / "llamadas.txt"
+        self.cwds = self.base / "desde-donde.txt"
         for d in (self.mc / "libraries", self.mc / "logs", self.panel / "scripts",
                   self.clases, self.bin):
             d.mkdir(parents=True, exist_ok=True)
@@ -100,6 +101,9 @@ class Escenario:
             "#!/bin/bash\n"
             'if [ "$1" = "-version" ]; then echo "java 25" >&2; exit 0; fi\n'
             'echo "java $*" >> %s\n' % self.diario +
+            # desde qué carpeta se lanza: si fuera ~/minecraft, un log4j2 que
+            # escriba `logs/latest.log` se llevaría el log de Minecraft
+            'pwd >> %s\n' % self.cwds +
             "exit 0\n")
         (self.bin / "java").chmod(0o755)
 
@@ -132,13 +136,29 @@ class Escenario:
         e.update(entorno)
         return subprocess.run(
             ["bash", str(self.panel / "scripts" / "biomas-servicio.sh")],
-            capture_output=True, text=True, timeout=120, env=e)
+            capture_output=True, text=True, timeout=120, env=e,
+            # la unidad de systemd tiene WorkingDirectory=/home/ubuntu/minecraft,
+            # así que se arranca desde ahí: es lo que hacía que log4j2 escribiera
+            # en el latest.log del servidor
+            cwd=str(self.mc))
 
     def llamadas(self):
         return self.diario.read_text() if self.diario.exists() else ""
 
     def arranco(self):
         return "califree.Biomas" in self.llamadas()
+
+    def orden_java(self):
+        """La última línea con la que se lanzó el lector de biomas."""
+        return next((l for l in reversed(self.llamadas().splitlines())
+                     if "califree.Biomas" in l), "")
+
+    def desde_donde(self):
+        """El directorio de trabajo del último java."""
+        if not self.cwds.exists():
+            return ""
+        lineas = [l for l in self.cwds.read_text().splitlines() if l.strip()]
+        return lineas[-1] if lineas else ""
 
     def limpia(self):
         shutil.rmtree(self.base, ignore_errors=True)
@@ -236,6 +256,47 @@ def main():
     ok(r.returncode != 0,
        "un javac que falla NO puede acabar en un arranque, aunque la tubería "
        "termine en un `sed` que siempre sale 0")
+    e.limpia()
+
+    # ── 6 · el log de Minecraft no se toca ───────────────────────────────────
+    #
+    # El lector lleva el jar del servidor en el classpath, así que log4j2 cogía
+    # la configuración de DENTRO del jar: la de Minecraft, que escribe
+    # `logs/latest.log` relativo al directorio de trabajo — y la unidad tiene
+    # WorkingDirectory=/home/ubuntu/minecraft. Al arrancar lo rotaba, y
+    # Minecraft se quedaba escribiendo en un fichero renombrado: la Historia y
+    # la consola del panel en negro hasta el siguiente reinicio del servidor.
+    titulo("6 · el log de Minecraft se queda donde está")
+    e = Escenario()
+    e.jar("26.3", ahora)
+    vivo = e.mc / "logs" / "latest.log"
+    vivo.write_text("[21:00:00] [Server thread/INFO]: JEYtheFlash joined the game\n")
+    huella = (vivo.read_bytes(), vivo.stat().st_mtime_ns)
+    e.corre()
+    orden = e.orden_java()
+
+    ok("-Dlog4j2.configurationFile=" in orden,
+       "el java del lector lleva su propia configuración de log4j2")
+    ok("-Dlog4j.configurationFile=" in orden,
+       "y también con el nombre viejo de la propiedad, por si el jar usa log4j 1.x")
+
+    conf = next((t.split("=", 1)[1] for t in orden.split()
+                 if t.startswith("-Dlog4j2.configurationFile=")), "")
+    ok(conf and Path(conf).is_file(),
+       "la configuración existe de verdad en el disco (%s)" % Path(conf).name)
+    texto = Path(conf).read_text() if conf and Path(conf).is_file() else ""
+    ok("<Console" in texto, "y manda los mensajes por consola, que es lo que recoge journald")
+    ok(bool(texto) and not any(x in texto for x in ("RollingFile", "<File", "fileName")),
+       "sin un solo appender que escriba a fichero: no puede tocar ningún log")
+
+    # el guion se corre desde ~/minecraft, igual que lo hace systemd
+    ok(bool(e.desde_donde()) and not e.desde_donde().startswith(str(e.mc)),
+       "y se sale de ~/minecraft antes del exec (%s)" % e.desde_donde()[-24:])
+
+    ok((vivo.read_bytes(), vivo.stat().st_mtime_ns) == huella,
+       "el latest.log de Minecraft queda intacto, byte a byte y con su fecha")
+    ok(not list((e.mc / "logs").glob("*.log.gz")),
+       "y no aparece ningún .log.gz: nada se ha rotado")
     e.limpia()
 
 
