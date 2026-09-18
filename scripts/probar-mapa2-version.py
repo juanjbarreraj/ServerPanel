@@ -79,10 +79,12 @@ def main():
 
     def firma_de(jar):
         """La misma huella que escribe biomas-servicio.sh al compilar."""
+        import hashlib
         st = jar.stat()
         fuente = panel / "scripts" / "Biomas.java"
-        return "%s %d %d | %d" % (jar, int(st.st_mtime), st.st_size,
-                                  int(fuente.stat().st_mtime))
+        # el fuente va por CONTENIDO: su mtime lo cambia cualquier despliegue
+        return "%s %d %d | %s" % (jar, int(st.st_mtime), st.st_size,
+                                  hashlib.sha1(fuente.read_bytes()).hexdigest()[:16])
 
     # Un `sudo` de pega que apunta con qué lo llamaron y, además, hace lo que
     # haría el servicio de verdad al arrancar: recompilar contra el jar de ahora
@@ -93,7 +95,7 @@ def main():
         '[ -n "$FALLA_SUDO" ] && exit 1\n'
         'JAR=$(ls -t %s/versions/*/server-*.jar | head -1)\n' % mc +
         "printf '%%s | %%s\\n' \"$(stat -c '%%n %%Y %%s' \"$JAR\")\" "
-        "\"$(stat -c '%%Y' %s/scripts/Biomas.java)\" > %s\n" % (panel, sello) +
+        "\"$(sha1sum %s/scripts/Biomas.java | cut -c1-16)\" > %s\n" % (panel, sello) +
         "exit 0\n")
     (binp / "sudo").chmod(0o755)
 

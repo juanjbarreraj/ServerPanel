@@ -24,7 +24,7 @@ Uso:  python3 ~/panel/scripts/build-mensajes.py
                                         para que se reconstruya con las frases
                                         nuevas; hace falta si cambian las plantillas)
 """
-import glob, json, re, sys, urllib.request, zipfile
+import glob, json, os, re, sys, urllib.request, zipfile
 from pathlib import Path
 
 PANEL = Path(__file__).resolve().parent.parent
@@ -61,7 +61,14 @@ BUENOS = {
 
 def jar_del_servidor():
     """Desde 1.18 el server.jar es solo un lanzador; el bueno está en versions/."""
-    cand = sorted(glob.glob(str(MC / "versions/**/server-*.jar"), recursive=True))
+    # 🔴 Por FECHA, no por nombre. Ordenando texto, «26.2» va ANTES que «26.3»
+    # (y «26.10» antes que las dos), así que esto cogía el jar MÁS VIEJO y
+    # construía el catálogo contra una versión que ya no está puesta. Pasó de
+    # verdad el 18/09/2026: el servidor iba por la 26.3 y esto leyó la 26.2.
+    # Es el mismo tropiezo que ya estaba arreglado en mc_version() y en
+    # actualizar.py, y que aquí seguía intacto.
+    cand = sorted(glob.glob(str(MC / "versions/**/server-*.jar"), recursive=True),
+                  key=os.path.getmtime, reverse=True)
     if not cand:
         cand = [str(MC / "server.jar")]
     for p in cand:

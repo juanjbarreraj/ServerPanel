@@ -286,7 +286,7 @@ def manuales():
     print("  cambie la VERSIÓN de Minecraft. Mientras el server siga igual, no")
     print("  hay que tocar nada.\n")
 
-    jars = sorted(glob.glob(str(MC / "versions/*/server-*.jar")))
+    jars = sorted(glob.glob(str(MC / "versions/*/server-*.jar")), key=mtime)
     ver = "?"
     if jars:
         m = re.search(r"server-([\d.\w-]+)\.jar$", jars[-1])

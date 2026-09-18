@@ -41,7 +41,14 @@ LIBS=$(find "$MC/libraries" -name '*.jar' 2>/dev/null | sort | tr '\n' ':')
 CP="$JAR:$LIBS"
 
 # ── 2 · ¿hace falta compilar? ────────────────────────────────────────────
-FIRMA="$(stat -c '%n %Y %s' "$JAR" 2>/dev/null) | $(stat -c '%Y' "$PANEL/scripts/Biomas.java" 2>/dev/null)"
+# 🔴 El fuente va por CONTENIDO, no por fecha. Un Commit+Sync —o cualquier
+# rsync o checkout— le cambia el mtime a Biomas.java aunque no cambie ni una
+# línea. Con la fecha dentro de la firma, el panel decía «el lector de biomas se
+# compiló con una versión anterior del código» DESPUÉS DE CADA DESPLIEGUE, y
+# recompilar son minutos. Un aviso que sale cuando no toca deja de leerse.
+# El jar sí va por fecha y tamaño: nadie lo reescribe, y hacerle un sha1 a 25 MB
+# cada vez que alguien abre la pestaña sería tirar CPU.
+FIRMA="$(stat -c '%n %Y %s' "$JAR" 2>/dev/null) | $(sha1sum "$PANEL/scripts/Biomas.java" 2>/dev/null | cut -c1-16)"
 if [ ! -f "$CLASES/califree/Biomas.class" ] || [ "$(cat "$SELLO" 2>/dev/null)" != "$FIRMA" ]; then
   # El compilador se elige POR VERSIÓN, no por nombre de carpeta. Ordenando
   # /usr/lib/jvm por texto, «openjdk-21» queda el último y se elegiría el 21 —

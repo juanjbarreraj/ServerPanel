@@ -117,10 +117,12 @@ class Escenario:
         (self.clases / "califree" / "Biomas.class").write_text("clase de la 26.2")
 
     def firma(self, jar):
+        import hashlib
         st = jar.stat()
         fuente = self.panel / "scripts" / "Biomas.java"
-        return "%s %d %d | %d" % (jar, int(st.st_mtime), st.st_size,
-                                  int(fuente.stat().st_mtime))
+        # el fuente va por CONTENIDO: el mtime lo cambia cualquier despliegue
+        return "%s %d %d | %s" % (jar, int(st.st_mtime), st.st_size,
+                                  hashlib.sha1(fuente.read_bytes()).hexdigest()[:16])
 
     def corre(self, **entorno):
         e = dict(os.environ)
@@ -198,9 +200,15 @@ def main():
     e = Escenario()
     nuevo = e.jar("26.3", ahora)
     e.corre()                                    # deja clases y sello buenos
-    # se toca el fuente: cambia la firma, pero el JAR es el mismo
+    # se toca el fuente DE VERDAD (una línea nueva, no solo la fecha): cambia la
+    # firma, pero el JAR es el mismo. Tocar solo el mtime ya no cuenta como
+    # cambio, a propósito: eso lo hace cualquier despliegue.
     fuente = e.panel / "scripts" / "Biomas.java"
+    sola_fecha = e.sello.read_text().strip()
     os.utime(fuente, (ahora + 100, ahora + 100))
+    ok(e.firma(nuevo) == sola_fecha,
+       "cambiar solo la FECHA del fuente no cambia la firma (Commit+Sync)")
+    fuente.write_text(fuente.read_text() + "\n// un cambio de verdad\n")
     r = e.corre(BIOMAS_JAVAC="/no/existe/javac")
     salida = r.stdout + r.stderr
     ok(r.returncode == 0, "mismo jar y solo cambió el fuente: sigue adelante")

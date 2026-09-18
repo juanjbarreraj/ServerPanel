@@ -3874,8 +3874,13 @@ def _m2_desfase():
     try:
         st = jar.stat()
         fuente = PANEL_DIR / "scripts" / "Biomas.java"
-        mio = "%s %d %d | %s" % (jar, int(st.st_mtime), st.st_size,
-                                 int(fuente.stat().st_mtime) if fuente.exists() else "")
+        # Tiene que salir EXACTAMENTE la misma cadena que escribe
+        # biomas-servicio.sh. El fuente va por contenido y no por fecha: un
+        # Commit+Sync le cambia el mtime sin cambiar una línea, y eso ponía en
+        # rojo el mapa Explorar después de cada despliegue.
+        mio = "%s %d %d | %s" % (
+            jar, int(st.st_mtime), st.st_size,
+            hashlib.sha1(fuente.read_bytes()).hexdigest()[:16] if fuente.exists() else "")
     except OSError:
         d["motivo"] = "no puedo leer el jar"
         return d
