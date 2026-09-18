@@ -4680,6 +4680,25 @@ threading.Thread(target=_bucle_precalentar, daemon=True).start()
 # Tiene que ser la misma que MARCA en scripts/vigilancia.py.
 MARCA_VIGILANCIA = "☠"        # ☠
 
+# Lo que dejó escrito `vigilancia.py` al instalar el datapack: qué etiqueta le
+# toca a cada especie y qué grupo hay detrás de cada título de logro. Si el
+# datapack no está puesto, sale vacío y todo lo demás funciona igual.
+VIGILADOS_F = DATA_DIR / "vigilados.json"
+_vig_cache = {"mtime": None, "data": {}}
+
+def _vigilados():
+    try:
+        mt = VIGILADOS_F.stat().st_mtime
+    except OSError:
+        return {}
+    if _vig_cache["mtime"] != mt:
+        try:
+            d = json.loads(VIGILADOS_F.read_text())
+        except Exception:
+            return _vig_cache["data"]
+        _vig_cache["mtime"], _vig_cache["data"] = mt, (d if d.get("v") == 2 else {})
+    return _vig_cache["data"]
+
 FEED_F      = DATA_DIR / "feed.jsonl"
 FEEDHIST_F  = DATA_DIR / "feed-historico.jsonl"
 FEEDSTATE_F = DATA_DIR / "feed_state.json"
@@ -4858,6 +4877,14 @@ def _interpretar_crudo(msg, msgs):
             # vanilla deja escrito. Se convierten en un evento aparte para que
             # en la Historia salgan como una muerte y no como un trofeo.
             if titulo.startswith(MARCA_VIGILANCIA):
+                # El datapack nuevo tiene un logro POR ESPECIE, así que el
+                # título dice «☠ Lobo», no el nombre del bicho. Quién era
+                # exactamente lo pone después el censo, que sí lo sabe.
+                # El formato viejo (un logro por bicho, título = su nombre)
+                # se sigue entendiendo: hay feeds antiguos llenos de ellos.
+                grupo = _vigilados().get("titulos", {}).get(titulo)
+                if grupo:
+                    return "mobmuerto", g.group(1), {"grupo": grupo}
                 return "mobmuerto", g.group(1), {
                     "victima": titulo[len(MARCA_VIGILANCIA):].strip()}
             return "logro", g.group(1), {"titulo": titulo, "tipo": campo}
@@ -4956,8 +4983,11 @@ def _procesar(lineas, msgs, estado, salida, en_vivo):
             salida.append({"t": ts, "k": "logro", "p": quien, "u": _uuid_de(quien),
                            "titulo": extra["titulo"], "tipo": extra["tipo"]})
         elif tipo == "mobmuerto":
-            salida.append({"t": ts, "k": "mobmuerto", "p": quien, "u": _uuid_de(quien),
-                           "victima": extra["victima"]})
+            ev = {"t": ts, "k": "mobmuerto", "p": quien, "u": _uuid_de(quien)}
+            # `grupo` = el datapack nuevo (sabe la especie, no el nombre);
+            # `victima` = el viejo (sabía el nombre exacto).
+            ev.update({k: v for k, v in extra.items() if v})
+            salida.append(ev)
         elif tipo == "muerte":
             ev = {"t": ts, "k": "muerte", "p": quien, "u": _uuid_de(quien),
                   "clave": extra["clave"], "args": extra["args"],
@@ -5269,8 +5299,15 @@ def _sin_repetidos(ev):
     persona y su detalle), no solo la hora: dos logros del mismo jugador en el
     mismo segundo son dos logros de verdad y tienen que salir los dos.
     """
+    # Un evento puede DEJAR SIN EFECTO a otro anterior: cuando el censo ya sabe
+    # qué animal era, su línea sustituye al aviso genérico del juego («mató a un
+    # lobo»), que si no saldría además de la buena.
+    tapados = {e["sustituye"] for e in ev if e.get("sustituye")}
     visto, fuera = set(), []
     for e in ev:
+        if (e.get("k") == "mobmuerto" and e.get("grupo")
+                and e.get("t") in tapados):
+            continue
         k = (e.get("t"), e.get("k"), e.get("p"), e.get("fin"),
              e.get("titulo"), e.get("clave"), e.get("victima"))
         if k in visto:
@@ -5372,8 +5409,16 @@ def _feed_publico(u, eventos):
             e["es"], e["en"] = _texto_muerte(ev)
             for k in ("frase", "args"):
                 e.pop(k, None)
-        elif e.get("k") == "mobmuerto" and e.get("bicho"):
-            e["bicho_es"], e["bicho_en"] = _nombre_bicho(e["bicho"])
+        elif e.get("k") == "mobmuerto":
+            # Un aviso del datapack trae la ESPECIE (`grupo`) y no el bicho
+            # concreto; se traduce igual, salvo el cajón de sastre, que no es
+            # una especie y no tiene nombre que enseñar.
+            grupo = e.get("grupo")
+            bid = e.get("bicho") or (
+                grupo if grupo and grupo != (_vigilados().get("otro") or "_otro")
+                else None)
+            if bid:
+                e["bicho_es"], e["bicho_en"] = _nombre_bicho(bid)
         # Dónde murió una mascota es dónde quedaron sus cosas y las de su dueño:
         # la misma regla que con las personas.
         if e.get("k") in ("muerte", "mobmuerto") and not _puede_ver_lugar(u, e):
@@ -5637,35 +5682,75 @@ def mascotas_mod():
 MASCOTAS_VENTANA = 3600     # s para considerar que es la misma muerte
 
 def _ya_contada(victima, desde):
-    """¿Ya lo dijo el datapack de vigilancia?
+    """¿Ya lo dijo el datapack VIEJO, el de un logro por bicho?
 
-    Los dos sistemas ven la misma muerte por caminos distintos: si a un bicho
-    con nombre lo mata un jugador, el datapack lo anuncia al instante y el censo
-    lo echa de menos unos minutos después. Sin esto saldría dos veces en la
-    Historia, y la segunda además sin decir quién fue.
+    Aquel sabía el nombre exacto, así que se compara por nombre. Queda para los
+    feeds de antes; el datapack de ahora no produce estos eventos.
     """
     if not victima:
-        return False        # sin nombre el datapack no puede haberlo dicho
+        return False        # sin nombre el datapack viejo no pudo haberlo dicho
     corte = desde - MASCOTAS_VENTANA
     for e in _leer_cola(FEED_F, 400):
-        if (e.get("k") == "mobmuerto" and not e.get("censo")
+        if (e.get("k") == "mobmuerto" and not e.get("censo") and not e.get("grupo")
                 and (e.get("victima") or "").strip().lower() == victima.strip().lower()
                 and e.get("t", 0) >= corte):
             return True
     return False
 
+def _quien_lo_mato(tipo, cuando, usados):
+    """Busca el aviso del juego que corresponde a esta muerte del censo.
+
+    🔴 Aquí es donde las dos mitades se juntan. El datapack avisa AL INSTANTE y
+    sabe quién mató y de qué especie era, pero no cuál de tus tres lobos;
+    el censo tarda unos minutos y sabe exactamente cuál faltó, pero no la causa.
+    Cruzando los dos sale la frase entera: «sofidiaz mató a Fido (Lobo)».
+
+    Se empareja por especie y por cercanía en el tiempo, que es todo lo que hay.
+    Si dos lobos del mismo tipo mueren en la misma ventana de minutos, el
+    emparejamiento puede cruzarse: lo peor que pasa entonces es que se atribuya
+    al otro jugador, no que se invente una muerte. Por eso `usados` — un aviso
+    no puede servir para dos muertes.
+    """
+    vig = _vigilados()
+    if not vig:
+        return None
+    grupo = tipo if tipo in (vig.get("etiquetas") or {}) else vig.get("otro", "_otro")
+    mejor = None
+    for e in _leer_cola(FEED_F, 400):
+        if e.get("k") != "mobmuerto" or e.get("censo") or e.get("grupo") != grupo:
+            continue
+        t = e.get("t", 0)
+        # El aviso es de ANTES que la confirmación del censo, nunca de después.
+        if not (cuando - MASCOTAS_VENTANA <= t <= cuando + 60):
+            continue
+        if t in usados:
+            continue
+        if mejor is None or abs(t - cuando) < abs(mejor.get("t", 0) - cuando):
+            mejor = e
+    return mejor
+
 def _feed_mascotas(muertas):
     """Mete en la Historia lo que el censo ha echado de menos."""
     nombres = usercache()
-    eventos = []
+    eventos, usados = [], set()
     for m in muertas:
-        if _ya_contada(m.get("n"), m.get("t") or time.time()):
+        cuando = m.get("t") or time.time()
+        if _ya_contada(m.get("n"), cuando):
             continue
         dueño = m.get("dueño")
-        ev = {"t": m.get("t") or time.time(), "k": "mobmuerto",
+        ev = {"t": cuando, "k": "mobmuerto",
               "p": nombres.get(dueño) if dueño else None, "u": dueño,
               "victima": m.get("n"), "bicho": m.get("tipo"),
               "dim": _DIM_LARGA.get(m.get("dim"), m.get("dim")), "censo": True}
+        aviso = _quien_lo_mato(m.get("tipo"), cuando, usados)
+        if aviso:
+            # La hora buena es la del aviso del juego: es la del momento exacto,
+            # no la de cuando el censo se dio cuenta.
+            usados.add(aviso.get("t"))
+            ev["por"] = aviso.get("p")
+            ev["por_u"] = aviso.get("u")
+            ev["t"] = aviso.get("t") or cuando
+            ev["sustituye"] = aviso.get("t")
         pos = m.get("pos")
         if pos and len(pos) == 3:
             ev["x"], ev["y"], ev["z"] = int(pos[0]), int(pos[1]), int(pos[2])
@@ -5681,6 +5766,43 @@ def _feed_mascotas(muertas):
         len(eventos), ", ".join((e.get("victima") or e.get("bicho") or "?")
                                 for e in eventos)[:200]))
 
+# Cuántas etiquetas se ponen como mucho en cada pasada. Con el datapack recién
+# instalado hay que etiquetar todo lo que ya existe —en el servidor de Juan,
+# casi cien bichos— y no tiene sentido soltarle cien órdenes de golpe al hilo
+# principal del juego. A 25 por pasada queda hecho en diez minutos sin que nadie
+# lo note, y a partir de ahí solo habrá que etiquetar lo que se dome nuevo.
+MASCOTAS_ETIQUETAS_POR_PASADA = 25
+_mascotas_pend = {"n": None}
+
+def _mascotas_etiquetar(faltan):
+    """Le pone su etiqueta de vigilancia a los animales que aún no la llevan.
+
+    Esto es lo que hace que el datapack NO haya que mantenerlo: un animal que
+    domes dentro de un mes lo ve el censo, lo ve sin etiqueta, y se la pone.
+
+    ⚠ Una etiqueta solo se puede poner si el bicho está en un chunk CARGADO.
+    Con el animal lejos, la orden falla y ya está: en la siguiente pasada se
+    reintenta, y acaba entrando en cuanto alguien pase por allí. Por eso no se
+    apunta el fallo como problema ni se avisa de nada.
+    """
+    if not faltan:
+        return
+    for f in faltan[:MASCOTAS_ETIQUETAS_POR_PASADA]:
+        rcon_try("tag %s add %s" % (f["uuid"], f["etiqueta"]))
+    # No se mira si la orden funcionó: la respuesta de `tag` no es fácil de
+    # interpretar sin adivinar el texto exacto de Minecraft, y no hace falta.
+    # La comprobación de verdad es la siguiente pasada del censo: si la
+    # etiqueta entró, el bicho ya no aparece como pendiente.
+    #
+    # Y se escribe solo cuando el número CAMBIA. Lo normal es que queden
+    # pendientes para siempre los que viven lejos de todo —hasta que alguien
+    # pase por allí—, y una línea cada tres minutos durante meses no es un
+    # registro, es ruido que tapa lo que sí importa.
+    if _mascotas_pend["n"] != len(faltan):
+        _mascotas_pend["n"] = len(faltan)
+        _syslog("[mascotas] etiquetas de vigilancia pendientes: %d "
+                "(entran cuando alguien pase cerca)" % len(faltan))
+
 def _mascotas_loop():
     """Cada 3 minutos. Una pasada normal solo lee los ficheros de región que
     han cambiado —uno o dos—, así que no cuesta casi nada; el repaso completo
@@ -5695,6 +5817,7 @@ def _mascotas_loop():
                 r = m.pasada(guardar_ya=lambda: rcon_try("save-all flush"))
                 if r.get("muertas"):
                     _feed_mascotas(r["muertas"])
+                _mascotas_etiquetar(r.get("sin_etiqueta") or [])
                 _salud("mascotas", ok=True)
         except Exception as ex:
             _salud("mascotas", ok=False, nota=f"{type(ex).__name__}: {ex}")

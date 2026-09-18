@@ -1,47 +1,72 @@
 #!/usr/bin/env python3
 """
-Vigila a los mobs con nombre: avisa en la Historia del panel cuando alguien mata
-a uno, con nombre y apellido.
+Avisa en la Historia del panel cuando un JUGADOR mata un animal de alguien.
 
-CÓMO FUNCIONA, porque no es obvio
----------------------------------
-Minecraft vanilla NO registra la muerte de un mob en ningún sitio. No hay línea
-en el log, no hay fichero, no hay nada. Así que hay que fabricarla.
+QUÉ PROBLEMA RESUELVE, Y CUÁL NO
+--------------------------------
+Minecraft **no registra la muerte de un mob en ningún sitio al que el servidor
+pueda llegar**. Está comprobado por los dos lados:
 
-El truco: un **logro oculto por cada bicho vigilado**, que salta cuando un
-jugador lo mata. Los logros SÍ se anuncian en el chat y ESO sí queda escrito en
-el log del servidor, que es justo lo que la Historia del panel ya lee:
+  · en el jar: los 58 disparadores de logro que existen y ninguno es «un bicho
+    ha muerto»; solo `player_killed_entity` y `entity_killed_player`;
+  · en los logs de verdad del servidor: 317 muertes reconocidas, cero de un
+    animal. El aviso de «se te ha muerto la mascota» va SOLO al dueño y no pasa
+    por la consola.
 
-    Tazzk93 has made the advancement [☠ Mace Windu]
+Así que esto cubre **únicamente** las muertes causadas por un jugador. Las
+demás —creeper, lava, caída, ahogarse— las detecta el censo
+(`scripts/mascotas.py`) por desaparición, sin causa y unos minutos después.
 
-Cada mob muere una sola vez, así que el logro salta una vez y ya. Sin funciones
-por tick, sin coste continuo: un logro solo se comprueba cuando ocurre el evento.
+CÓMO FUNCIONA
+-------------
+Un logro oculto **por especie**, no por bicho. Los logros se anuncian en el
+chat y eso sí queda escrito en el log, que es lo único que la Historia puede
+leer:
 
-Para poder apuntar a un bicho concreto se le pone una ETIQUETA (`vg_0001`), y el
-logro exige esa etiqueta. Las etiquetas se guardan en el mundo, así que se ponen
-una vez.
+    sofidiaz has made the advancement [☠ Lobo]
 
-⚠️ LO QUE **NO** CUBRE: las muertes que no causa un jugador. Caída, lava, un
-creeper, ahogarse. En vanilla no existe ningún disparador para eso — ni con
-datapack. Para esas, la única señal es que el bicho deje de aparecer en
-`buscar-entidad.py`.
+La víctima se reconoce por una **etiqueta** (`cf_wolf`) que el panel pone solo,
+por RCON, en cuanto el censo ve un animal domado o con nombre que no la lleva.
 
-EL FORMATO SE LEE DEL JAR, NO SE ADIVINA
-----------------------------------------
-Dónde van las carpetas (`advancement` o `advancements`), cómo se llama el campo
-del icono, si el anuncio es `announce_to_chat` o `announceToChat`, qué número de
-`pack_format` toca… todo eso cambia entre versiones. En vez de escribirlo de
-memoria, este script abre el jar del servidor, busca un logro DE VERDAD que use
-`player_killed_entity` y copia su esquema exacto. Si Mojang lo cambia otra vez,
-el script se adapta solo.
+🔴 POR QUÉ POR ESPECIE Y NO POR BICHO (la decisión que importa)
+---------------------------------------------------------------
+La primera versión de este script hacía **un logro por cada bicho**. Medido en
+el servidor de Juan: 97 animales con nombre → 97 logros.
+
+Y eso importa porque, según el bytecode del jar
+(`SimpleCriterionTrigger.trigger`), cada vez que un jugador mata CUALQUIER mob
+el servidor recorre todos los criterios pendientes de ese disparador:
+
+    Map<...> map = adv.getTriggerMapForType(this);
+    if (map == null || map.isEmpty()) return;      // por tick no cuesta nada
+    for (entry : map.entrySet())                    // …pero los recorre TODOS
+        if (pred.test(entry.getValue())) …
+
+Vanilla ya trae **89 criterios** con `player_killed_entity` (41 solo en
+`kill_all_mobs`). Añadir 97 era más que duplicar ese camino. Con un logro por
+especie son **8**, un +9 %, y **siguen siendo 8 con 500 mascotas**.
+
+El otro motivo, igual de importante: por bicho, el datapack hay que
+regenerarlo y hacer `/reload` cada vez que alguien doma algo. Por especie el
+datapack **se instala una vez y no se vuelve a tocar jamás**: para él un lobo
+nuevo es «un lobo».
+
+Lo que se pierde: el mensaje del juego dice la especie, no el nombre. El nombre
+lo pone la Historia cruzando el aviso con el censo, que sí sabe cuál faltó.
+
+🔴 EL LOGRO SE REVOCA A SÍ MISMO
+--------------------------------
+Un logro se consigue UNA VEZ por jugador. Sin esto, el segundo lobo que mate
+alguien no avisaría nunca. Cada logro lleva una función de recompensa con una
+línea, `advancement revoke @s only …`, que lo rearma en el acto.
 
 USO (en el servidor)
 --------------------
-    python3 ~/panel/scripts/vigilancia.py --ver        # solo enseña qué haría
-    python3 ~/panel/scripts/vigilancia.py              # genera e instala
-    python3 ~/panel/scripts/vigilancia.py --comandos   # las órdenes de etiquetar
+    python3 ~/panel/scripts/vigilancia.py --ver    # enseña qué haría, no toca nada
+    python3 ~/panel/scripts/vigilancia.py          # lo instala
+    python3 ~/panel/scripts/vigilancia.py --quitar # lo borra
 
-Después: `/reload` en la consola y pegar las órdenes de `--comandos`.
+Después, una sola vez: `reload` en la consola. Nunca más.
 """
 import glob, json, os, re, shutil, sys, zipfile
 from pathlib import Path
@@ -49,23 +74,43 @@ from pathlib import Path
 AQUI = Path(__file__).resolve().parent
 sys.path.insert(0, str(AQUI.parent))
 
-HOME = Path.home()
-MC   = Path(os.environ.get("MC_DIR", HOME / "minecraft"))
+HOME  = Path.home()
+MC    = Path(os.environ.get("MC_DIR", HOME / "minecraft"))
+PANEL = Path(os.environ.get("PANEL_DIR", AQUI.parent))
 WORLD = MC / "world"
-PACK = WORLD / "datapacks" / "vigilancia"
-NS   = "vigilancia"
-MARCA = "☠"          # ☠ — con esto el panel distingue estos logros
-LISTA = AQUI.parent / "data" / "vigilados.json"
+PACK  = WORLD / "datapacks" / "vigilancia"
+NS    = "vigilancia"
+MARCA = "☠"                      # con esto el panel distingue estos logros
+LISTA = PANEL / "data" / "vigilados.json"
+
+# Las especies que se nombran en el mensaje del juego. El resto de bichos con
+# nombre —ranas, sniffers, aldeanos— caen en el cajón de sastre.
+#
+# Cada grupo tiene SU PROPIA etiqueta. Así el predicado de cada logro es solo
+# «lleva esta etiqueta», sin filtro de tipo, y ningún bicho puede disparar dos
+# logros a la vez (que es lo que pasaría con un cajón de sastre sin tipo).
+ESPECIES = ["wolf", "cat", "parrot", "horse", "donkey", "mule", "llama"]
+OTRO = "_otro"
+TOPE = 12                        # tope duro de logros: ver el bloque de arriba
+
+# Nombres de respaldo por si `mensajes.json` no está todavía. Lo normal es que
+# salgan del jar, vía build-mensajes.py, que es de donde salen todos los textos
+# de este panel.
+RESPALDO = {"wolf": "Lobo", "cat": "Gato", "parrot": "Loro", "horse": "Caballo",
+            "donkey": "Burro", "mule": "Mula", "llama": "Llama",
+            OTRO: "Animal con nombre"}
+
+
+def etiqueta_de(grupo):
+    return "cf_" + (grupo[1:] if grupo.startswith("_") else grupo)
 
 
 # ------------------------------------------------------------------- el jar
 def jar_del_servidor():
+    """Desde 1.18 el server.jar es solo un lanzador; el bueno está en versions/."""
     # 🔴 Por FECHA, no por nombre. Ordenando texto, «26.2» va ANTES que «26.3»
-    # (y «26.10» antes que las dos), así que esto cogía el jar MÁS VIEJO y
-    # construía el catálogo contra una versión que ya no está puesta. Pasó de
-    # verdad el 18/09/2026: el servidor iba por la 26.3 y esto leyó la 26.2.
-    # Es el mismo tropiezo que ya estaba arreglado en mc_version() y en
-    # actualizar.py, y que aquí seguía intacto.
+    # (y «26.10» antes que las dos), así que esto cogía el jar MÁS VIEJO.
+    # Ver claude/el-jar-por-nombre.md: es la quinta vez que aparece.
     cand = sorted(glob.glob(str(MC / "versions/**/server-*.jar"), recursive=True),
                   key=os.path.getmtime, reverse=True)
     if not cand:
@@ -94,12 +139,22 @@ def aprender_del_jar(z):
     if not carpeta:
         raise SystemExit("No encuentro la carpeta de logros dentro del jar")
 
-    # 2) pack_format: viene en version.json del propio jar
+    # 2) pack_format
+    #
+    # 🔴 Esto estaba mal y se veía: el script imprimía «pack_format ... None».
+    # Mojang cambió la forma de version.json y ahora es
+    #     "pack_version": {"resource_major":88, "data_major":107, "data_minor":1}
+    # mientras que antes era  {"resource": 88, "data": 41}.
+    # Leyendo solo la clave vieja salía None y el pack.mcmeta se escribía SIN
+    # pack_format, que es la forma más rápida de que Minecraft no cargue el
+    # datapack y nadie sepa por qué.
     pack_format = None
     try:
-        vj = json.loads(z.read("version.json"))
-        pv = vj.get("pack_version")
-        pack_format = pv.get("data") if isinstance(pv, dict) else pv
+        pv = json.loads(z.read("version.json")).get("pack_version")
+        if isinstance(pv, dict):
+            pack_format = pv.get("data_major", pv.get("data"))
+        else:
+            pack_format = pv
     except Exception:
         pass
 
@@ -156,7 +211,7 @@ def icono_como(display):
 # --------------------------------------------------- condición de la víctima
 def condicion_victima(molde_crit, etiqueta):
     """Copia la forma EXACTA de las condiciones del logro real y le cambia el
-    predicado por «tiene esta etiqueta».
+    predicado por «lleva esta etiqueta».
 
     En unas versiones `entity` es un objeto-predicado y en otras una lista de
     condiciones. Se detecta mirando el logro de verdad, no adivinando.
@@ -172,37 +227,44 @@ def condicion_victima(molde_crit, etiqueta):
     return cond
 
 
-# ----------------------------------------------------------------- la lista
-def entidades_con_nombre():
-    """Reutiliza el escáner que ya existe, para no tener dos formas distintas
-    de leer el mundo."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("be", AQUI / "buscar-entidad.py")
-    be = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(be)
-    return [h for h in be.escanear() if h["nombre"]]
+# ------------------------------------------------------------------ nombres
+def nombres_de_especie():
+    """Del jar, vía `mensajes.json` (clave `entity.minecraft.<id>`), como todo
+    el texto de este panel. Si aún no se ha generado, se usa el respaldo."""
+    fuera = dict(RESPALDO)
+    try:
+        bichos = (json.loads((PANEL / "data" / "mensajes.json").read_text())
+                  .get("bichos") or {})
+    except Exception:
+        return fuera, False
+    visto = False
+    for e in ESPECIES:
+        n = (bichos.get(e) or {}).get("es") or (bichos.get(e) or {}).get("en")
+        if n:
+            fuera[e] = n
+            visto = True
+    return fuera, visto
 
 
-def limpio(s):
-    return re.sub(r"[^A-Za-z0-9_.-]", "_", s.lower())[:40] or "x"
+# ------------------------------------------------------------------- borrar
+def quitar():
+    if PACK.exists():
+        shutil.rmtree(PACK)
+        print("datapack borrado: %s" % PACK)
+        print("Haz `reload` en la consola para que el servidor se entere.")
+    else:
+        print("no había nada que borrar en %s" % PACK)
+    if LISTA.exists():
+        LISTA.unlink()
+        print("y el panel deja de esperar sus avisos")
+    return 0
 
 
+# ------------------------------------------------------------------- el pack
 def main():
+    if "--quitar" in sys.argv:
+        return quitar()
     solo_ver = "--ver" in sys.argv
-    solo_cmds = "--comandos" in sys.argv
-
-    if solo_cmds:
-        try:
-            datos = json.loads(LISTA.read_text())
-        except Exception:
-            print("Primero genera el datapack:  python3 ~/panel/scripts/vigilancia.py")
-            return 2
-        print("# Pega esto en la consola del panel (o en el servidor).")
-        print("# Solo etiqueta a los que estén en chunks CARGADOS: repítelo de vez")
-        print("# en cuando, o cuando pongas nombres nuevos. Es inofensivo repetirlo.")
-        for e in datos["vigilados"]:
-            print('tag @e[name="%s",tag=!%s] add %s' % (e["nombre"], e["tag"], e["tag"]))
-        return 0
 
     ruta_jar, z = jar_del_servidor()
     print("jar del servidor: %s" % Path(ruta_jar).name)
@@ -211,6 +273,10 @@ def main():
     print("\nLo que he APRENDIDO del jar (no de memoria):")
     print("  carpeta de logros ...... data/<ns>/%s/" % info["carpeta"])
     print("  pack_format ............ %s" % info["pack_format"])
+    if info["pack_format"] is None:
+        print("\n✗ No he podido leer el pack_format del jar. Sin él, Minecraft")
+        print("  puede negarse a cargar el datapack sin decir nada. Me paro.")
+        return 1
     if not info["molde"]:
         print("\n✗ No encontré ningún logro que use player_killed_entity en el jar.")
         print("  Sin un molde real no me invento el formato. Párate aquí y dímelo.")
@@ -230,76 +296,95 @@ def main():
     print("  campo del anuncio ...... %s" % k_anuncio)
     print("  campo del icono ........ %s" % k_icono)
 
-    print("\nLeyendo el mundo para saber a quién vigilar…")
-    bichos = entidades_con_nombre()
-    # los maniquíes del panel no son mobs que puedan morir
-    bichos = [b for b in bichos if b["tipo"] not in ("mannequin", "armor_stand")]
-    print("  → %d bichos con nombre a vigilar\n" % len(bichos))
+    nombres, del_jar = nombres_de_especie()
+    grupos = ESPECIES + [OTRO]
+    print("\nLogros que se van a generar: %d  (tope %d)" % (len(grupos), TOPE))
+    for g in grupos:
+        print("    %-10s etiqueta %-10s título «%s %s»"
+              % (g, etiqueta_de(g), MARCA, nombres[g]))
+    if not del_jar:
+        print("\n  ⚠ nombres de respaldo: corre build-mensajes.py para sacarlos del jar")
 
-    vigilados = []
-    for i, b in enumerate(bichos, 1):
-        vigilados.append({"nombre": b["nombre"], "tipo": b["tipo"],
-                          "tag": "vg_%04d" % i, "dim": b["dim"], "pos": b["pos"]})
+    # 🔴 El tope no es decorativo. Es la promesa de rendimiento: vanilla ya trae
+    # 89 criterios de este disparador y se recorren todos en cada muerte. Si
+    # alguien añade especies sin pensarlo, esto se planta antes de instalarlo.
+    if len(grupos) > TOPE:
+        print("\n✗ %d logros pasan del tope de %d. No lo instalo." % (len(grupos), TOPE))
+        print("  Vanilla ya evalúa 89 criterios de este tipo en CADA muerte;")
+        print("  el presupuesto de este datapack es no pasar de un 10%% más.")
+        return 1
 
     if solo_ver:
-        print("Se generarían %d logros ocultos en %s" % (len(vigilados), PACK))
-        for v in vigilados[:12]:
-            print("  %-28s %-16s %s" % (v["nombre"], v["tipo"], v["tag"]))
-        if len(vigilados) > 12:
-            print("  … y %d más" % (len(vigilados) - 12))
         print("\n(--ver: no he tocado nada)")
         return 0
 
     # ------------------------------------------------------------ escribir
     if PACK.exists():
         shutil.rmtree(PACK)
-    carp = PACK / "data" / NS / info["carpeta"]
-    carp.mkdir(parents=True, exist_ok=True)
+    carp_adv = PACK / "data" / NS / info["carpeta"]
+    carp_adv.mkdir(parents=True, exist_ok=True)
 
-    meta = {"pack": {"description": "Vigilancia de mobs con nombre (panel Califree)"}}
-    if info["pack_format"] is not None:
-        meta["pack"]["pack_format"] = info["pack_format"]
-    (PACK / "pack.mcmeta").write_text(json.dumps(meta, indent=2))
+    (PACK / "pack.mcmeta").write_text(json.dumps(
+        {"pack": {"description": "Vigilancia de animales (panel Califree)",
+                  "pack_format": info["pack_format"]}}, indent=2))
 
-    for v in vigilados:
-        display = {
-            "icon": {k_icono: "minecraft:skeleton_skull"},
-            "title": "%s %s" % (MARCA, v["nombre"]),
-            "description": "Ha matado a %s" % v["nombre"],
-            "frame": "task",
-            "show_toast": False,
-            k_anuncio: True,
-            "hidden": True,
+    etiquetas, titulos = {}, {}
+    for g in grupos:
+        et, nom = etiqueta_de(g), nombres[g]
+        etiquetas[g] = et
+        titulos["%s %s" % (MARCA, nom)] = g
+        adv = {
+            "criteria": {"matar": {"trigger": crit["trigger"],
+                                   "conditions": condicion_victima(crit, et)}},
+            "display": {
+                "icon": {k_icono: "minecraft:skeleton_skull"},
+                "title": "%s %s" % (MARCA, nom),
+                "description": "Ha matado a un %s de alguien" % nom.lower(),
+                "frame": "task",
+                "show_toast": False,
+                k_anuncio: True,
+                "hidden": True,
+            },
+            # Sin esto solo avisaría de la PRIMERA vez que cada jugador mata un
+            # animal de ese tipo. Un logro se consigue una vez y ya.
+            "rewards": {"function": "%s:rearmar_%s" % (NS, et)},
         }
-        adv = {"criteria": {"matar": {"trigger": crit["trigger"],
-                                      "conditions": condicion_victima(crit, v["tag"])}},
-               "display": display}
-        (carp / ("%s_%s.json" % (v["tag"], limpio(v["nombre"])))).write_text(
+        (carp_adv / ("%s.json" % et)).write_text(
             json.dumps(adv, indent=2, ensure_ascii=False))
 
-    LISTA.parent.mkdir(parents=True, exist_ok=True)
-    LISTA.write_text(json.dumps({"marca": MARCA, "vigilados": vigilados},
-                                indent=2, ensure_ascii=False))
+        # La carpeta de funciones pasó de `functions` a `function` en la misma
+        # tanda en que los logros pasaron a `advancement`. En el jar NO hay
+        # funciones, así que aquí no se puede aprender el nombre bueno como se
+        # aprende todo lo demás: se escriben las DOS. Una carpeta que el
+        # servidor no conozca la ignora, y así no hay nada que adivinar.
+        for nombre_carpeta in ("function", "functions"):
+            c = PACK / "data" / NS / nombre_carpeta
+            c.mkdir(parents=True, exist_ok=True)
+            (c / ("rearmar_%s.mcfunction" % et)).write_text(
+                "# rearma el logro para que avise también la próxima vez\n"
+                "advancement revoke @s only %s:%s\n" % (NS, et))
 
-    print("═" * 62)
+    LISTA.parent.mkdir(parents=True, exist_ok=True)
+    LISTA.write_text(json.dumps(
+        {"v": 2, "marca": MARCA, "etiquetas": etiquetas, "titulos": titulos,
+         "otro": OTRO}, indent=2, ensure_ascii=False))
+
+    print("\n" + "═" * 62)
     print("  Datapack escrito: %s" % PACK)
-    print("  %d logros ocultos, uno por bicho" % len(vigilados))
+    print("  %d logros, uno por especie — y ya no se vuelve a tocar nunca" % len(grupos))
     print("═" * 62)
     print("""
-  AHORA, dos pasos en la consola del panel:
+  UN SOLO PASO, y no hay que repetirlo jamás:
 
-    1)  reload
-        (carga el datapack. Debe decir «Reloading!» sin errores)
+      reload            (en la consola del panel)
 
-    2)  pega las órdenes de etiquetar:
-        python3 ~/panel/scripts/vigilancia.py --comandos
+  A partir de ahí el panel se encarga de todo: el censo ve cada animal
+  domado o con nombre, le pone su etiqueta por RCON si no la lleva, y en la
+  Historia sale «sofidiaz mató a Fido (Lobo)».
 
-  Las etiquetas solo se ponen en chunks CARGADOS. Vuelve a pegarlas cuando
-  estéis cerca de las zonas donde viven los bichos, o cuando pongas nombres
-  nuevos. Repetirlo no hace daño.
+  Si domas un animal nuevo dentro de un mes, no hay que hacer nada.
 
-  A partir de ahí, cuando alguien mate a uno vigilado saldrá solo en la
-  Historia del panel: «Tazzk93 mató a Mace Windu».
+  Para quitarlo:  python3 ~/panel/scripts/vigilancia.py --quitar
 """)
     return 0
 

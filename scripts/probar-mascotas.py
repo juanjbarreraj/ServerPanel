@@ -65,7 +65,7 @@ DUEÑO = uuid_ints(77)
 
 
 def bicho(n, tipo, pos=(10, 64, 10), nombre=None, dueño=None, vida=8.0,
-          pasajeros=None):
+          pasajeros=None, tame=None):
     it = [[b"id", S("minecraft:" + tipo)],
           [b"UUID", IA(uuid_ints(n))],
           [b"Pos", nbt.Tag(nbt.TAG_LIST,
@@ -76,6 +76,8 @@ def bicho(n, tipo, pos=(10, 64, 10), nombre=None, dueño=None, vida=8.0,
         it.append([b"CustomName", S(json.dumps({"text": nombre}))])
     if dueño:
         it.append([b"Owner", IA(dueño)])
+    if tame is not None:
+        it.append([b"Tame", nbt.Tag(nbt.TAG_BYTE, 1 if tame else 0)])
     if pasajeros:
         it.append([b"Passengers", nbt.Tag(nbt.TAG_LIST,
                                           nbt.NList(nbt.TAG_COMPOUND, pasajeros))])
@@ -155,11 +157,26 @@ def main():
     ok(not any(f["tipo"] == "arrow" for f in hay.values()),
        "y una flecha tampoco: tiene dueño, pero no tiene vida")
 
+    # Del jar: TamableAnimal guarda `Owner`; AbstractHorse guarda `Owner` Y
+    # `Tame`. Un caballo domado montándolo puede quedarse con `Tame:1b` y sin
+    # dueño, y mirando solo el dueño no contaría como de nadie.
+    escribir_region(ow / "r.0.1.mca", [
+        bicho(40, "horse", nombre=None, tame=True),           # domado, sin dueño
+        bicho(41, "llama", dueño=DUEÑO, tame=True),           # domada y con dueño
+        bicho(42, "horse", tame=False),                       # salvaje: no cuenta
+    ], cx=1, cz=0)
+    hay = ms.mirar(ms.ficheros_de_region())
+    tipos = sorted(f["tipo"] for f in hay.values())
+    ok("horse" in tipos, "un caballo con Tame:1b y SIN dueño sí cuenta")
+    ok(tipos.count("horse") == 1, "pero el salvaje no (%s)" % tipos)
+    ok("llama" in tipos, "y una llama domada también")
+    ok(hay[uuid_txt(uuid_ints(40))]["domado"] is True, "se apunta que está domado")
+
     titulo("2 · la primera pasada solo apunta; no mata a nadie")
     r = ms.pasada()
     ok(r["primera"], "se sabe que es la primera")
     ok(not r["muertas"], "nadie dado por muerto (%d)" % len(r["muertas"]))
-    ok(len(ms.cargar()["bichos"]) == 3, "y quedan los 3 apuntados")
+    ok(len(ms.cargar()["bichos"]) == 5, "y quedan los 5 apuntados")
 
     titulo("3 · el lobo se muere")
     escribir_region(ow / "r.0.0.mca", [

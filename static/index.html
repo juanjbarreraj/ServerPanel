@@ -1760,6 +1760,7 @@ const I18N = {
   hist_ver_t:'La Historia puede estar perdiéndose cosas',
   hist_ver_b:'Las frases con las que se lee el registro del servidor se hicieron para la versión {0}, y Minecraft ya va por la {1}. Si alguna frase cambió, ese tipo de evento deja de aparecer sin dar ningún error.',
   hist_pet_died:'Se murió {0}', hist_pet_of:'mascota de {0}', hist_pet_any:'un animal',
+  hist_pet_some:'un {0}',
   hist_pet_note:'Minecraft no apunta cómo muere un animal: solo se sabe que ya no está',
   hist_latest:'Lo último en el server', hist_seeall:'Ver toda la historia',
   hist_wait:'Armando la historia con los registros viejos…',
@@ -1818,6 +1819,7 @@ const I18N = {
   hist_ver_t:'The Story may be missing things',
   hist_ver_b:'The phrases used to read the server log were built for version {0}, and Minecraft is now on {1}. If any phrase changed, that kind of event silently stops showing up.',
   hist_pet_died:'{0} died', hist_pet_of:'{0}’s pet', hist_pet_any:'an animal',
+  hist_pet_some:'a {0}',
   hist_pet_note:'Minecraft never records how an animal dies — only that it is gone',
   hist_latest:'Latest on the server', hist_seeall:'See the whole history',
   hist_wait:'Building the history from the old logs…',
@@ -4933,7 +4935,14 @@ function hiFila(e){
     if (e.censo){
       const qui = quien ? `<b>${quien}</b>${bicho?` (${bicho})`:''}`
                         : (bicho ? `<b>${bicho}</b>` : t('hist_pet_any'));
-      txt = t('hist_pet_died', qui);
+      // Minecraft no apunta de qué muere un animal en ningún sitio al que el
+      // servidor pueda llegar (comprobado en el jar y en 317 muertes de log).
+      // Que se pueda leer al pasar el ratón, en vez de dejar la duda.
+      txt = e.por
+        // El censo sabe CUÁL era y el datapack sabe QUIÉN fue: aquí ya están
+        // cruzados, así que la frase sale entera.
+        ? `<b>${esc(e.por)}</b> ${t('hist_killed')} ${qui}`
+        : `<span title="${t('hist_pet_note')}">${t('hist_pet_died', qui)}</span>`;
       const piezas=[];
       if (e.p) piezas.push(t('hist_pet_of', esc(e.p)));
       if (e.x!==undefined && e.x!==null) piezas.push(`${e.x}, ${e.y}, ${e.z}`);
@@ -4942,6 +4951,11 @@ function hiFila(e){
       if (e.dim && e.dim!=='minecraft:overworld') piezas.push(esc(DIM_NOM[e.dim]||e.dim));
       if (e.lugar_oculto) piezas.push(t('hist_hidden'));
       sub = piezas.join(' · ');
+    } else if (e.grupo){
+      // Aviso del juego que el censo aún no ha podido emparejar con un animal
+      // concreto. Sale así unos minutos y luego lo sustituye la línea completa.
+      txt = bicho ? `<b>${nom}</b> ${t('hist_killed')} ${t('hist_pet_some', esc(bicho.toLowerCase()))}`
+                  : `<b>${nom}</b> ${t('hist_killed')} ${t('hist_pet_any')}`;
     } else {
       txt = `<b>${nom}</b> ${t('hist_killed')} <b>${quien}</b>`;
     }

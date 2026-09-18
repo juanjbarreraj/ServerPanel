@@ -139,8 +139,59 @@ def dueño_uuid(ent):
     return "%s-%s-%s-%s-%s" % (u[0:8], u[8:12], u[12:16], u[16:20], u[20:32])
 
 
+def domado(ent):
+    """¿Está domado? Sacado del jar del servidor, no de memoria:
+
+        net/minecraft/world/entity/TamableAnimal        -> Owner  (Sitting)
+        net/minecraft/world/entity/animal/equine/AbstractHorse
+                                                        -> Owner, Tame
+
+    O sea que hay DOS formas y hay que mirar las dos. Un caballo puede quedar
+    con `Tame:1b` y sin `Owner` —al domarlo montándolo, o si lo invocó una
+    orden—, y mirando solo el dueño ese caballo no contaría como de nadie.
+    """
+    if dueño_uuid(ent):
+        return True
+    t = nbt.cget(ent, "Tame")
+    try:
+        return bool(t is not None and int(t.v))
+    except Exception:
+        return False
+
+
+def etiquetas_vigilancia():
+    """{especie: etiqueta} que dejó escrito `vigilancia.py` al instalarse.
+
+    Si el datapack no está puesto, esto sale vacío y el censo sigue funcionando
+    igual: simplemente no hay etiquetas que poner ni avisos instantáneos que
+    esperar."""
+    try:
+        d = json.loads((PANEL / "data" / "vigilados.json").read_text())
+    except Exception:
+        return {}, None
+    if d.get("v") != 2:
+        return {}, None
+    return d.get("etiquetas") or {}, d.get("otro") or "_otro"
+
+
+def etiquetas_de(ent):
+    """Las etiquetas que ya lleva puestas el bicho (`Tags` del NBT)."""
+    t = nbt.cget(ent, "Tags")
+    if t is None or not hasattr(t.v, "items"):
+        return []
+    fuera = []
+    for x in t.v.items:
+        fuera.append(x.decode("utf-8", "replace") if isinstance(x, bytes) else str(x))
+    return fuera
+
+
 def ficha(ent, dim):
-    """Devuelve la ficha si es una mascota o un bicho con nombre; si no, None."""
+    """Devuelve la ficha si es un animal domado o un bicho con nombre.
+
+    Lo que cuenta, en una frase: **de alguien**. Un lobo salvaje del bosque no
+    es noticia de nadie y hay miles; el de Juan, sí. Por eso el filtro es «tiene
+    dueño, o está domado, o lleva nametag», y no «es de una especie domable».
+    """
     tipo = be().id_de(ent)
     if tipo in NO_CUENTAN:
         return None
@@ -148,13 +199,14 @@ def ficha(ent, dim):
         return None
     dueño = dueño_uuid(ent)
     nombre = be().nombre_de(ent)
-    if not dueño and not nombre:
+    dom = domado(ent)
+    if not dom and not nombre:
         return None
     u = uuid_de(ent)
     if not u:
         return None
-    return u, {"n": nombre, "tipo": tipo, "dueño": dueño, "dim": dim,
-               "pos": be().pos_de(ent)}
+    return u, {"n": nombre, "tipo": tipo, "dueño": dueño, "domado": dom,
+               "dim": dim, "pos": be().pos_de(ent), "tags": etiquetas_de(ent)}
 
 
 # ------------------------------------------------------------------ escaneo
@@ -399,6 +451,21 @@ def pasada(guardar_ya=None, ahora=None):
     est["t"] = ahora
     est["mundo"] = mundo
     guardar(est)
+
+    # Quién necesita su etiqueta de vigilancia y aún no la lleva. El panel las
+    # pone por RCON; aquí solo se dice quiénes son. Es lo que hace que un animal
+    # domado la semana que viene quede vigilado sin que nadie toque nada.
+    mapa, otro = etiquetas_vigilancia()
+    if mapa:
+        faltan_et = []
+        for u, f in est["bichos"].items():
+            et = mapa.get(f.get("tipo")) or mapa.get(otro)
+            if et and et not in (f.get("tags") or []):
+                faltan_et.append({"uuid": u, "etiqueta": et,
+                                  "n": f.get("n"), "tipo": f.get("tipo")})
+        salida["sin_etiqueta"] = faltan_et
+    else:
+        salida["sin_etiqueta"] = []
     return salida
 
 
