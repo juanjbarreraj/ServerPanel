@@ -300,6 +300,27 @@ def aprender_del_jar(z):
     # 3c) cómo se pide «lleva esta etiqueta» (ver predicado_de_etiquetas)
     hacer_pred, nombre_pred = predicado_de_etiquetas(z, nombres)
 
+    # 3d) el `pack.mcmeta`, copiado de los datapacks que Mojang mete DENTRO
+    #     del jar (minecart_improvements, trade_rebalance…).
+    #
+    # 🔴 `pack_format` a secas ya no vale. Con el 121 de la 26.3 el servidor
+    # avisa: «Pack declares support for version newer than 81, but is missing
+    # mandatory fields min_format and max_format», y carga por un camino de
+    # respaldo — o sea, de milagro. Los suyos llevan min_format y max_format y
+    # NO llevan pack_format. Se copia su forma entera y solo se cambia la
+    # descripción: así, el día que Mojang vuelva a cambiarlo, esto lo sigue.
+    meta = None
+    for n in sorted(nombres):
+        if not re.match(r"data/minecraft/datapacks/[^/]+/pack\.mcmeta$", n):
+            continue
+        try:
+            p = (json.loads(z.read(n)) or {}).get("pack")
+        except Exception:
+            continue
+        if isinstance(p, dict) and any(k.endswith("format") for k in p):
+            meta = {"de": n, "pack": p}
+            break
+
     # 4) un logro con display, para saber cómo se llaman sus campos
     display = None
     for n in nombres:
@@ -315,7 +336,7 @@ def aprender_del_jar(z):
 
     return {"carpeta": carpeta, "pack_format": pack_format,
             "molde": molde, "display": display, "raiz": raiz,
-            "hacer_pred": hacer_pred, "nombre_pred": nombre_pred}
+            "hacer_pred": hacer_pred, "nombre_pred": nombre_pred, "meta": meta}
 
 
 def clave_anuncio(display):
@@ -337,22 +358,38 @@ def icono_como(display):
 
 # --------------------------------------------------- condición de la víctima
 def condicion_victima(molde_crit, etiqueta, hacer_pred):
-    """Copia la forma EXACTA del `entity` del logro real y le cambia el
-    predicado por «lleva esta etiqueta».
+    """Coge el `entity` del logro real TAL CUAL y le cambia solo el predicado.
 
-    🔴 SOLO `entity`. Antes se copiaba el bloque `conditions` entero y se le
-    metía `entity` dentro; como el molde traía su propio `killing_blow`, el
-    logro heredaba «y además hay que matarlo con tal arma». Del molde se coge
-    la FORMA, no las condiciones.
+    🔴 Dos veces se tumbó el servidor por no hacer exactamente esto.
+
+    Primero se copiaba el bloque `conditions` entero y se le metía `entity`
+    dentro; como el molde traía su propio `killing_blow`, el logro heredaba «y
+    además hay que matarlo con tal arma». Del molde se coge la FORMA, no las
+    condiciones.
+
+    Y luego se reconstruía el envoltorio a mano, que es lo que se rompió entre
+    la 26.2 y la 26.3 — Mojang cambió la forma **entre dos versiones seguidas**:
+
+        26.2:  "entity": [{"condition": "minecraft:entity_properties",
+                           "entity": "this", "predicate": {…}}]
+        26.3:  "entity":  {"type": "minecraft:entity_properties",
+                           "entity": "this", "predicate": {…}}
+
+    Lista contra objeto, y `condition` contra `type`. Reconocer «lista u
+    objeto» no basta: hay que copiar el envoltorio del jar sin mirarlo y
+    cambiar únicamente `predicate`. Así da igual lo que Mojang invente la
+    próxima vez, mientras siga habiendo un `predicate` dentro.
     """
     ent = (molde_crit.get("conditions") or {}).get("entity")
-    pred = hacer_pred(etiqueta)
-    if isinstance(ent, list):
-        # la forma de vanilla en esta versión: lista de condiciones de botín
-        plantilla = json.loads(json.dumps(ent[0]))
-        plantilla["predicate"] = pred
-        return {"entity": [plantilla]}
-    return {"entity": pred}
+    copia = json.loads(json.dumps(ent))                       # copia profunda
+    dentro = copia[0] if isinstance(copia, list) else copia
+    if not isinstance(dentro, dict) or "predicate" not in dentro:
+        raise SystemExit(
+            "El molde del jar no tiene un `predicate` donde esperaba:\n  %s\n"
+            "No me lo invento: eso es lo que tumbó el servidor. Dímelo y miro "
+            "la forma nueva." % json.dumps(ent)[:300])
+    dentro["predicate"] = hacer_pred(etiqueta)
+    return {"entity": [dentro] if isinstance(copia, list) else dentro}
 
 
 # ------------------------------------------------------------------ nombres
@@ -440,6 +477,13 @@ def main():
         return 1
     print("  fondo de la raíz ....... %s  (de %s)"
           % (info["raiz"]["background"], info["raiz"]["de"].split("/")[-2]))
+    if info["meta"]:
+        print("  campos del pack.mcmeta . %s  (de %s)"
+              % (", ".join(k for k in info["meta"]["pack"] if k != "description"),
+                 info["meta"]["de"].split("/")[-2]))
+    else:
+        print("  campos del pack.mcmeta . solo pack_format (no hay datapacks "
+              "dentro del jar de los que copiar la forma)")
     print("  ejemplo de condición ... %s"
           % json.dumps(condicion_victima(crit, "cf_wolf", info["hacer_pred"]),
                        ensure_ascii=False)[:150])
@@ -472,9 +516,15 @@ def main():
     carp_adv = BANCO / "data" / NS / info["carpeta"]
     carp_adv.mkdir(parents=True, exist_ok=True)
 
-    (BANCO / "pack.mcmeta").write_text(json.dumps(
-        {"pack": {"description": "Vigilancia de animales (panel Califree)",
-                  "pack_format": info["pack_format"]}}, indent=2))
+    # la forma se copia de los datapacks de dentro del jar; si este jar no
+    # trajera ninguno, se cae al campo de siempre (y la prueba lo pillaría).
+    if info["meta"]:
+        paquete = json.loads(json.dumps(info["meta"]["pack"]))
+    else:
+        paquete = {"pack_format": info["pack_format"]}
+    paquete["description"] = "Vigilancia de animales (panel Califree)"
+    (BANCO / "pack.mcmeta").write_text(
+        json.dumps({"pack": paquete}, indent=2, ensure_ascii=False))
 
     # ── la raíz ──────────────────────────────────────────────────────────
     # Los ocho logros llevan `display` porque el anuncio en el chat vive ahí.

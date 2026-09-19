@@ -49,9 +49,9 @@ def titulo(t):
 
 # ---------------------------------------------------------- un jar de mentira
 # Con las MISMAS formas que el de verdad: la carpeta en singular, el
-# `pack_version` nuevo (que es donde estaba el fallo del pack_format), un logro
-# con `player_killed_entity` cuya víctima va como LISTA de condiciones, y otro
-# con display. Un fixture cómodo es un fixture que miente.
+# `pack_version` nuevo (que es donde estaba el fallo del pack_format), el
+# `pack.mcmeta` de los datapacks internos, un logro con `player_killed_entity`
+# que filtra a la víctima, y otro con display. Un fixture cómodo miente.
 #
 # 🔴 Las formas de aquí son las del jar DE VERDAD, comprobadas contra
 # server-26.2.jar el 18/09/2026. Si este fixture miente, la prueba pasa y el
@@ -59,12 +59,37 @@ def titulo(t):
 # llevaba `{"type": "minecraft:ghast"}`, que es la forma VIEJA, y el generador
 # nunca tuvo que vérselas con la nueva.
 PRED_VANILLA = {"minecraft:entity_type": "minecraft:ghast"}
-MOLDE_MATAR = {
-    "criteria": {"x": {"trigger": "minecraft:player_killed_entity",
-                       "conditions": {"entity": [
-                           {"condition": "minecraft:entity_properties",
-                            "entity": "this",
-                            "predicate": PRED_VANILLA}]}}}}
+
+# 🔴 Mojang cambió esta forma ENTRE DOS VERSIONES SEGUIDAS. Las dos de verdad,
+# leídas del jar correspondiente:
+#
+#   26.2 → lista, y la clave del envoltorio es `condition`
+#   26.3 → objeto suelto, y la clave es `type`
+#
+# Por eso el generador no reconstruye el envoltorio: lo copia del jar y solo
+# cambia `predicate`. Y por eso esta prueba corre las dos formas: si mañana
+# sale una tercera, que falle aquí y no en el arranque del servidor de Juan.
+FORMAS = {
+    "26.2 (lista, `condition`)": [
+        {"condition": "minecraft:entity_properties", "entity": "this",
+         "predicate": PRED_VANILLA}],
+    "26.3 (objeto, `type`)":
+        {"type": "minecraft:entity_properties", "entity": "this",
+         "predicate": PRED_VANILLA},
+}
+FORMA_HOY = "26.3 (objeto, `type`)"        # la que corre Juan
+
+
+def molde_matar(forma):
+    return {"criteria": {"x": {
+        "trigger": "minecraft:player_killed_entity",
+        "conditions": {"entity": json.loads(json.dumps(FORMAS[forma]))}}}}
+
+
+# Los datapacks que Mojang mete DENTRO del jar. De aquí sale la forma del
+# pack.mcmeta: en la 26.3 son `min_format`/`max_format` y NO hay `pack_format`.
+META_VANILLA = {"pack": {"description": {"translate": "dataPack.x.description"},
+                         "min_format": 107, "max_format": 107}}
 # Uno que dispara igual pero NO filtra a la víctima, y que además arrastra un
 # `killing_blow`. Va el primero por orden alfabético a propósito: es el molde
 # que se cogía antes, y con él el logro salía con «y además mátalo con una
@@ -99,16 +124,20 @@ def clase_falsa(textos):
             + struct.pack(">H", len(textos) + 1) + cuerpo)
 
 
-def jar_falso(ruta: Path, version="26.3", con_etiquetas=True):
+def jar_falso(ruta: Path, version="26.3", con_etiquetas=True,
+              forma=FORMA_HOY, con_meta=True):
     ruta.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(ruta, "w") as z:
         z.writestr("version.json", json.dumps(
             {"id": version, "pack_version": {"resource_major": 88, "resource_minor": 0,
                                              "data_major": 107, "data_minor": 1}}))
+        if con_meta:
+            z.writestr("data/minecraft/datapacks/trade_rebalance/pack.mcmeta",
+                       json.dumps(META_VANILLA))
         z.writestr("data/minecraft/advancement/adventure/blowback.json",
                    json.dumps(MOLDE_TRAMPA))
         z.writestr("data/minecraft/advancement/nether/kill_a_mob.json",
-                   json.dumps(MOLDE_MATAR))
+                   json.dumps(molde_matar(forma)))
         z.writestr("data/minecraft/advancement/adventure/adventuring_time.json",
                    json.dumps(MOLDE_DISPLAY))
         z.writestr("data/minecraft/advancement/story/root.json",
@@ -173,8 +202,8 @@ def main():
     ok(r.returncode == 0, "sale bien (%d)" % r.returncode)
     ok("pack_format ............ 107" in r.stdout,
        "lee el pack_format del `data_major` nuevo, no del campo viejo que ya no existe")
-    ok("LISTA de condiciones" in r.stdout,
-       "y detecta que la víctima va como lista, copiándolo del molde real")
+    ok("entity_tags" in r.stdout and "any_of" in r.stdout,
+       "y enseña la condición que va a escribir, copiada del molde real")
     ok(not (mc / "world/datapacks/vigilancia").exists(), "no ha escrito nada")
 
     titulo("2 · pocos logros, y con tope")
@@ -189,11 +218,19 @@ def main():
     ok(len(advs) * 100 // 89 <= 10, "es un %d%% sobre lo que ya hace vanilla"
        % (len(advs) * 100 // 89))
 
-    titulo("3 · el pack.mcmeta lleva pack_format")
-    meta = json.loads((pack / "pack.mcmeta").read_text())
-    ok(meta["pack"].get("pack_format") == 107,
-       "con el número bueno (%s) — sin él Minecraft puede no cargarlo y no decir nada"
-       % meta["pack"].get("pack_format"))
+    titulo("3 · el pack.mcmeta, con la forma de los datapacks del propio jar")
+    # 🔴 `pack_format` a secas ya no basta: con un formato > 81 el servidor
+    # avisa de que faltan `min_format` y `max_format` y carga por un camino de
+    # respaldo. Los datapacks que Mojang trae dentro del jar llevan esos dos y
+    # NO llevan pack_format, así que se copia su forma entera.
+    meta = json.loads((pack / "pack.mcmeta").read_text())["pack"]
+    ok(meta.get("min_format") == 107 and meta.get("max_format") == 107,
+       "lleva min_format y max_format (%s / %s)"
+       % (meta.get("min_format"), meta.get("max_format")))
+    ok("pack_format" not in meta,
+       "y NO lleva pack_format, igual que los de Mojang")
+    ok(meta.get("description", "").startswith("Vigilancia"),
+       "con nuestra descripción, no la de la plantilla: %r" % meta.get("description"))
 
     titulo("4 · cada logro se revoca a sí mismo")
     # Un logro se consigue UNA VEZ por jugador. Sin revocarlo, el segundo lobo
@@ -215,9 +252,14 @@ def main():
 
     titulo("5 · la víctima se reconoce por etiqueta, no por bicho")
     cond = uno["criteria"]["matar"]["conditions"]
-    ok(isinstance(cond.get("entity"), list),
-       "se ha copiado la forma del molde de verdad (lista de condiciones)")
-    pred = cond["entity"][0]["predicate"]
+    envoltorio = cond["entity"]
+    if isinstance(envoltorio, list):
+        envoltorio = envoltorio[0]
+    ok(envoltorio.get("type") == "minecraft:entity_properties"
+       and envoltorio.get("entity") == "this",
+       "el envoltorio se ha copiado tal cual del molde del jar (%s)"
+       % ", ".join(k for k in envoltorio))
+    pred = envoltorio["predicate"]
     ok(pred == {"minecraft:entity_tags": {"any_of": ["cf_wolf"]}},
        "y el predicado es el `entity_tags` que registra el jar: %s" % json.dumps(pred))
     ok("minecraft:ghast" not in json.dumps(cond),
@@ -443,6 +485,55 @@ def main():
        "con --sin-probar sí entra, para una urgencia")
     ok("sin-probar" in (r.stdout + r.stderr),
        "pero avisando de que se ha saltado la comprobación")
+
+    titulo("17 · el envoltorio se copia del jar, no se reconstruye")
+    # 🔴 Mojang cambió esta forma ENTRE LA 26.2 Y LA 26.3, dos versiones
+    # seguidas. Reconocer «lista u objeto» no basta: también cambió la clave
+    # (`condition` → `type`). Lo único que sobrevive a eso es copiar el
+    # envoltorio entero y tocar solo `predicate`. Las dos formas, de verdad:
+    for etiqueta_forma in FORMAS:
+        caso = Path(tempfile.mkdtemp(prefix="probar-vigilancia-forma-"))
+        (caso / "minecraft/world/datapacks").mkdir(parents=True)
+        (caso / "panel/data").mkdir(parents=True)
+        jar_falso(caso / "minecraft/versions/26.3/server-26.3.jar",
+                  forma=etiqueta_forma)
+        subprocess.run([sys.executable, str(REPO / "scripts" / "vigilancia.py"),
+                        "--sin-probar"], capture_output=True, text=True,
+                       env=dict(os.environ, MC_DIR=str(caso / "minecraft"),
+                                PANEL_DIR=str(caso / "panel")))
+        f = (caso / "minecraft/world/datapacks/vigilancia"
+             / "data/vigilancia/advancement/cf_wolf.json")
+        esperado = json.loads(json.dumps(FORMAS[etiqueta_forma]))
+        dentro = esperado[0] if isinstance(esperado, list) else esperado
+        dentro["predicate"] = {"minecraft:entity_tags": {"any_of": ["cf_wolf"]}}
+        salio = (json.loads(f.read_text())["criteria"]["matar"]["conditions"]["entity"]
+                 if f.exists() else None)
+        ok(salio == esperado,
+           "%s: sale igual que el molde, con el predicado cambiado" % etiqueta_forma)
+        ok(salio is not None and "minecraft:ghast" not in json.dumps(salio),
+           "%s: y sin el bicho del molde" % etiqueta_forma)
+        shutil.rmtree(caso, ignore_errors=True)
+
+    # y si un día la forma no tiene `predicate` donde se espera, se planta
+    raro = Path(tempfile.mkdtemp(prefix="probar-vigilancia-raro-"))
+    (raro / "minecraft/world/datapacks").mkdir(parents=True)
+    (raro / "panel/data").mkdir(parents=True)
+    jar = raro / "minecraft/versions/26.3/server-26.3.jar"
+    jar_falso(jar)
+    datos = {n: zipfile.ZipFile(jar).read(n) for n in zipfile.ZipFile(jar).namelist()}
+    datos["data/minecraft/advancement/nether/kill_a_mob.json"] = json.dumps(
+        {"criteria": {"x": {"trigger": "minecraft:player_killed_entity",
+                            "conditions": {"entity": {"inventado": 1}}}}}).encode()
+    with zipfile.ZipFile(jar, "w") as z:
+        for n, d in datos.items():
+            z.writestr(n, d)
+    r = subprocess.run([sys.executable, str(REPO / "scripts" / "vigilancia.py"),
+                        "--sin-probar"], capture_output=True, text=True,
+                       env=dict(os.environ, MC_DIR=str(raro / "minecraft"),
+                                PANEL_DIR=str(raro / "panel")))
+    ok(r.returncode != 0 and not (raro / "minecraft/world/datapacks/vigilancia").exists(),
+       "forma desconocida: se planta y no escribe, en vez de inventársela")
+    shutil.rmtree(raro, ignore_errors=True)
 
 
 if __name__ == "__main__":

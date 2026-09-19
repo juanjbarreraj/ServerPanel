@@ -69,6 +69,9 @@ server-port=$PUERTO
 online-mode=false
 level-name=mundo
 level-type=minecraft\:flat
+# Sin esto sale un `No key layers in MapLike[{}]` que no significa nada pero
+# aparece en el volcado de errores justo cuando se está mirando uno de verdad.
+generator-settings={"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:dirt","height":2},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:plains"}
 max-players=1
 view-distance=2
 simulation-distance=2
