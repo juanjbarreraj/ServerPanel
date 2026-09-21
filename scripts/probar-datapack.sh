@@ -69,8 +69,11 @@ server-port=$PUERTO
 online-mode=false
 level-name=mundo
 level-type=minecraft\:flat
-# Sin esto sale un `No key layers in MapLike[{}]` que no significa nada pero
-# aparece en el volcado de errores justo cuando se está mirando uno de verdad.
+# Sin esto, el generador plano sale con un error de 'No key layers' que no
+# significa nada, pero aparece en el volcado justo cuando se está mirando uno
+# de verdad. OJO: este heredoc NO va entre comillas, porque tiene que expandir
+# \$PUERTO — así que aquí dentro no se pueden poner acentos graves ni \$ sueltos,
+# que bash intentaría ejecutar. Costó un 'No: command not found' averiguarlo.
 generator-settings={"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:dirt","height":2},{"block":"minecraft:grass_block","height":1}],"biome":"minecraft:plains"}
 max-players=1
 view-distance=2

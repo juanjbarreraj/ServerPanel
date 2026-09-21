@@ -1430,7 +1430,13 @@ button,a,.slot,.m2-cap,.tabslot{-webkit-tap-highlight-color:transparent}
 
   <!-- USERS -->
   <section id="tab-users" class="hidden">
-    <div class="card" style="margin-bottom:14px">
+    <div class="card hidden" id="users-solo-ver" style="margin-bottom:14px">
+      <h3>Solo lectura</h3>
+      <div class="note" style="margin-top:0">Puedes ver quién tiene cuenta y el registro de
+        actividad. Crear cuentas, restablecer contraseñas y cambiar permisos siguen siendo
+        cosa del admin.</div>
+    </div>
+    <div class="card" id="users-crear" style="margin-bottom:14px">
       <h3>Crear cuenta del panel</h3>
       <div class="formrow">
         <input id="nu-name" placeholder="Usuario (ej: sofia)">
@@ -1629,6 +1635,61 @@ button,a,.slot,.m2-cap,.tabslot{-webkit-tap-highlight-color:transparent}
 <div class="toast" id="toast"></div>
 
 <!-- password modal -->
+<!-- TRASPASO DE ADMIN — el aviso antes del único clic sin vuelta atrás.
+     No se cierra pulsando fuera a propósito: aquí no vale el gesto de "quitar
+     esto de en medio" que se usa con los demás modales. -->
+<div class="modal-bg" id="tr-modal">
+  <div class="modal" style="max-width:600px">
+    <!-- PASO 1 · el aviso -->
+    <div id="tr-paso1">
+      <h3 style="margin-top:0">⚠️ Vas a dejar de ser el admin</h3>
+      <div class="note" style="margin-top:0">El admin es <b>uno solo</b>. Si le pasas el admin a
+        <b id="tr-quien"></b>, dejas de serlo tú en el mismo momento.</div>
+      <h3 style="margin:16px 0 4px; font-size:.95rem">Esto lo pierdes en cualquier caso:</h3>
+      <ul id="tr-lista" style="margin:0 0 4px; padding-left:20px; line-height:1.7"></ul>
+      <div class="note">Para recuperarlo tendrías que pedírselo a <b id="tr-quien2"></b>: tú ya no
+        tendrás forma de dártelo.</div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px">
+        <button class="btn ghost" onclick="cerrar('tr-modal')">Cancelar</button>
+        <button class="btn" onclick="traspasoPaso(2)">Entendido, seguir</button>
+      </div>
+    </div>
+
+    <!-- PASO 2 · con qué me quedo -->
+    <div id="tr-paso2" class="hidden">
+      <h3 style="margin-top:0">¿Con qué te quedas tú?</h3>
+      <div class="note" style="margin-top:0">Después de pasarle el admin a
+        <b id="tr-quien3"></b>, esto es lo que conservas. Lo que no marques, lo pierdes.</div>
+
+      <div class="hi-f" style="margin:12px 0 4px; display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn small" id="tr-rol-mod" onclick="traspasoRol('mod')">Seguir de moderador</button>
+        <button class="btn small ghost" id="tr-rol-viewer" onclick="traspasoRol('viewer')">Solo jugador normal</button>
+      </div>
+
+      <div id="tr-viewer-nota" class="note hidden">Pasas a <b>observador</b>: entras al panel a
+        mirar el inicio, los jugadores, el mapa y las memorias, y nada más. Ni whitelist, ni
+        banear, ni anuncios.</div>
+
+      <div id="tr-perms-caja">
+        <div style="display:flex; gap:8px; margin:8px 0 4px">
+          <button class="btn small ghost" onclick="traspasoMarcar(true)">Marcar todo</button>
+          <button class="btn small ghost" onclick="traspasoMarcar(false)">Desmarcar todo</button>
+        </div>
+        <div id="tr-perms" style="max-height:38vh; overflow:auto"></div>
+      </div>
+
+      <div class="note" style="color:#ffd8a8">🖥️ La consola no aparece a propósito: es solo del
+        admin y no se puede conservar. Quien escribe en la consola puede volver a darse todos los
+        permisos desde dentro del juego.</div>
+      <div id="tr-err" class="note" style="color:#ffb4a8"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:12px">
+        <button class="btn ghost" onclick="traspasoPaso(1)">Atrás</button>
+        <button class="btn danger" id="tr-ok" onclick="traspasoHacer()">Sí, pasarle el admin</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal-bg" id="tp-modal" onclick="if(event.target.id==='tp-modal')cerrar('tp-modal')">
   <div class="modal" style="max-width:520px" onclick="event.stopPropagation()">
     <h3 style="margin-top:0">🧍 Teleport, <span id="tp-quien"></span></h3>
@@ -2023,12 +2084,17 @@ const TABS = [
   ['historia',()=>t('tab_hist'),UI('historia'),'🕰️', () => hasPerm('view_dashboard')],
   ['mod',()=>'Moderación',UI('moderacion'),'🔨', () => hasPerm('whitelist')||hasPerm('ban')||hasPerm('say')],
   ['memories',()=>t('tab_mem'),UI('memorias'),'🖼️', () => hasPerm('memories')],
-  ['console',()=>'Consola',UI('consola'),'🖥️', () => hasPerm('view_console')||(ME&&ME.role==='admin')],
+  // Estas seis ya no se miran por ROL sino por PERMISO. `hasPerm` le da todo
+  // al admin, así que para él no cambia nada; y cualquier moderador al que
+  // Juan le encienda el interruptor en Moderadores ve su pestaña.
+  // La consola NO es un interruptor: escribir en ella es poder `op`-earse, o
+  // sea dar el servidor entero. Se queda en el rol, como siempre.
+  ['console',()=>'Consola',UI('consola'),'🖥️', () => ME&&ME.role==='admin'],
   ['backups',()=>'Copias',UI('copias'),'📦', () => hasPerm('backups')],
-  ['plugins',()=>'Plugins',UI('plugins'),'🔌', () => ME&&ME.role==='admin'],
-  ['users',()=>'Moderadores',UI('moderadores'),'👑', () => ME&&ME.role==='admin'],
-  ['mundo',()=>'Mundo',UI('s-mundo'),'🌎', () => ME&&ME.role==='admin'],
-  ['sistema',()=>'Sistema',UI('sistema'),'⚙️', () => ME&&ME.role==='admin'],
+  ['plugins',()=>'Plugins',UI('plugins'),'🔌', () => hasPerm('plugins')],
+  ['users',()=>'Moderadores',UI('moderadores'),'👑', () => hasPerm('moderadores')],
+  ['mundo',()=>'Mundo',UI('s-mundo'),'🌎', () => hasPerm('mundo')],
+  ['sistema',()=>'Sistema',UI('sistema'),'⚙️', () => hasPerm('sistema')],
 ];
 function buildTabs(){
   const nav=$('tabs'); nav.innerHTML='';
@@ -4404,34 +4470,138 @@ const PERM_LABELS={view_dashboard:'Ver el inicio', view_players:'Ver jugadores y
   restart:'Reiniciar el servidor', backups:'Ver y hacer copias', say:'Enviar anuncios', player_actions:'Curar / alimentar / matar jugadores',
   memories:'Ver y subir fotos a Memorias', memories_upload:'Subir fotos a Memorias',
   markers_add:'Marcar lugares en el mapa',
-  mapa_semilla:'Explorar el mundo entero (destripa dónde está todo)'};
+  mapa_semilla:'Explorar el mundo entero (destripa dónde está todo)',
+  plugins:'Plugins', moderadores:'Moderadores', mundo:'Mundo', sistema:'Sistema'};
+/* Los seis interruptores de PESTAÑA van en su propio bloque, con la letra
+   pequeña de qué abre cada uno. Mezclados con los otros catorce no se
+   entendía que dan acceso a una pestaña entera, ni que algunos no tienen
+   vuelta atrás. */
+const PERM_PESTANA_NOTA={
+  backups:'Ver, hacer y descargar copias de seguridad.',
+  plugins:'Instalar y borrar plugins.',
+  moderadores:'Ver esta pestaña y el registro de actividad. Solo mirar: crear cuentas, contraseñas y permisos siguen siendo tuyos.',
+  mundo:'Cambiar de mundo, subir, crear y borrar mundos. ⚠️ Sin vuelta atrás.',
+  sistema:'Actualizar Minecraft, reiniciar el panel, el PIN de la vista pública. ⚠️ Sin vuelta atrás.'};
+const PERM_PESTANA_ICONO={backups:'📦', plugins:'🔌',
+  moderadores:'👑', mundo:'🌎', sistema:'⚙️'};
+let USERS_MANDO = false;     // ¿puedo cambiar cosas aquí, o solo mirar?
+let PIERDE_LISTA = [];       // lo que se pierde al traspasar, dicho por el backend
 async function loadUsers(){
   const r=await api('/api/users');
+  USERS_MANDO = !!r.puede_gestionar;
+  PIERDE_LISTA = r.pierde_al_traspasar || [];
+  TR_CONSERVABLES = r.conservables || [];
+  TR_DEFAULTS = r.defaults_mod || [];
+  const dePestana = r.perms_pestana || [];
+  // Con el permiso `moderadores` se mira, no se toca. El backend lo niega
+  // igual; esto es solo para no enseñar botones que darían 403.
+  const aviso = $('users-solo-ver');
+  if (aviso) aviso.classList.toggle('hidden', USERS_MANDO);
+  const crear = $('users-crear');
+  if (crear) crear.classList.toggle('hidden', !USERS_MANDO);
+
   const wrap=$('users-list'); wrap.innerHTML='';
   for (const u of r.users){
     const card=document.createElement('div'); card.className='card usercard';
+    const fila = (p, nota) => {
+      const val = p in u.perms ? u.perms[p] : (u.role==='mod' && MOD_DEFAULTS.includes(p));
+      const et = (PERM_PESTANA_ICONO[p] ? PERM_PESTANA_ICONO[p]+' ' : '') + (PERM_LABELS[p]||p);
+      return `<div class="permrow"><span>${et}${nota?`<div class="note" style="margin:2px 0 0">${nota}</div>`:''}</span>
+        <label class="switch"><input type="checkbox" ${val?'checked':''} ${USERS_MANDO?'':'disabled'}
+          onchange="setPerm('${esc(u.name)}','${p}',this.checked)"><span class="slider"></span></label></div>`;
+    };
     let perms='';
     if (u.role!=='admin'){
       for (const p of r.all_perms){
-        const val = p in u.perms ? u.perms[p] : (u.role==='mod' && MOD_DEFAULTS.includes(p));
-        perms+=`<div class="permrow"><span>${PERM_LABELS[p]||p}</span>
-          <label class="switch"><input type="checkbox" ${val?'checked':''}
-            onchange="setPerm('${esc(u.name)}','${p}',this.checked)"><span class="slider"></span></label></div>`;
+        if (dePestana.includes(p)) continue;          // esos van abajo, aparte
+        perms+=fila(p, '');
+      }
+      if (dePestana.length){
+        perms+=`<h3 style="margin:16px 0 2px; font-size:.95rem">Pestañas del panel</h3>
+          <div class="note" style="margin-top:0">Apagadas para todos. Cada una abre una pestaña entera.</div>`;
+        for (const p of dePestana) perms+=fila(p, PERM_PESTANA_NOTA[p]||'');
       }
     } else {
       perms='<div class="note">Los admins siempre tienen todos los permisos (incluido ver inventarios).</div>';
     }
+    // El traspaso solo se ofrece sobre un MODERADOR y solo lo ve el admin de
+    // verdad — es justo lo que comprueba el backend, para que el botón no
+    // prometa algo que luego se niega.
+    const puedeTraspaso = USERS_MANDO && u.role==='mod' && u.name!==ME.name;
     card.innerHTML=`<div class="head"><img class="avatar" style="width:34px;height:34px" src="https://mc-heads.net/avatar/${esc(u.name)}/34" onerror="this.style.display='none'">
         <b style="font-size:1.05rem">${esc(u.name)}</b>
         <span class="rolebadge ${u.role}">${u.role==='admin'?'admin':u.role==='mod'?'moderador':'observador'}</span>
         ${u.must_change?'<span class="note" style="margin:0">(aún no ha entrado)</span>':''}
         <div style="flex:1"></div>
-        <button class="btn small ghost" onclick="resetPw('${esc(u.name)}')">Restablecer contraseña</button>
-        ${u.name!==ME.name?`<button class="btn small danger" onclick="delUser('${esc(u.name)}')">Eliminar</button>`:''}</div>
+        ${puedeTraspaso?`<button class="btn small ghost" onclick="traspasoAbrir('${esc(u.name)}')">Hacerle admin</button>`:''}
+        ${USERS_MANDO?`<button class="btn small ghost" onclick="resetPw('${esc(u.name)}')">Restablecer contraseña</button>`:''}
+        ${USERS_MANDO&&u.name!==ME.name?`<button class="btn small danger" onclick="delUser('${esc(u.name)}')">Eliminar</button>`:''}</div>
       ${perms}`;
     wrap.appendChild(card);
   }
 }
+
+/* ---------- traspasar el admin ---------- */
+/* La única acción del panel que quien la hace no puede deshacer: al terminar
+   ya no tiene permiso para volver atrás. Por eso el aviso dice, con nombre y
+   apellidos, qué deja de poder hacer — y la lista la manda el backend, para
+   que no se quede vieja si algún día se añade una pestaña. */
+let TRASPASO_A = null, TRASPASO_ROL = 'mod', TR_CONSERVABLES = [], TR_DEFAULTS = [];
+function traspasoAbrir(name){
+  TRASPASO_A = name; TRASPASO_ROL = 'mod';
+  for (const id of ['tr-quien','tr-quien2','tr-quien3']) $(id).textContent = name;
+  $('tr-lista').innerHTML = PIERDE_LISTA.map(x=>`<li>${esc(x)}</li>`).join('');
+  // Marcado de salida: lo que trae un moderador recién hecho. Es lo que la
+  // mayoría querrá, y deja a la vista que las pestañas (Mundo, Sistema…) NO
+  // se conservan salvo que se marquen a mano.
+  $('tr-perms').innerHTML = TR_CONSERVABLES.map(p=>{
+    const nota = PERM_PESTANA_NOTA[p];
+    const et = (PERM_PESTANA_ICONO[p] ? PERM_PESTANA_ICONO[p]+' ' : '') + (PERM_LABELS[p]||p);
+    return `<div class="permrow"><span>${et}${nota?`<div class="note" style="margin:2px 0 0">${nota}</div>`:''}</span>
+      <label class="switch"><input type="checkbox" data-perm="${p}" ${TR_DEFAULTS.includes(p)?'checked':''}>
+        <span class="slider"></span></label></div>`;
+  }).join('');
+  traspasoRol('mod');
+  traspasoPaso(1);
+  $('tr-err').textContent = '';
+  $('tr-modal').classList.add('open');
+}
+function traspasoPaso(n){
+  $('tr-paso1').classList.toggle('hidden', n!==1);
+  $('tr-paso2').classList.toggle('hidden', n!==2);
+}
+function traspasoRol(rol){
+  TRASPASO_ROL = rol;
+  $('tr-rol-mod').classList.toggle('ghost', rol!=='mod');
+  $('tr-rol-viewer').classList.toggle('ghost', rol!=='viewer');
+  $('tr-perms-caja').classList.toggle('hidden', rol!=='mod');
+  $('tr-viewer-nota').classList.toggle('hidden', rol!=='viewer');
+}
+function traspasoMarcar(v){
+  for (const c of $('tr-perms').querySelectorAll('input[type=checkbox]')) c.checked = v;
+}
+async function traspasoHacer(){
+  if (!TRASPASO_A) return;
+  const perms = {};
+  for (const c of $('tr-perms').querySelectorAll('input[type=checkbox]'))
+    perms[c.dataset.perm] = c.checked;
+  const b = $('tr-ok'); b.disabled = true; b.textContent = 'Traspasando…';
+  const r = await api('/api/users/transfer_admin',
+                      {name: TRASPASO_A, rol: TRASPASO_ROL, perms});
+  b.disabled = false; b.textContent = 'Sí, pasarle el admin';
+  if (r.error){ $('tr-err').textContent = r.error; return; }
+  cerrar('tr-modal');
+  // Ya no soy admin: hay que releer quién soy y volver a montar las pestañas,
+  // o la interfaz seguiría enseñando cosas que el backend ya niega.
+  toast(`${TRASPASO_A} es el admin. Tú ahora eres ${
+    (r.mi_rol||TRASPASO_ROL)==='viewer' ? 'observador' : 'moderador'}.`);
+  TRASPASO_A = null;
+  const yo = await api('/api/me');          // devuelve {user:{…}}, no el usuario suelto
+  if (yo && yo.user) ME = yo.user;
+  buildTabs();
+  show('dash');
+}
+/* El toast lo lanza traspasoHacer(); el texto depende de con qué se quedó. */
 async function setPerm(name, perm, val){
   const r=await api('/api/users');
   const u=r.users.find(x=>x.name===name); if(!u) return;

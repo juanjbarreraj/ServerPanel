@@ -36,9 +36,27 @@ DEFAULT_PERMS = {
                "whitelist": False, "ban": False, "kick": False, "restart": False,
                "backups": False, "say": False},
 }
-ALL_PERMS = ["view_dashboard", "view_players", "view_console", "whitelist",
+# 🔴 `view_console` NO está aquí a propósito, y por eso tampoco sale como
+# interruptor en Moderadores: la consola es del admin y de nadie más. Quien
+# escribe en la consola puede `op`-earse, cambiar gamerules o quitarle el op al
+# resto — o sea que dar la consola es dar el servidor, no una pestaña. Se queda
+# en DEFAULT_PERMS (en False) solo para no romper los users.json que ya existen.
+ALL_PERMS = ["view_dashboard", "view_players", "whitelist",
              "ban", "kick", "restart", "backups", "say", "player_actions",
-             "memories", "memories_upload", "markers_add", "mapa_semilla"]
+             "memories", "memories_upload", "markers_add", "mapa_semilla",
+             # ── pestañas que antes eran solo del admin ──────────────────
+             # Se pueden encender por persona desde Moderadores. Vienen
+             # APAGADAS para todo el mundo: quien las tenía antes (el admin)
+             # las sigue teniendo porque el admin lo tiene todo, y a nadie le
+             # aparece nada nuevo hasta que Juan lo encienda a mano.
+             "plugins", "moderadores", "mundo", "sistema"]
+# Los seis interruptores de pestaña, en el orden en que se enseñan. `consola` y
+# `copias` ya existían con otro nombre; no se renombran para no invalidar los
+# permisos que ya hay guardados en users.json.
+PERMS_PESTANA = ["backups", "plugins", "moderadores", "mundo", "sistema"]
+# Permisos que NUNCA se conceden por interruptor ni se conservan al traspasar el
+# admin, los pida quien los pida. Se limpian en el servidor, no en el navegador.
+NUNCA_SE_CONCEDE = {"view_console"}
 DEFAULT_PERMS["mod"]["player_actions"] = True
 DEFAULT_PERMS["viewer"]["player_actions"] = False
 DEFAULT_PERMS["mod"]["memories"] = True         # ver memorias
@@ -74,7 +92,11 @@ def check_pw(pw: str, stored: str) -> bool:
     except Exception:
         return False
 
-_users_lock = threading.Lock()
+# 🔴 Reentrante a propósito. `save_users()` coge este mismo cerrojo, así que
+# una operación que necesita leer-y-escribir sin que nadie se cuele en medio
+# —el traspaso de admin, que sube a uno y baja al otro— se quedaría colgada
+# para siempre con un Lock normal.
+_users_lock = threading.RLock()
 def load_users() -> dict:
     if not USERS_F.exists():
         return {}
@@ -1203,9 +1225,7 @@ def api_advancements(uuid):
 
 @app.get("/api/audit")
 def api_audit():
-    u = require()
-    if u["role"] != "admin":
-        abort(403)
+    u = _require_tab("moderadores")
     lines = []
     if AUDIT_F.exists():
         lines = AUDIT_F.read_text().splitlines()[-200:]
@@ -1287,7 +1307,9 @@ def api_restart():
 # ------------------------------------------------------------------ console
 @app.get("/api/console/tail")
 def api_console():
-    require("view_console")
+    # Solo el admin. No basta con quitar el interruptor: si un users.json
+    # antiguo trae `view_console: true` a mano, `has_perm` lo daría por bueno.
+    _require_admin_ro()
     log = MC_DIR / "logs/latest.log"
     try:
         with open(log, "rb") as f:
@@ -1302,9 +1324,7 @@ def api_console():
 
 @app.post("/api/console/send")
 def api_console_send():
-    u = require()
-    if u["role"] != "admin" or not _csrf_ok():
-        abort(403)
+    u = _require_admin()
     body = request.get_json(silent=True) or {}
     cmd = (body.get("command") or "").strip()[:300]
     if not cmd or cmd.startswith("/"):
@@ -1776,9 +1796,7 @@ def engine_kind():
 
 @app.get("/api/plugins")
 def api_plugins():
-    u = require()
-    if u["role"] != "admin":
-        abort(403)
+    u = _require_tab("plugins")
     items = []
     if PLUGIN_DIR.is_dir():
         for f in sorted(PLUGIN_DIR.glob("*.jar")):
@@ -1787,9 +1805,7 @@ def api_plugins():
 
 @app.post("/api/plugins/upload")
 def api_plugins_upload():
-    u = require()
-    if u["role"] != "admin":
-        abort(403)
+    u = _require_tab("plugins")
     if engine_kind() != "paper":
         return jsonify(error="El motor aún es vanilla — primero hay que migrar a Paper"), 400
     f = request.files.get("file")
@@ -1807,9 +1823,7 @@ def api_plugins_upload():
 
 @app.post("/api/plugins/delete")
 def api_plugins_delete():
-    u = require()
-    if u["role"] != "admin" or not _csrf_ok():
-        abort(403)
+    u = _require_tab("plugins")
     body = request.get_json(silent=True) or {}
     name = re.sub(r"[^A-Za-z0-9._-]", "_", (body.get("name") or ""))
     src = PLUGIN_DIR / name
@@ -2114,9 +2128,7 @@ def api_branding():
 
 @app.post("/api/settings/name")
 def api_settings_name():
-    u = require()
-    if u["role"] != "admin" or not _csrf_ok():
-        abort(403)
+    u = _require_tab("sistema")
     body = request.get_json(silent=True) or {}
     name = (body.get("name") or "").strip()[:40]
     if not name:
@@ -2130,9 +2142,7 @@ def api_settings_name():
 # ------------------------------------------------------------------ settings (admin)
 @app.post("/api/settings/motd")
 def api_settings_motd():
-    u = require()
-    if u["role"] != "admin" or not _csrf_ok():
-        abort(403)
+    u = _require_tab("sistema")
     body = request.get_json(silent=True) or {}
     text = (body.get("motd") or "").strip()[:120]
     if not text:
@@ -2267,14 +2277,26 @@ def api_joinreq_dismiss():
 # ------------------------------------------------------------------ user management (admin)
 @app.get("/api/users")
 def api_users():
-    u = require()
-    if u["role"] != "admin":
-        abort(403)
+    u = _require_tab("moderadores")
     users = load_users()
+    # `puede_gestionar` es lo que decide si la pestaña sale de solo lectura.
+    # Va aquí y no en el navegador porque el navegador ya ha demostrado que no
+    # es sitio para guardar una regla de seguridad — el backend niega igual,
+    # esto solo sirve para no enseñar botones que van a dar 403.
     return jsonify(users=[{"name": n, "role": v["role"], "perms": v.get("perms", {}),
                            "must_change": v.get("must_change", False)}
                           for n, v in sorted(users.items())],
-                   all_perms=ALL_PERMS)
+                   all_perms=ALL_PERMS,
+                   perms_pestana=PERMS_PESTANA,
+                   puede_gestionar=(u["role"] == "admin"),
+                   pierde_al_traspasar=PIERDE_AL_TRASPASAR,
+                   # lo que el admin puede marcar para conservar al traspasar.
+                   # Sale de aquí y no de una lista escrita en el HTML: si se
+                   # añade un permiso, aparece solo; y la consola no está
+                   # porque el servidor no la deja conservar.
+                   conservables=[p for p in ALL_PERMS if p not in NUNCA_SE_CONCEDE],
+                   defaults_mod=sorted(p for p, v in DEFAULT_PERMS["mod"].items()
+                                       if v and p not in NUNCA_SE_CONCEDE))
 
 @app.post("/api/users/create")
 def api_users_create():
@@ -2343,6 +2365,94 @@ def api_users_delete():
     save_users(users)
     audit(u["name"], f"deleted user {name}")
     return jsonify(ok=True)
+
+
+# Lo que se pierde al traspasar el admin PASE LO QUE PASE, aunque se conserven
+# todos los permisos de moderador. Sale de aquí y no del HTML para que el aviso
+# no se quede viejo si algún día se añade algo.
+PIERDE_AL_TRASPASAR = [
+    "La consola del servidor — es solo del admin, y no se puede conservar",
+    "Ver inventarios, teletransportar jugadores y darles efectos",
+    "Crear, borrar y editar cuentas del panel",
+    "Encender y apagar permisos a los demás",
+    "Volver a ser admin por tu cuenta",
+]
+
+
+@app.post("/api/users/transfer_admin")
+def api_users_transfer_admin():
+    """Le pasa el admin a un moderador y baja a quien lo hace a moderador.
+
+    🔴 Es la única acción del panel que quien la ejecuta NO puede deshacer: al
+    terminar ya no tiene permiso para volver atrás. Por eso:
+
+      · solo el admin de verdad puede llamarla (no vale el permiso
+        `moderadores`, que es de solo lectura — si no, cualquiera con esa
+        pestaña podría quedarse el panel);
+      · el destino tiene que ser un MODERADOR que ya exista, nunca un
+        observador ni un nombre suelto;
+      · el destino entra con los permisos limpios, porque el admin lo tiene
+        todo y dejarle los viejos solo confundiría al volver a bajarlo;
+      · y quien traspasa ELIGE con qué se queda: puede seguir de moderador con
+        los permisos que marque, o bajarse del todo a observador. Lo que no
+        marque, lo pierde.
+
+    🔴 La consola no se puede conservar, la pida quien la pida: se limpia aquí,
+    en el servidor. Escribir en la consola es poder `op`-earse, así que un
+    ex-admin con consola seguiría mandando en el servidor aunque el panel
+    dijera que es un moderador. Que el navegador no la ofrezca es cortesía;
+    esto es la regla.
+
+    Siempre queda exactamente un admin: se sube uno y se baja el otro en la
+    misma escritura.
+    """
+    u = require()
+    if u["role"] != "admin" or not _csrf_ok():
+        abort(403)
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if name == u["name"]:
+        return jsonify(error="Ya eres el admin"), 400
+
+    # con qué me quedo yo
+    mi_rol = body.get("rol") or "mod"
+    if mi_rol not in ("mod", "viewer"):
+        return jsonify(error="Solo puedes quedarte como moderador u observador"), 400
+    pedidos = body.get("perms")
+    if pedidos is not None and not isinstance(pedidos, dict):
+        return jsonify(error="Permisos inválidos"), 400
+    if mi_rol == "viewer":
+        # «solo un jugador normal»: se entra a mirar y poco más, que es
+        # justamente lo que significa observador. No se inventa nada.
+        mis_perms = {}
+    else:
+        pedidos = pedidos if pedidos is not None else {}
+        mis_perms = {p: bool(pedidos.get(p))
+                     for p in ALL_PERMS if p not in NUNCA_SE_CONCEDE}
+    for p in NUNCA_SE_CONCEDE:              # cinturón: jamás, ni por error
+        mis_perms.pop(p, None)
+
+    with _users_lock:
+        users = load_users()
+        destino = users.get(name)
+        if destino is None:
+            return jsonify(error="No existe esa cuenta"), 404
+        if destino.get("role") != "mod":
+            return jsonify(
+                error="Solo se puede hacer admin a un moderador"), 400
+        yo = users.get(u["name"])
+        if yo is None:                      # no debería pasar nunca
+            abort(403)
+        destino["role"] = "admin"
+        destino["perms"] = {}
+        yo["role"] = mi_rol
+        yo["perms"] = mis_perms
+        save_users(users)
+    conserva = sorted(p for p, v in mis_perms.items() if v) or ["nada"]
+    audit(u["name"], "TRASPASO DE ADMIN a %s; %s pasa a %s y conserva: %s"
+          % (name, u["name"], mi_rol, ", ".join(conserva)))
+    audit(name, f"ahora es admin (se lo pasó {u['name']})")
+    return jsonify(ok=True, nuevo_admin=name, mi_rol=mi_rol)
 
 # ------------------------------------------------------------------ memorias del server
 # v5: dos niveles — GLOBALES (memories/) e INDIVIDUALES (memories/players/<uuid>/).
@@ -2861,9 +2971,7 @@ def _require_admin():
 
 @app.get("/api/system/status")
 def api_system_status():
-    u = require()
-    if u["role"] != "admin":
-        abort(403)
+    u = _require_tab("sistema")
     lines = []
     try:
         lines = SYS_LOG.read_text().splitlines()[-30:]
@@ -2990,7 +3098,7 @@ def _automatismos():
 
 @app.post("/api/system/set_pin")
 def api_system_set_pin():
-    u = _require_admin()
+    u = _require_tab("sistema")
     body = request.get_json(silent=True) or {}
     pin = (body.get("pin") or "").strip()
     if not (4 <= len(pin) <= 32):
@@ -3003,7 +3111,7 @@ def api_system_set_pin():
 
 @app.post("/api/system/restart_panel")
 def api_system_restart_panel():
-    u = _require_admin()
+    u = _require_tab("sistema")
     audit(u["name"], "panel restart from Sistema")
     _syslog("[panel] reinicio solicitado desde el panel")
     subprocess.Popen(["bash", "-c", "sleep 1; sudo systemctl restart panel"],
@@ -3012,7 +3120,7 @@ def api_system_restart_panel():
 
 @app.post("/api/system/regen_icons")
 def api_system_regen_icons():
-    u = _require_admin()
+    u = _require_tab("sistema")
     ok = _sys_run_bg("iconos", ["python3", str(PANEL_DIR / "get-icons.py")])
     audit(u["name"], "regen icons from Sistema")
     return jsonify(ok=ok, output="Regenerando íconos (1-2 min) — mira el registro"
@@ -3121,7 +3229,7 @@ def api_system_repintar_estado():
 @app.post("/api/system/repintar")
 def api_system_repintar():
     """Borra los azulejos del mapa 3D y los vuelve a dibujar. Ahora o de noche."""
-    u = _require_admin()
+    u = _require_tab("sistema")
     cuando = (request.get_json(silent=True) or {}).get("cuando", "")
     if cuando == "cancelar":
         _REPINTAR_NOTA.unlink(missing_ok=True)
@@ -3352,9 +3460,30 @@ def _require_admin_ro():
     return u
 
 
+def _require_tab(perm):
+    """El admin siempre; un moderador solo si tiene ESE permiso encendido.
+
+    🔴 Aquí está la mitad que de verdad importa de los interruptores nuevos.
+    Esconder una pestaña en el navegador no es un permiso: quien sepa la
+    dirección de la API entra igual con `curl`. Ya pasó una vez con
+    `must_change`, que solo lo forzaba un modal (ver claude/cuentas-y-seguridad.md).
+    Cada ruta que antes decía «solo admin» pasa por aquí.
+
+    El CSRF se exige en todo lo que no sea GET, que es lo que hacían las dos
+    variantes que había antes (`_require_admin` y `_require_admin_ro`) — así no
+    se afloja nada por el camino.
+    """
+    u = require()
+    if u["role"] != "admin" and not has_perm(u, perm):
+        abort(403)
+    if request.method != "GET" and not _csrf_ok():
+        abort(403)
+    return u
+
+
 @app.get("/api/mundos")
 def api_mundos():
-    _require_admin_ro()
+    _require_tab("mundo")
     d = _mundos_listar()
     con = None
     try:
@@ -3383,7 +3512,7 @@ def api_mundos_preparar():
     ficheros de región a medio escribir y la copia parecería buena hasta el día
     que la cargas. Por eso primero se prepara y luego se descarga.
     """
-    u = _require_admin()
+    u = _require_tab("mundo")
     ocupado = _mundos_ocupado()
     if ocupado:
         return jsonify(ok=False, output="Ya hay algo en marcha: %s" % ocupado)
@@ -3403,7 +3532,7 @@ def api_mundos_preparar():
 
 @app.get("/api/mundos/descargar")
 def api_mundos_descargar():
-    _require_admin_ro()
+    _require_tab("mundo")
     try:
         f = max(DESCARGAS.glob("*.tar.gz"), key=lambda p: p.stat().st_mtime)
     except ValueError:
@@ -3422,7 +3551,7 @@ def api_mundos_trozo():
     progreso y, si se corta, seguir desde donde estaba: el cliente manda el
     desplazamiento y aquí se comprueba contra lo que ya hay escrito.
     """
-    u = _require_admin()
+    u = _require_tab("mundo")
     sid = request.form.get("id") or ""
     if not re.match(r"^[a-f0-9]{8,32}$", sid):
         return jsonify(error="id de subida inválido"), 400
@@ -3473,7 +3602,7 @@ def api_mundos_inspeccionar():
     una versión nueva del mundo de ahora, o un mundo distinto?» y avisar si
     viene de un Minecraft más nuevo que el servidor.
     """
-    _require_admin()
+    _require_tab("mundo")
     parte, err = _parte_subida(request.get_json(silent=True) or {})
     if err:
         return err
@@ -3492,7 +3621,7 @@ def api_mundos_descartar():
     Sin esto, decir que no dejaba el archivo entero —que pueden ser dos gigas—
     ocupando disco hasta que la limpieza de restos lo pillara al día siguiente.
     """
-    _require_admin()
+    _require_tab("mundo")
     parte, err = _parte_subida(request.get_json(silent=True) or {})
     if err:
         return err
@@ -3502,7 +3631,7 @@ def api_mundos_descartar():
 
 @app.post("/api/mundos/importar")
 def api_mundos_importar():
-    u = _require_admin()
+    u = _require_tab("mundo")
     body = request.get_json(silent=True) or {}
     parte, err = _parte_subida(body)
     if err:
@@ -3546,7 +3675,7 @@ def api_mundos_importar():
 # -------------------------------------------------------------------- cambiar
 @app.post("/api/mundos/cambiar")
 def api_mundos_cambiar():
-    u = _require_admin()
+    u = _require_tab("mundo")
     slug = (request.get_json(silent=True) or {}).get("slug") or ""
     if not _slug_ok(slug):
         return jsonify(error="mundo inválido"), 400
@@ -3561,7 +3690,7 @@ def api_mundos_cambiar():
 
 @app.post("/api/mundos/nuevo")
 def api_mundos_nuevo():
-    u = _require_admin()
+    u = _require_tab("mundo")
     body = request.get_json(silent=True) or {}
     nombre = re.sub(r"\s+", " ", (body.get("nombre") or "")).strip()[:48]
     if len(nombre) < 2:
@@ -3577,7 +3706,7 @@ def api_mundos_nuevo():
 
 @app.post("/api/mundos/borrar")
 def api_mundos_borrar():
-    u = _require_admin()
+    u = _require_tab("mundo")
     slug = (request.get_json(silent=True) or {}).get("slug") or ""
     if not _slug_ok(slug):
         return jsonify(error="mundo inválido"), 400
@@ -3593,7 +3722,7 @@ def api_mundos_jugadores():
     Sirve para estrenar mapa sin que la gente pierda su historial: el ranking
     del panel lee esos mismos ficheros, así que la tabla sigue donde estaba.
     """
-    u = _require_admin()
+    u = _require_tab("mundo")
     body = request.get_json(silent=True) or {}
     origen = body.get("origen") or ""
     if not _slug_ok(origen):
@@ -3610,7 +3739,7 @@ def api_mundos_jugadores():
 
 @app.post("/api/mundos/vaciar_papelera")
 def api_mundos_vaciar():
-    u = _require_admin()
+    u = _require_tab("mundo")
     ok, por = _mundos_run("vaciar la papelera", ["vaciar-papelera"], timeout=1800)
     audit(u["name"], "vació la papelera de mundos")
     return jsonify(ok=ok, output="Borrando del disco…" if ok else por)
@@ -3660,9 +3789,7 @@ def _auto_update_on():
 
 @app.get("/api/actualizar/estado")
 def api_act_estado():
-    u = require()
-    if u["role"] != "admin":
-        abort(403)
+    u = _require_tab("sistema")
     d = dict(_act_estado("refrescar" in request.args))
     # El estado del mapa se lee del disco SIEMPRE, nunca de la caché: es un
     # fichero local y no cuesta nada, y cachearlo abría una carrera — el trabajo
@@ -3684,7 +3811,7 @@ def api_act_estado():
 
 @app.post("/api/actualizar/auto")
 def api_act_auto():
-    u = _require_admin()
+    u = _require_tab("sistema")
     body = request.get_json(silent=True) or {}
     s = get_settings()
     s["auto_update"] = bool(body.get("auto"))
@@ -3696,7 +3823,7 @@ def api_act_auto():
 
 @app.post("/api/actualizar/ahora")
 def api_act_ahora():
-    u = _require_admin()
+    u = _require_tab("sistema")
     ok, por = _mundos_run("actualizar Minecraft", ["actualizar"],
                           timeout=2 * 3600, guion=ACTUALIZAR_PY,
                           al_acabar=lambda bien, d: _ver_estado.update(t=0))
@@ -3708,7 +3835,7 @@ def api_act_ahora():
 @app.post("/api/actualizar/mapa")
 def api_act_mapa():
     """Intenta poner el mapa al día con la versión de Minecraft actual."""
-    u = _require_admin()
+    u = _require_tab("sistema")
     ok, por = _mundos_run("poner el mapa al día", ["mapa-al-dia"],
                           timeout=6 * 3600, guion=ACTUALIZAR_PY,
                           al_acabar=lambda bien, d: _ver_estado.update(t=0))
@@ -3719,7 +3846,7 @@ def api_act_mapa():
 
 @app.post("/api/actualizar/deshacer")
 def api_act_deshacer():
-    u = _require_admin()
+    u = _require_tab("sistema")
     ok, por = _mundos_run("volver a la versión anterior", ["deshacer"],
                           timeout=3600, guion=ACTUALIZAR_PY,
                           al_acabar=lambda bien, d: _ver_estado.update(t=0))
@@ -4437,9 +4564,7 @@ def api_m2_actualizar():
     escondido dentro de algo automático no se descubre hasta que los datos
     llevan semanas mal.
     """
-    u = require()
-    if u["role"] != "admin" or not _csrf_ok():
-        abort(403)
+    u = _require_tab("sistema")
     d = _m2_desfase()
     if not _sys_bg_fn("mapa2", _m2_poner_al_dia, timeout=600):
         return jsonify(ok=False, output="Ya se está actualizando")
@@ -4580,7 +4705,7 @@ def api_m2_bioma():
 
 @app.post("/api/mapa2/reiniciar")
 def api_m2_reiniciar():
-    u = _require_admin()
+    u = _require_tab("sistema")
     _m2_olvidar()
     audit(u["name"], "reiniciar el lector de biomas")
     return jsonify(ok=True, output="Reiniciando el lector de biomas — tarda ~1 minuto")
@@ -6188,7 +6313,7 @@ def api_markers_delete():
 
 @app.post("/api/system/migrate_paper")
 def api_system_migrate_paper():
-    u = _require_admin()
+    u = _require_tab("sistema")
     if engine_kind() == "paper":
         return jsonify(error="El motor ya es Paper"), 400
     script = PANEL_DIR / "scripts" / "migrate-to-paper.sh"
@@ -6201,9 +6326,7 @@ def api_system_migrate_paper():
 
 @app.get("/api/system/backup_extras")
 def api_system_backup_extras():
-    u = require()
-    if u["role"] != "admin":
-        abort(403)
+    u = _require_tab("backups")
     import tarfile
     # Cada clic dejaba un .tar.gz nuevo en /tmp con TODO data/ y memories/
     # dentro, y nadie los borraba nunca. Con álbumes de fotos de por medio eso
@@ -6227,7 +6350,7 @@ def api_system_backup_extras():
 # ------------------------------------------------------------------ 2FA alta/baja (solo admin)
 @app.post("/api/2fa/setup")
 def api_2fa_setup():
-    u = _require_admin()
+    u = _require_tab("sistema")
     users = load_users()
     sec = base64.b32encode(secrets.token_bytes(20)).decode()
     users[u["name"]]["totp_pending"] = sec
@@ -6239,7 +6362,7 @@ def api_2fa_setup():
 
 @app.post("/api/2fa/confirm")
 def api_2fa_confirm():
-    u = _require_admin()
+    u = _require_tab("sistema")
     body = request.get_json(silent=True) or {}
     users = load_users()
     rec = users.get(u["name"], {})
@@ -6256,7 +6379,7 @@ def api_2fa_confirm():
 
 @app.post("/api/2fa/disable")
 def api_2fa_disable():
-    u = _require_admin()
+    u = _require_tab("sistema")
     body = request.get_json(silent=True) or {}
     users = load_users()
     rec = users.get(u["name"], {})
