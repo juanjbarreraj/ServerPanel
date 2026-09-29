@@ -13,11 +13,18 @@ verdad.
   python3 ~/panel/scripts/buscar-entidad.py --listar-nombres
   python3 ~/panel/scripts/buscar-entidad.py --caballos          <- por SEÑAS
   python3 ~/panel/scripts/buscar-entidad.py --tipo villager
+  python3 ~/panel/scripts/buscar-entidad.py --lobos             <- TODOS los lobos
+  python3 ~/panel/scripts/buscar-entidad.py --lobos --color negro
 
 Si a un bicho le cambiaron el nombre, buscarlo por nombre no sirve de nada.
 `--caballos` saca TODOS los caballos del mundo con su color, si llevan armadura
 y de qué, si tienen silla, si están domados y de quién son. Un caballo negro con
 armadura de diamante y silla se reconoce a la primera en esa lista.
+
+`--lobos` hace lo mismo con los perros: color, de quién son, el collar, la vida
+y —lo que más importa cuando falta uno— si están SENTADOS, porque un lobo
+sentado no se teletransporta nunca y por eso parece que ha desaparecido.
+`--color negro` filtra por variante, en español o en inglés.
 
 Si no lo encuentra, enseña TODOS los nombres que sí hay (los apellidos y las
 mayúsculas se escriben mal más a menudo de lo que uno cree) y quién ha matado
@@ -240,6 +247,71 @@ def señas_caballo(ent):
     return " · ".join(partes)
 
 
+# ----------------------------------------------------- señas de un lobo
+# Las nueve del juego (`data/minecraft/wolf_variant/*.json` del jar), con el
+# nombre en español para poder pedirlas como uno las ve.
+LOBOS = {"black": "negro", "ashen": "ceniza", "chestnut": "castaño",
+         "pale": "pálido", "rusty": "rojizo", "snowy": "nevado",
+         "spotted": "moteado", "striped": "rayado", "woods": "del bosque"}
+COLLARES = {0: "blanco", 1: "naranja", 2: "magenta", 3: "azul claro",
+            4: "amarillo", 5: "lima", 6: "rosa", 7: "gris", 8: "gris claro",
+            9: "cian", 10: "morado", 11: "azul", 12: "marrón", 13: "verde",
+            14: "rojo", 15: "negro"}
+
+
+def variante_de(ent):
+    """La variante del bicho, sin dar por hecho cómo se llama la clave.
+
+    🔴 Mojang ha movido esto de sitio más de una vez (campo suelto, componente,
+    mayúscula o minúscula), así que en vez de escribir la clave a mano se busca
+    CUALQUIERA que se llame «variant» de alguna forma. Si mañana la cambian de
+    nombre otra vez, esto la sigue encontrando; y si no, dice qué claves hay.
+    """
+    for k in nbt.ckeys(ent):
+        if "variant" not in k.lower() or "sound" in k.lower():
+            continue
+        v = nbt.cget(ent, k)
+        if v is None:
+            continue
+        s = v.v.decode("utf-8", "replace") if isinstance(v.v, bytes) else str(v.v)
+        return s.replace("minecraft:", "")
+    return None
+
+
+def señas_lobo(ent, nombres):
+    """Color, si está domado y de quién, si está sentado y el collar."""
+    partes = []
+    var = variante_de(ent)
+    if var:
+        partes.append(LOBOS.get(var, var))
+    else:
+        partes.append("color desconocido")
+    t = nbt.cget(ent, "Owner") or nbt.cget(ent, "OwnerUUID")
+    if t is not None:
+        d = dueño_de(ent, nombres)
+        partes.append("de " + d if d else "domado")
+    else:
+        partes.append("salvaje")
+    s = nbt.cget(ent, "Sitting")
+    if s is not None and s.v:
+        # 🔴 Un lobo SENTADO no se teletransporta nunca. Es la primera
+        # explicación de «se me ha perdido un perro», mucho antes que la muerte.
+        partes.append("SENTADO (no te sigue)")
+    c = nbt.cget(ent, "CollarColor")
+    if c is not None:
+        try:
+            partes.append("collar %s" % COLLARES.get(int(c.v), int(c.v)))
+        except Exception:
+            pass
+    h = nbt.cget(ent, "Health")
+    if h is not None:
+        try:
+            partes.append("%.0f♥" % float(h.v))
+        except Exception:
+            pass
+    return " · ".join(partes)
+
+
 def dueño_de(ent, nombres):
     t = nbt.cget(ent, "Owner") or nbt.cget(ent, "OwnerUUID")
     if t is None:
@@ -313,8 +385,10 @@ def escanear(tipo=None):
                             hallados.append({
                                 "dim": dim, "nombre": n, "tipo": t,
                                 "pos": pos_de(ent), "vida": salud_de(ent),
-                                "señas": señas_caballo(ent) if "horse" in t or "donkey" in t
-                                          or "mule" in t or "llama" in t or "camel" in t else "",
+                                "señas": (señas_lobo(ent, jug) if "wolf" in t else
+                                          señas_caballo(ent) if "horse" in t or "donkey" in t
+                                          or "mule" in t or "llama" in t or "camel" in t else ""),
+                                "variante": variante_de(ent),
                                 "dueño": dueño_de(ent, jug), "fichero": f.name,
                             })
     return hallados
@@ -383,10 +457,56 @@ def _valor(bandera):
     return None
 
 
+def _variante_pedida(txt):
+    """Acepta «negro» o «black»: la gente los ve en español."""
+    if not txt:
+        return None
+    t = txt.strip().lower()
+    for ing, esp in LOBOS.items():
+        if t in (ing, esp) or t == esp.replace("ñ", "n"):
+            return ing
+    return t                                   # lo que sea, se busca tal cual
+
+
+# 🔴 Una bandera que no existe NO se ignora: se para.
+#
+# Antes, `--lobos` en una versión que aún no lo tenía se descartaba en silencio
+# —el filtro de argumentos tira todo lo que empieza por `--`— y el `negro` de
+# `--color negro` se colaba como si fuera un NOMBRE. Resultado: «NO EXISTE
+# ninguno con ese nombre» y una lista de 105 nombres, que es una respuesta
+# segurísima a una pregunta que nadie hizo. Un comando que no entiende lo que le
+# pides tiene que decirlo, no contestar otra cosa.
+BANDERAS = {"--parcial", "--listar-nombres", "--caballos", "--lobos",
+            "--tipo", "--variante", "--color"}
+
+
+def _banderas_raras():
+    fuera = []
+    for a in sys.argv[1:]:
+        if not a.startswith("--"):
+            continue
+        if a.split("=", 1)[0] not in BANDERAS:
+            fuera.append(a)
+    return fuera
+
+
 def main():
+    raras = _banderas_raras()
+    if raras:
+        print("\n✗ No conozco %s." % ", ".join("«%s»" % r for r in raras))
+        print("  Si acabas de añadirla, este servidor todavía tiene la versión")
+        print("  anterior del guion: haz Commit+Sync y vuelve a probar.")
+        print("\n  Las que sí entiende esta versión:")
+        for b in sorted(BANDERAS):
+            print("    %s" % b)
+        print()
+        return 2
     tipo = _valor("--tipo")
     if "--caballos" in sys.argv:
         tipo = "horse"
+    if "--lobos" in sys.argv:
+        tipo = "wolf"
+    quiero = _variante_pedida(_valor("--variante") or _valor("--color"))
     args = [a for a in sys.argv[1:]
             if not a.startswith("--") and a != tipo]
     parcial = "--parcial" in sys.argv
@@ -401,12 +521,29 @@ def main():
     if tipo:
         print("\nBuscando todos los «%s» del mundo (con nombre o sin él)…" % tipo)
         todos = escanear(tipo=tipo)
+        if quiero:
+            de_ese = [h for h in todos if (h.get("variante") or "") == quiero]
+            if not de_ese and todos:
+                # no dejarle con «0 encontrados» y ninguna pista: se enseña qué
+                # variantes hay de verdad, que es lo que resuelve el 90% de los
+                # casos (se escribió mal, o el color se llama de otra forma)
+                hay = sorted({h.get("variante") or "?" for h in todos})
+                print("\n  Ninguno de esos. Variantes que SÍ hay en el mundo:")
+                for v in hay:
+                    n = sum(1 for h in todos if (h.get("variante") or "?") == v)
+                    print("    %-12s %s  (%d)" % (v, LOBOS.get(v, ""), n))
+                print()
+            todos = de_ese
         print("\n" + "═" * 62)
         print("  %d encontrados" % len(todos))
         print("═" * 62 + "\n")
         if not todos:
-            print("  Ninguno. Si buscabas caballos, prueba también con")
-            print("  --tipo donkey, --tipo mule o --tipo llama.\n")
+            if tipo == "wolf":
+                print("  Ninguno. Si el mundo es nuevo o acabas de cambiarlo,")
+                print("  comprueba que MC_DIR apunta al mundo que estás jugando.\n")
+            else:
+                print("  Ninguno. Si buscabas caballos, prueba también con")
+                print("  --tipo donkey, --tipo mule o --tipo llama.\n")
             return 1
         pinta_lista(todos)
         print("  Ordenados: primero los que tienen nombre, luego los que llevan")
