@@ -153,6 +153,61 @@ def main():
         ok(b in be.BANDERAS, "«%s» está en la lista de banderas buenas" % b)
 
 
+    titulo("6 · la lista se lee sin scrollear, y el /tp lleva a donde dice")
+    # Los dos fallos que se vieron con la salida de verdad: 23 lobos, los tres
+    # de Juan al FINAL, y un /tp sin dimensión que en el Nether manda a otro
+    # sitio (los mismos números en el Overworld son un lugar distinto).
+    mio = {"nombre": "", "tipo": "wolf", "dim": "nether", "pos": (804, 63, 2607),
+           "vida": 40.0, "señas": "negro · de JEYtheFlash", "dueño": "JEYtheFlash"}
+    salvaje = {"nombre": "", "tipo": "wolf", "dim": "overworld",
+               "pos": (493, 78, 2477), "vida": 8.0, "señas": "negro · salvaje",
+               "dueño": None}
+    con_nombre = {"nombre": "Toothless", "tipo": "wolf", "dim": "overworld",
+                  "pos": (402, 116, 704), "vida": 35.0,
+                  "señas": "negro · de Jakobino155", "dueño": "Jakobino155"}
+
+    ok(be.orden_tp(mio) == "/execute in minecraft:the_nether run tp @s 804 63 2607",
+       "🔴 en el Nether el /tp lleva la dimensión: %s" % be.orden_tp(mio))
+    ok(be.orden_tp(salvaje) == "/tp @s 493 78 2477",
+       "y en el Overworld se queda corto y claro")
+    ok(be.orden_tp({**mio, "dim": "end"}).startswith("/execute in minecraft:the_end"),
+       "el End también")
+    ok(be.orden_tp({**mio, "pos": None}) is None,
+       "y sin posición no se inventa una orden")
+
+    import io, contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        be.pinta_lista([salvaje] * 20 + [mio, con_nombre])
+    lineas = buf.getvalue().splitlines()
+    primeros = "\n".join(lineas[:14])
+    ok("JEYtheFlash" in primeros,
+       "🔴 con 20 lobos salvajes por medio, los DOMADOS salen arriba")
+    ok(primeros.index("JEYtheFlash") < primeros.index("salvaje")
+       if "salvaje" in primeros else True,
+       "antes que los salvajes, que es lo que uno no está buscando")
+
+
+    titulo("7 · filtrar por dueño")
+    # «Las mascotas de fulano» es la pregunta real casi siempre, y leerla a ojo
+    # entre cien bichos no es leerla.
+    import subprocess, os
+    ent = {**os.environ, "MC_DIR": "/tmp/no-existe-nada"}
+    r = subprocess.run([sys.executable, str(AQUI / "buscar-entidad.py"),
+                        "--lobos", "--dueño", "jalrvarezzz"],
+                       capture_output=True, text=True, env=ent)
+    ok(r.returncode != 0 or "Ninguno" in r.stdout,
+       "acepta --dueño sin quejarse de la bandera")
+    ok("No conozco" not in r.stdout, "y no la toma por desconocida")
+    for b in ("--dueño", "--dueno"):
+        ok(b in be.BANDERAS, "«%s» está en la lista de banderas buenas" % b)
+    r = subprocess.run([sys.executable, str(AQUI / "buscar-entidad.py"),
+                        "--lobos", "--duenyo", "x"],
+                       capture_output=True, text=True, env=ent)
+    ok(r.returncode == 2 and "--duenyo" in r.stdout,
+       "pero una mal escrita sigue parando el guion")
+
+
 if __name__ == "__main__":
     main()
     print()

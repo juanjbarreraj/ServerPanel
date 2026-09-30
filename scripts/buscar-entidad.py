@@ -15,6 +15,8 @@ verdad.
   python3 ~/panel/scripts/buscar-entidad.py --tipo villager
   python3 ~/panel/scripts/buscar-entidad.py --lobos             <- TODOS los lobos
   python3 ~/panel/scripts/buscar-entidad.py --lobos --color negro
+  python3 ~/panel/scripts/buscar-entidad.py --lobos --dueño jalrvarezzz
+  python3 ~/panel/scripts/buscar-entidad.py --tipo cat --dueño sofidiaz
 
 Si a un bicho le cambiaron el nombre, buscarlo por nombre no sirve de nada.
 `--caballos` saca TODOS los caballos del mundo con su color, si llevan armadura
@@ -390,15 +392,46 @@ def escanear(tipo=None):
                                           or "mule" in t or "llama" in t or "camel" in t else ""),
                                 "variante": variante_de(ent),
                                 "dueño": dueño_de(ent, jug), "fichero": f.name,
+                                # 🔴 Cuándo se guardó por última vez esa zona
+                                # del mundo. No es la hora exacta del bicho,
+                                # pero separa «esto es de hace un minuto» de
+                                # «esto lleva aquí desde hace semanas», que es
+                                # lo que hace falta cuando falta una mascota y
+                                # no se sabe si lo que ves es de hoy.
+                                "guardado": f.stat().st_mtime,
                             })
     return hallados
 
 
+# El `/tp` tiene que llevar la dimensión o manda a otro sitio: los mismos
+# números en el Overworld y en el Nether son dos lugares distintos, y aterrizar
+# a ciegas en x 804 z 2607 del Overworld puede ser dentro de piedra.
+_DIM_ID = {"overworld": "minecraft:overworld",
+           "nether": "minecraft:the_nether",
+           "end": "minecraft:the_end"}
+
+
+def orden_tp(h):
+    p = h["pos"]
+    if not p:
+        return None
+    if h["dim"] == "overworld":
+        return "/tp @s %d %d %d" % p
+    return "/execute in %s run tp @s %d %d %d" % ((_DIM_ID[h["dim"]],) + p)
+
+
 def pinta_lista(lista):
-    """Lo más llamativo primero: con nombre, luego con armadura, luego silla."""
+    """Lo tuyo primero. Luego lo que tiene nombre, armadura o silla.
+
+    🔴 El orden importa más de lo que parece. Antes mandaba el nombre, así que
+    con 20 lobos salvajes por medio los tres lobos DOMADOS de Juan —que eran lo
+    único que buscaba— salían los últimos, después de scrollear veinte fichas
+    idénticas. Lo que uno busca casi siempre es lo suyo.
+    """
     def peso(h):
         s = h["señas"] or ""
-        return (0 if h["nombre"] else 1,
+        return (0 if h["dueño"] else 1,
+                0 if h["nombre"] else 1,
                 0 if "armadura de" in s and "sin armadura" not in s else 1,
                 0 if "CON SILLA" in s else 1)
     for h in sorted(lista, key=peso):
@@ -412,8 +445,13 @@ def pinta_lista(lista):
         if h["dueño"]:
             linea += "   ·   de %s" % h["dueño"]
         print(linea)
-        if p:
-            print("      /tp @s %d %d %d" % p)
+        if h.get("guardado"):
+            import time as _t
+            print("      zona guardada por última vez: %s"
+                  % _t.strftime("%d/%m %H:%M", _t.localtime(h["guardado"])))
+        orden = orden_tp(h)
+        if orden:
+            print("      %s" % orden)
         print()
 
 
@@ -477,7 +515,7 @@ def _variante_pedida(txt):
 # segurísima a una pregunta que nadie hizo. Un comando que no entiende lo que le
 # pides tiene que decirlo, no contestar otra cosa.
 BANDERAS = {"--parcial", "--listar-nombres", "--caballos", "--lobos",
-            "--tipo", "--variante", "--color"}
+            "--tipo", "--variante", "--color", "--dueño", "--dueno"}
 
 
 def _banderas_raras():
@@ -507,6 +545,7 @@ def main():
     if "--lobos" in sys.argv:
         tipo = "wolf"
     quiero = _variante_pedida(_valor("--variante") or _valor("--color"))
+    de_quien = (_valor("--dueño") or _valor("--dueno") or "").strip().lower() or None
     args = [a for a in sys.argv[1:]
             if not a.startswith("--") and a != tipo]
     parcial = "--parcial" in sys.argv
@@ -521,6 +560,22 @@ def main():
     if tipo:
         print("\nBuscando todos los «%s» del mundo (con nombre o sin él)…" % tipo)
         todos = escanear(tipo=tipo)
+        if de_quien:
+            # Buscar «las mascotas de fulano» es la pregunta real el 90% de las
+            # veces, y leerlo a ojo entre cien bichos no es leerlo.
+            suyos = [h for h in todos
+                     if (h.get("dueño") or "").lower() == de_quien]
+            if not suyos and todos:
+                hay = sorted({h["dueño"] for h in todos if h.get("dueño")})
+                print("\n  Ninguno de «%s». Dueños que SÍ hay entre los %d "
+                      "encontrados:" % (de_quien, len(todos)))
+                for d in hay:
+                    n = sum(1 for h in todos if h.get("dueño") == d)
+                    print("    %-18s %d" % (d, n))
+                if not hay:
+                    print("    (ninguno está domado)")
+                print()
+            todos = suyos
         if quiero:
             de_ese = [h for h in todos if (h.get("variante") or "") == quiero]
             if not de_ese and todos:
@@ -546,7 +601,7 @@ def main():
                 print("  --tipo donkey, --tipo mule o --tipo llama.\n")
             return 1
         pinta_lista(todos)
-        print("  Ordenados: primero los que tienen nombre, luego los que llevan")
+        print("  Ordenados: primero LOS TUYOS (los domados), luego los que llevan")
         print("  armadura, luego los ensillados. Los tuyos deberían salir arriba.\n")
         return 0
 
